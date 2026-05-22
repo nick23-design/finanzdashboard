@@ -6,11 +6,18 @@ import { WatchlistCard } from "./WatchlistCard";
 import { CardSkeleton } from "@/components/ui/Skeleton";
 import { searchStocks, STOCKS, type StockEntry } from "@/lib/stocks-list";
 import Link from "next/link";
-import { Search, X, Plus } from "lucide-react";
+import { Search, X, Plus, Globe } from "lucide-react";
 
 const REGION_LABEL: Record<StockEntry["region"], string> = {
   US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
 };
+
+interface LiveResult {
+  symbol: string;
+  name: string;
+  exchange: string | null;
+  type: string | null;
+}
 
 interface WatchlistViewProps {
   initialItems: WatchlistItem[];
@@ -20,9 +27,10 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
   const [items, setItems] = useState<WatchlistItem[]>(initialItems);
   const [isPending, startTransition] = useTransition();
 
-  // Search state
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<StockEntry[]>([]);
+  const [liveResults, setLiveResults] = useState<LiveResult[]>([]);
+  const [liveLoading, setLiveLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchResult, setSearchResult] = useState<{ symbol: string; name: string; price: number | null; currency: string | null } | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -31,11 +39,34 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const hits = searchStocks(query);
     setSuggestions(hits);
-    setShowSuggestions(query.length >= 1 && hits.length > 0);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (query.length >= 2) {
+      setShowSuggestions(true);
+      setLiveLoading(true);
+      debounceRef.current = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+          if (res.ok) {
+            const data: LiveResult[] = await res.json();
+            const staticSymbols = new Set(hits.map(h => h.symbol));
+            setLiveResults(data.filter(r => !staticSymbols.has(r.symbol)));
+          }
+        } catch { /* ignore */ }
+        setLiveLoading(false);
+      }, 300);
+    } else {
+      setLiveResults([]);
+      setLiveLoading(false);
+      setShowSuggestions(query.length >= 1 && hits.length > 0);
+    }
+
     if (!query) { setSearchResult(null); setSearchError(null); }
   }, [query]);
 
@@ -97,6 +128,7 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
   }
 
   const alreadyInList = (symbol: string) => items.some(i => i.symbol === symbol);
+  const hasDropdown = showSuggestions && (suggestions.length > 0 || liveResults.length > 0 || liveLoading);
 
   return (
     <div className="space-y-4">
@@ -123,7 +155,7 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
             type="text"
             value={query}
             onChange={e => setQuery(e.target.value.toUpperCase())}
-            onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+            onFocus={() => (suggestions.length > 0 || liveResults.length > 0) && setShowSuggestions(true)}
             placeholder="Aktie suchen oder Ticker eingeben…"
             maxLength={50}
             autoComplete="off"
@@ -133,7 +165,7 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
           {query && (
             <button
               type="button"
-              onClick={() => { setQuery(""); setSearchResult(null); setSearchError(null); }}
+              onClick={() => { setQuery(""); setSearchResult(null); setSearchError(null); setLiveResults([]); }}
               className="absolute right-3.5 top-1/2 -translate-y-1/2"
               style={{ color: "var(--muted)" }}>
               <X size={14} />
@@ -142,11 +174,13 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
         </form>
 
         {/* Autocomplete Dropdown */}
-        {showSuggestions && (
+        {hasDropdown && (
           <div
             ref={dropdownRef}
             className="absolute top-full left-0 right-0 mt-1 rounded-xl border overflow-hidden z-50 shadow-xl"
             style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+
+            {/* Static suggestions */}
             {suggestions.map(stock => (
               <button
                 key={stock.symbol}
@@ -154,7 +188,7 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
                 onMouseDown={e => { e.preventDefault(); setQuery(stock.symbol); fetchStock(stock.symbol, stock.name); }}
                 className="w-full flex items-center gap-3 px-4 py-3 text-left border-b last:border-b-0"
                 style={{ borderColor: "var(--card-border)" }}>
-                <span className="text-base">{REGION_LABEL[stock.region]}</span>
+                <span className="text-base w-5 text-center flex-shrink-0">{REGION_LABEL[stock.region]}</span>
                 <div className="flex-1 min-w-0">
                   <span className="font-bold text-white text-sm">{stock.symbol}</span>
                   <p className="text-xs truncate" style={{ color: "var(--muted)" }}>{stock.name}</p>
@@ -166,11 +200,51 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
                 </span>
               </button>
             ))}
+
+            {/* Divider between static and live results */}
+            {suggestions.length > 0 && (liveResults.length > 0 || liveLoading) && (
+              <div className="px-4 py-1.5 flex items-center gap-2" style={{ borderColor: "var(--card-border)" }}>
+                <span className="text-xs font-medium" style={{ color: "var(--muted)" }}>Weltweite Ergebnisse</span>
+                <div className="flex-1 h-px" style={{ background: "var(--card-border)" }} />
+              </div>
+            )}
+
+            {/* Live results from Yahoo Finance */}
+            {liveResults.map(result => (
+              <button
+                key={result.symbol}
+                type="button"
+                onMouseDown={e => { e.preventDefault(); setQuery(result.symbol); fetchStock(result.symbol, result.name); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left border-b last:border-b-0"
+                style={{ borderColor: "var(--card-border)" }}>
+                <Globe size={14} className="flex-shrink-0" style={{ color: "var(--muted)" }} />
+                <div className="flex-1 min-w-0">
+                  <span className="font-bold text-white text-sm">{result.symbol}</span>
+                  <p className="text-xs truncate" style={{ color: "var(--muted)" }}>{result.name}</p>
+                </div>
+                {result.exchange && (
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full flex-shrink-0"
+                    style={{ background: "rgba(100,116,139,0.2)", color: "var(--muted)" }}>
+                    {result.exchange}
+                  </span>
+                )}
+              </button>
+            ))}
+
+            {/* Loading indicator */}
+            {liveLoading && (
+              <div className="px-4 py-2.5 flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full border border-t-transparent animate-spin flex-shrink-0"
+                  style={{ borderColor: "var(--muted)", borderTopColor: "transparent" }} />
+                <span className="text-xs" style={{ color: "var(--muted)" }}>Suche weltweit…</span>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Search Result */}
+      {/* Search Result Preview */}
       {(searchLoading || searchResult || searchError) && (
         <div
           className="rounded-2xl border p-4"
@@ -191,7 +265,7 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
               <div className="flex gap-2 flex-shrink-0">
                 <Link
                   href={`/dashboard/asset/${searchResult.symbol}`}
-                  className="text-xs px-3 py-2 rounded-xl font-semibold text-white"
+                  className="text-xs px-3 py-2 rounded-xl font-semibold"
                   style={{ background: "var(--primary)", color: "#000" }}>
                   Details
                 </Link>

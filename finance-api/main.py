@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import yfinance as yf
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -87,6 +87,42 @@ def _compute_rsi(prices: list[float], period: int = 14) -> Optional[float]:
         return 100.0
     rs = avg_gain / avg_loss
     return round(100 - (100 / (1 + rs)), 2)
+
+
+class SearchResult(BaseModel):
+    symbol: str
+    name: str
+    exchange: Optional[str]
+    type: Optional[str]
+
+
+@app.get("/search", response_model=list[SearchResult])
+def search_stocks(q: str = Query(..., min_length=1, max_length=50)):
+    q = q.strip()
+    if not q:
+        return []
+    try:
+        url = (
+            "https://query1.finance.yahoo.com/v1/finance/search"
+            f"?q={urllib.parse.quote(q)}&quotesCount=10&newsCount=0&enableFuzzyQuery=false"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        results = []
+        for item in data.get("quotes", []):
+            symbol = item.get("symbol", "")
+            name = item.get("longname") or item.get("shortname") or symbol
+            if symbol:
+                results.append(SearchResult(
+                    symbol=symbol,
+                    name=name,
+                    exchange=item.get("exchange"),
+                    type=item.get("quoteType"),
+                ))
+        return results
+    except Exception:
+        return []
 
 
 @app.get("/health")
