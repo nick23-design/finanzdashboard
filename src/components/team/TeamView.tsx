@@ -111,6 +111,24 @@ const AGENTS: Agent[] = [
     ],
     requiresFinanceApi: true,
   },
+  {
+    id: "lena",
+    name: "Lena",
+    role: "News-Kuratorin",
+    model: "claude-haiku-4-5",
+    modelLabel: "Claude Haiku 4.5",
+    color: "#06b6d4",
+    initials: "L",
+    description:
+      "Lena kuratiert täglich den Nachrichten-Feed. Sie liest alle Schlagzeilen deiner Watchlist-Aktien, bewertet ihre Bedeutung für Investoren und übersetzt sie automatisch ins Deutsche.",
+    tasks: [
+      "Relevanz-Klassifizierung (Wichtig / Mittel / Gering)",
+      "Automatische Übersetzung ins Deutsche",
+      "Sortierung nach Investoren-Relevanz",
+      "Batch-Verarbeitung aller Watchlist-News",
+    ],
+    requiresFinanceApi: true,
+  },
 ];
 
 function AgentAvatar({ agent }: { agent: Agent }) {

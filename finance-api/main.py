@@ -217,6 +217,7 @@ class GoogleNewsItem(BaseModel):
     title: str
     source: str
     published: Optional[str]
+    url: Optional[str]
 
 
 class EdgarFacts(BaseModel):
@@ -301,12 +302,24 @@ def get_google_news(symbol: str):
             title_el = item.find("title")
             source_el = item.find("source")
             pub_el = item.find("pubDate")
+            # <link> in RSS 2.0 sits between tags; try direct find first
+            link_el = item.find("link")
+            link_url = None
+            if link_el is not None and link_el.text:
+                link_url = link_el.text.strip()
+            else:
+                # fallback: iterate children for link text node
+                for child in item:
+                    if child.tag == "link" and child.text:
+                        link_url = child.text.strip()
+                        break
             title = title_el.text if title_el is not None else ""
             if title:
                 items.append(GoogleNewsItem(
                     title=title,
                     source=source_el.text if source_el is not None else "",
                     published=pub_el.text if pub_el is not None else None,
+                    url=link_url,
                 ))
         return items
     except Exception as exc:

@@ -16,6 +16,7 @@ export interface GoogleNewsItem {
   title: string;
   source: string;
   published: string | null;
+  url: string | null;
 }
 
 export interface EdgarFactPeriod {
