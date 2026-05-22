@@ -8,7 +8,8 @@ const NAV_ITEMS = [
   { href: "/dashboard/portfolio", label: "Portfolio", icon: "💼" },
   { href: "/dashboard/news", label: "News", icon: "📰" },
   { href: "/dashboard/alerts", label: "Alarme", icon: "🔔" },
-  { href: "/dashboard/settings", label: "Einstellungen", icon: "⚙️" },
+  { href: "/dashboard/team", label: "KI-Team", icon: "🤖" },
+  { href: "/dashboard/settings", label: "Mehr", icon: "⚙️" },
 ];
 
 export function BottomNav() {
