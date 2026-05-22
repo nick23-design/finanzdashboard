@@ -150,6 +150,50 @@ def get_asset(symbol: str, request: Request):
         ) from exc
 
 
+class NewsItem(BaseModel):
+    title: str
+    publisher: str
+    published_at: Optional[str]
+
+
+@app.get("/assets/{symbol}/news", response_model=list[NewsItem])
+def get_news(symbol: str):
+    symbol = symbol.upper().strip()
+    if not TICKER_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
+
+    try:
+        ticker = yf.Ticker(symbol)
+        raw_news = ticker.news or []
+        items: list[NewsItem] = []
+
+        for item in raw_news[:10]:
+            # Handle both old and new yfinance news formats
+            content = item.get("content") if isinstance(item.get("content"), dict) else {}
+            title = content.get("title") or item.get("title", "")
+            provider = content.get("provider", {})
+            publisher = (
+                provider.get("displayName") if isinstance(provider, dict) else None
+            ) or item.get("publisher", "")
+            pub_time = content.get("pubDate") or item.get("providerPublishTime")
+
+            if isinstance(pub_time, (int, float)):
+                pub_time = datetime.fromtimestamp(pub_time, tz=timezone.utc).isoformat()
+
+            if title:
+                items.append(NewsItem(
+                    title=str(title),
+                    publisher=str(publisher) if publisher else "",
+                    published_at=str(pub_time) if pub_time else None,
+                ))
+
+        return items
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.get("/assets/{symbol}/history", response_model=list[PricePoint])
 def get_history(symbol: str, period: str = "6mo"):
     symbol = symbol.upper().strip()

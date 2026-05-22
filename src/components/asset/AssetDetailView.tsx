@@ -9,7 +9,9 @@ import { MetricCard } from "@/components/ui/MetricCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { CardSkeleton, Skeleton } from "@/components/ui/Skeleton";
 import { PriceChart } from "./PriceChart";
+import { AIAnalysisCard } from "./AIAnalysisCard";
 import type { SignalType } from "@/types/finance";
+import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
 
 interface AssetDetailViewProps {
   symbol: string;
@@ -20,6 +22,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [score, setScore] = useState<AnalysisScore | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState<AIAnalysisResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,6 +63,21 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     load();
     return () => { cancelled = true; };
   }, [symbol]);
+
+  async function runAIAnalysis() {
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await fetch(`/api/ai-analysis/${symbol}`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "KI-Analyse fehlgeschlagen");
+      setAiAnalysis(data as AIAnalysisResult);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : "Unbekannter Fehler");
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -144,6 +164,41 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
           </details>
         </div>
       )}
+
+      {/* AI Analysis */}
+      {!aiAnalysis && (
+        <div
+          className="rounded-2xl border p-4"
+          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h3 className="font-semibold text-white">KI-Analyse</h3>
+              <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                Tiefgehende Analyse durch mehrere KI-Agenten
+              </p>
+            </div>
+            <span
+              className="text-xs px-2 py-0.5 rounded-full font-medium"
+              style={{ background: "rgba(139,92,246,0.2)", color: "#a78bfa" }}>
+              Beta
+            </span>
+          </div>
+          {aiError && (
+            <p className="text-xs mb-3" style={{ color: "#ef4444" }}>
+              {aiError}
+            </p>
+          )}
+          <button
+            onClick={runAIAnalysis}
+            disabled={aiLoading}
+            className="w-full py-2.5 rounded-xl text-sm font-semibold transition-opacity disabled:opacity-60"
+            style={{ background: "var(--primary)", color: "#000" }}>
+            {aiLoading ? "Analysiere… (ca. 20 Sek.)" : "KI-Analyse starten"}
+          </button>
+        </div>
+      )}
+
+      {aiAnalysis && <AIAnalysisCard analysis={aiAnalysis} />}
 
       {/* Chart */}
       <PriceChart symbol={symbol} />

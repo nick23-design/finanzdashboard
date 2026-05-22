@@ -143,12 +143,70 @@ export interface Database {
         };
         Relationships: [];
       };
+      ai_analyses: {
+        Row: {
+          id: string;
+          symbol: string;
+          recommendation: string;
+          conviction: number;
+          summary: string;
+          bull_case: Json;
+          bear_case: Json;
+          growth_outlook: string;
+          fundamental_rating: number;
+          fundamental_positives: Json;
+          fundamental_risks: Json;
+          valuation_comment: string;
+          news_sentiment: string;
+          news_themes: Json;
+          sentiment_summary: string;
+          analyzed_at: string;
+        };
+        Insert: {
+          id?: string;
+          symbol: string;
+          recommendation: string;
+          conviction: number;
+          summary: string;
+          bull_case: Json;
+          bear_case: Json;
+          growth_outlook: string;
+          fundamental_rating: number;
+          fundamental_positives: Json;
+          fundamental_risks: Json;
+          valuation_comment: string;
+          news_sentiment: string;
+          news_themes: Json;
+          sentiment_summary: string;
+          analyzed_at?: string;
+        };
+        Update: {
+          id?: string;
+          symbol?: string;
+          recommendation?: string;
+          conviction?: number;
+          summary?: string;
+          bull_case?: Json;
+          bear_case?: Json;
+          growth_outlook?: string;
+          fundamental_rating?: number;
+          fundamental_positives?: Json;
+          fundamental_risks?: Json;
+          valuation_comment?: string;
+          news_sentiment?: string;
+          news_themes?: Json;
+          sentiment_summary?: string;
+          analyzed_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
   };
 }
 
+export type AIAnalysis = Database["public"]["Tables"]["ai_analyses"]["Row"];
 export type Profile = Database["public"]["Tables"]["profiles"]["Row"];
 export type WatchlistItem = Database["public"]["Tables"]["watchlist_items"]["Row"];
 export type AssetSnapshot = Database["public"]["Tables"]["asset_snapshots"]["Row"];
