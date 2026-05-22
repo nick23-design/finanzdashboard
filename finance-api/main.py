@@ -49,6 +49,8 @@ class AssetResponse(BaseModel):
     rsi: Optional[float]
     moving_average_50: Optional[float]
     moving_average_200: Optional[float]
+    price_change: Optional[float]
+    price_change_pct: Optional[float]
     fetched_at: str
 
 
@@ -131,6 +133,16 @@ def get_asset(symbol: str, request: Request):
         ma50 = _safe_float(sum(close_prices[-50:]) / 50) if len(close_prices) >= 50 else None
         ma200 = _safe_float(sum(close_prices[-200:]) / 200) if len(close_prices) >= 200 else None
 
+        # Daily change from history (reliable) or info fallback
+        price_change = None
+        price_change_pct = None
+        if len(close_prices) >= 2 and close_prices[-2] != 0:
+            price_change = round(close_prices[-1] - close_prices[-2], 4)
+            price_change_pct = round((price_change / close_prices[-2]) * 100, 2)
+        else:
+            price_change = _safe_float(info.get("regularMarketChange"))
+            price_change_pct = _safe_float(info.get("regularMarketChangePercent"))
+
         return AssetResponse(
             symbol=symbol,
             name=info.get("longName") or info.get("shortName") or symbol,
@@ -144,6 +156,8 @@ def get_asset(symbol: str, request: Request):
             rsi=rsi,
             moving_average_50=ma50,
             moving_average_200=ma200,
+            price_change=price_change,
+            price_change_pct=price_change_pct,
             fetched_at=datetime.now(timezone.utc).isoformat(),
         )
     except HTTPException:

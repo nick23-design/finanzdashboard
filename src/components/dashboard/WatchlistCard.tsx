@@ -17,6 +17,7 @@ interface QuickData {
   currency: string | null;
   signal: SignalType;
   totalScore: number;
+  priceChangePct: number | null;
 }
 
 export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
@@ -44,6 +45,7 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
           currency: asset?.currency ?? null,
           signal: score?.signal ?? "Neutral",
           totalScore: score?.total_score ?? 50,
+          priceChangePct: asset?.price_change_pct ?? null,
         });
       } catch {
         if (!cancelled) setData(null);
@@ -87,11 +89,26 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
         {loading ? (
           <Skeleton className="w-20" height="h-5" />
         ) : (
-          <span className="text-lg font-semibold text-white">
-            {data?.price != null
-              ? `${data.price.toFixed(2)} ${data.currency ?? ""}`
-              : "—"}
-          </span>
+          <>
+            <span className="text-lg font-semibold text-white">
+              {data?.price != null
+                ? `${data.price.toFixed(2)} ${data.currency ?? ""}`
+                : "—"}
+            </span>
+            {data?.priceChangePct != null && (
+              <span
+                className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                style={{
+                  color: data.priceChangePct >= 0 ? "#22c55e" : "#ef4444",
+                  background: data.priceChangePct >= 0
+                    ? "rgba(34,197,94,0.15)"
+                    : "rgba(239,68,68,0.15)",
+                }}>
+                {data.priceChangePct >= 0 ? "+" : ""}
+                {data.priceChangePct.toFixed(2)}%
+              </span>
+            )}
+          </>
         )}
       </div>
 

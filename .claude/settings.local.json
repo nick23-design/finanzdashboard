@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(ls node_modules/@supabase/supabase-js/dist/module/)",
+      "Bash(ls node_modules/@supabase/supabase-js/dist/)"
+    ]
+  }
+}

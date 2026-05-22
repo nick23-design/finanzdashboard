@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { logout } from "@/app/auth/actions";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Watchlist", icon: "📊" },
   { href: "/dashboard/portfolio", label: "Portfolio", icon: "💼" },
+  { href: "/dashboard/news", label: "News", icon: "📰" },
   { href: "/dashboard/alerts", label: "Alarme", icon: "🔔" },
-  { href: "/dashboard/search", label: "Suche", icon: "🔍" },
   { href: "/dashboard/settings", label: "Einstellungen", icon: "⚙️" },
 ];
 
@@ -43,16 +42,6 @@ export function BottomNav() {
         })}
       </div>
 
-      <form action={logout} className="flex-shrink-0 pr-2">
-        <button
-          type="submit"
-          className="flex flex-col items-center justify-center py-2 px-3 gap-0.5 opacity-50">
-          <span className="text-xl">🚪</span>
-          <span className="text-xs" style={{ color: "var(--muted)" }}>
-            Logout
-          </span>
-        </button>
-      </form>
     </nav>
   );
 }
