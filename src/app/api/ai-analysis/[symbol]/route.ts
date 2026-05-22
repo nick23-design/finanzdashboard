@@ -105,8 +105,12 @@ function extractText(content: Anthropic.Messages.ContentBlock[]): string {
 }
 
 function parseJSON<T>(raw: string): T {
-  const cleaned = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
-  return JSON.parse(cleaned) as T;
+  // Remove markdown fences, then extract the JSON object between first { and last }
+  const stripped = raw.replace(/```(?:json)?/g, "").trim();
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) throw new Error("No JSON object found");
+  return JSON.parse(stripped.slice(start, end + 1)) as T;
 }
 
 function formatMetrics(s: AssetSnapshot): string {
