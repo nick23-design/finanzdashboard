@@ -9,10 +9,12 @@ interface AuthFormProps {
   mode: "login" | "signup";
 }
 
-const initialState = { error: undefined as string | undefined, success: undefined as string | undefined };
+type AuthState = { error?: string; success?: string };
+const initialState: AuthState = {};
 
 export function AuthForm({ mode }: AuthFormProps) {
-  const action = mode === "login" ? login : signup;
+  const action: (_prev: unknown, fd: FormData) => Promise<AuthState> =
+    mode === "login" ? login : signup;
   const [state, formAction] = useActionState(action, initialState);
   const [isPending, startTransition] = useTransition();
 

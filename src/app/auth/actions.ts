@@ -10,7 +10,9 @@ const authSchema = z.object({
   password: z.string().min(8, "Passwort muss mindestens 8 Zeichen haben"),
 });
 
-export async function login(_prevState: unknown, formData: FormData) {
+type AuthState = { error?: string; success?: string };
+
+export async function login(_prevState: unknown, formData: FormData): Promise<AuthState> {
   const parsed = authSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
@@ -31,7 +33,7 @@ export async function login(_prevState: unknown, formData: FormData) {
   redirect("/dashboard");
 }
 
-export async function signup(_prevState: unknown, formData: FormData) {
+export async function signup(_prevState: unknown, formData: FormData): Promise<AuthState> {
   const parsed = authSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),

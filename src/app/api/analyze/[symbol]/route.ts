@@ -5,11 +5,13 @@ import { fetchAssetData } from "@/lib/finance-client";
 import { calculateScore } from "@/lib/scoring/engine";
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
-import type { AssetSnapshot } from "@/types/database";
+import type { Database, AnalysisScore, AssetSnapshot } from "@/types/database";
+
+type AnalysisScoreInsert = Database["public"]["Tables"]["analysis_scores"]["Insert"];
 
 const CACHE_TTL_HOURS = 6;
 
-async function getCachedScore(symbol: string) {
+async function getCachedScore(symbol: string): Promise<AnalysisScore | null> {
   const supabase = await createClient();
   const cutoff = new Date(
     Date.now() - CACHE_TTL_HOURS * 60 * 60 * 1000
@@ -24,7 +26,9 @@ async function getCachedScore(symbol: string) {
     .limit(1)
     .single();
 
-  return data ?? null;
+  // Cast needed: Supabase's inferred type from .single() is a union that
+  // TypeScript cannot narrow to a plain object via truthiness alone.
+  return (data as AnalysisScore | null) ?? null;
 }
 
 export async function POST(
@@ -80,7 +84,7 @@ export async function POST(
     const score = calculateScore(snapshot);
 
     const supabase = await createClient();
-    const { data: saved, error } = await supabase
+    const { error: insertError } = await supabase
       .from("analysis_scores")
       .insert({
         symbol: score.symbol,
@@ -90,13 +94,21 @@ export async function POST(
         risk_score: score.riskScore,
         signal: score.signal,
         explanation: score.explanation,
-      })
-      .select()
-      .single();
+      });
 
-    if (error) throw new Error(error.message);
+    if (insertError) throw new Error(insertError.message);
 
-    return NextResponse.json({ ...saved, fromCache: false });
+    return NextResponse.json({
+      symbol: score.symbol,
+      total_score: score.totalScore,
+      fundamental_score: score.fundamentalScore,
+      technical_score: score.technicalScore,
+      risk_score: score.riskScore,
+      signal: score.signal,
+      explanation: score.explanation,
+      created_at: new Date().toISOString(),
+      fromCache: false,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unbekannter Fehler";
     return NextResponse.json({ error: message }, { status: 503 });

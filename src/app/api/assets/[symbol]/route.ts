@@ -4,10 +4,13 @@ import { tickerSchema } from "@/lib/validation";
 import { fetchAssetData } from "@/lib/finance-client";
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
+import type { Database, AssetSnapshot } from "@/types/database";
+
+type AssetSnapshotInsert = Database["public"]["Tables"]["asset_snapshots"]["Insert"];
 
 const CACHE_TTL_HOURS = 6;
 
-async function getCachedSnapshot(symbol: string) {
+async function getCachedSnapshot(symbol: string): Promise<AssetSnapshot | null> {
   const supabase = await createClient();
   const cutoff = new Date(
     Date.now() - CACHE_TTL_HOURS * 60 * 60 * 1000
@@ -22,12 +25,12 @@ async function getCachedSnapshot(symbol: string) {
     .limit(1)
     .single();
 
-  return data ?? null;
+  return (data as AssetSnapshot | null) ?? null;
 }
 
 async function saveSnapshot(raw: Awaited<ReturnType<typeof fetchAssetData>>) {
   const supabase = await createClient();
-  await supabase.from("asset_snapshots").insert({
+  const insertPayload: AssetSnapshotInsert = {
     symbol: raw.symbol,
     price: raw.price,
     currency: raw.currency,
@@ -39,7 +42,8 @@ async function saveSnapshot(raw: Awaited<ReturnType<typeof fetchAssetData>>) {
     rsi: raw.rsi,
     moving_average_50: raw.moving_average_50,
     moving_average_200: raw.moving_average_200,
-  });
+  };
+  await supabase.from("asset_snapshots").insert(insertPayload);
 }
 
 export async function GET(
