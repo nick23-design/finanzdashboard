@@ -70,6 +70,14 @@ interface SentimentAnalysis {
   sentiment_summary: string;
 }
 
+export interface PriceLevels {
+  entry: number | null;
+  target: number | null;
+  stop_loss: number | null;
+  entry_rationale: string;
+  target_rationale: string;
+}
+
 interface SynthesisResult {
   recommendation: string;
   conviction: number;
@@ -77,6 +85,7 @@ interface SynthesisResult {
   bull_case: string[];
   bear_case: string[];
   growth_outlook: string;
+  price_levels?: PriceLevels | null;
 }
 
 interface FactCheckResult {
@@ -97,6 +106,7 @@ export interface AIAnalysisResult extends SynthesisResult {
   fundamental: FundamentalAnalysis;
   sentiment: SentimentAnalysis;
   market_intel: MarketIntelAnalysis | null;
+  price_levels: PriceLevels | null;
   analyzed_at: string;
   from_cache: boolean;
 }
@@ -281,11 +291,11 @@ ${sentiment.sentiment_summary}${marketIntelSection}`;
     max_tokens: 1200,
     thinking: { type: "adaptive" },
     system:
-      "Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Investmentempfehlung auf Deutsch. WICHTIG: Beziehe dich ausschließlich auf die bereitgestellten Daten. Erwähne keine Firmennamen, Deals, Produkte oder Ereignisse, die nicht explizit in den Daten enthalten sind. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
+      "Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Investmentempfehlung auf Deutsch. WICHTIG: Beziehe dich ausschließlich auf die bereitgestellten Daten. Erwähne keine Firmennamen, Deals, Produkte oder Ereignisse, die nicht explizit in den Daten enthalten sind. Berechne konkrete Kursziele (price_levels): entry als idealen Einstieg (nahe MA50 oder -3% bei RSI>50), target als Kursziel (Analysten-Konsens bevorzugt, sonst +15-25%), stop_loss als -8-12% unter entry. Nutze null wenn Datenlage unklar. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
     messages: [
       {
         role: "user",
-        content: `Erstelle eine Investmentempfehlung:\n\n${context}\n\nJSON-Format:\n{"recommendation":"Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen","conviction":<1-10>,"summary":"2-3 Sätze","bull_case":["...","...","..."],"bear_case":["...","..."],"growth_outlook":"Ausblick auf das Wachstumspotenzial"}`,
+        content: `Erstelle eine Investmentempfehlung:\n\n${context}\n\nJSON-Format:\n{"recommendation":"Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen","conviction":<1-10>,"summary":"2-3 Sätze","bull_case":["...","...","..."],"bear_case":["...","..."],"growth_outlook":"Ausblick","price_levels":{"entry":<Zahl|null>,"target":<Zahl|null>,"stop_loss":<Zahl|null>,"entry_rationale":"Kurzbegründung","target_rationale":"Kurzbegründung"}}`,
       },
     ],
   });
@@ -487,6 +497,7 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
         sentiment_summary: data.sentiment_summary,
       },
       market_intel: (data.extra_data as Record<string, unknown>)?.market_intel as MarketIntelAnalysis | null ?? null,
+      price_levels: (data.extra_data as Record<string, unknown>)?.price_levels as PriceLevels | null ?? null,
       analyzed_at: data.analyzed_at,
       from_cache: true,
     };
@@ -513,9 +524,10 @@ async function saveAnalysis(result: AIAnalysisResult): Promise<void> {
       news_sentiment: result.sentiment.sentiment,
       news_themes: result.sentiment.key_themes,
       sentiment_summary: result.sentiment.sentiment_summary,
-      extra_data: result.market_intel
-        ? ({ market_intel: result.market_intel } as unknown as import("@/types/database").Json)
-        : {},
+      extra_data: ({
+        ...(result.market_intel ? { market_intel: result.market_intel } : {}),
+        ...(result.price_levels ? { price_levels: result.price_levels } : {}),
+      }) as unknown as import("@/types/database").Json,
     };
     await supabase.from("ai_analyses").insert(payload);
   } catch {
@@ -603,6 +615,7 @@ export async function POST(
       fundamental,
       sentiment,
       market_intel,
+      price_levels: synthesis.price_levels ?? null,
       analyzed_at: new Date().toISOString(),
       from_cache: false,
     };

@@ -125,6 +125,20 @@ def search_stocks(q: str = Query(..., min_length=1, max_length=50)):
         return []
 
 
+@app.get("/trending")
+def get_trending():
+    """Currently trending ticker symbols on Yahoo Finance (US market)."""
+    try:
+        url = "https://query1.finance.yahoo.com/v1/finance/trending/US?count=15"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        quotes = data.get("finance", {}).get("result", [{}])[0].get("quotes", [])
+        return [{"symbol": q.get("symbol", "").strip()} for q in quotes if q.get("symbol")]
+    except Exception:
+        return []
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

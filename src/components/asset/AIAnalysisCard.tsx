@@ -1,6 +1,6 @@
 "use client";
 
-import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
+import type { AIAnalysisResult, PriceLevels } from "@/app/api/ai-analysis/[symbol]/route";
 
 interface Props {
   analysis: AIAnalysisResult;
@@ -37,6 +37,44 @@ const TREND_STYLES: Record<string, { label: string; color: string }> = {
   stable:   { label: "Trends stabil",  color: "#ca8a04" },
   declining:{ label: "Trends fallen",  color: "#ef4444" },
 };
+
+function PriceLevelSection({ levels }: { levels: PriceLevels }) {
+  const fmt = (n: number | null) => n != null ? `$${n.toFixed(2)}` : "—";
+  return (
+    <div
+      className="rounded-xl p-3 space-y-2"
+      style={{ background: "rgba(100,116,139,0.08)", border: "1px solid var(--card-border)" }}>
+      <p className="text-xs font-semibold text-white">Kursziele</p>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div>
+          <p className="text-sm font-bold" style={{ color: "#22c55e" }}>{fmt(levels.entry)}</p>
+          <p className="text-xs font-medium" style={{ color: "#22c55e" }}>Einstieg</p>
+          {levels.entry_rationale && (
+            <p className="text-[10px] mt-0.5 leading-tight" style={{ color: "var(--muted)" }}>
+              {levels.entry_rationale}
+            </p>
+          )}
+        </div>
+        <div>
+          <p className="text-sm font-bold" style={{ color: "#f59e0b" }}>{fmt(levels.target)}</p>
+          <p className="text-xs font-medium" style={{ color: "#f59e0b" }}>Kursziel</p>
+          {levels.target_rationale && (
+            <p className="text-[10px] mt-0.5 leading-tight" style={{ color: "var(--muted)" }}>
+              {levels.target_rationale}
+            </p>
+          )}
+        </div>
+        <div>
+          <p className="text-sm font-bold" style={{ color: "#ef4444" }}>{fmt(levels.stop_loss)}</p>
+          <p className="text-xs font-medium" style={{ color: "#ef4444" }}>Stop-Loss</p>
+          <p className="text-[10px] mt-0.5 leading-tight" style={{ color: "var(--muted)" }}>
+            Risikobegrenzung
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ConvictionBar({ value }: { value: number }) {
   const pct = Math.min(100, Math.max(0, (value / 10) * 100));
@@ -100,6 +138,11 @@ export function AIAnalysisCard({ analysis }: Props) {
         </div>
         <ConvictionBar value={analysis.conviction} />
       </div>
+
+      {/* Price Levels */}
+      {analysis.price_levels && (
+        <PriceLevelSection levels={analysis.price_levels} />
+      )}
 
       {/* Summary */}
       <p className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>

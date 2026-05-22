@@ -7,6 +7,7 @@ import { CardSkeleton } from "@/components/ui/Skeleton";
 import { searchStocks, STOCKS, type StockEntry } from "@/lib/stocks-list";
 import Link from "next/link";
 import { Search, X, Plus, Globe } from "lucide-react";
+import { HotPickCard } from "./HotPickCard";
 
 const REGION_LABEL: Record<StockEntry["region"], string> = {
   US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
@@ -141,6 +142,9 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
           {items.length} Aktie{items.length !== 1 ? "n" : ""}
         </span>
       </div>
+
+      {/* Hot Pick */}
+      <HotPickCard />
 
       {/* Search Bar */}
       <div className="relative">

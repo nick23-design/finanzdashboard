@@ -236,6 +236,42 @@ export interface Database {
         };
         Relationships: [];
       };
+      hot_picks: {
+        Row: {
+          id: string;
+          user_id: string;
+          symbol: string;
+          name: string;
+          price: number | null;
+          signal: string;
+          score: number;
+          reason: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          symbol: string;
+          name: string;
+          price?: number | null;
+          signal: string;
+          score: number;
+          reason: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          symbol?: string;
+          name?: string;
+          price?: number | null;
+          signal?: string;
+          score?: number;
+          reason?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       price_alerts: {
         Row: {
           id: string;
@@ -279,6 +315,7 @@ export interface Database {
 }
 
 export type AIAnalysis = Database["public"]["Tables"]["ai_analyses"]["Row"];
+export type HotPick = Database["public"]["Tables"]["hot_picks"]["Row"];
 export type PortfolioPosition = Database["public"]["Tables"]["portfolio_positions"]["Row"];
 export type PriceAlert = Database["public"]["Tables"]["price_alerts"]["Row"];
 export type Profile = Database["public"]["Tables"]["profiles"]["Row"];

@@ -112,6 +112,24 @@ const AGENTS: Agent[] = [
     requiresFinanceApi: true,
   },
   {
+    id: "finn",
+    name: "Finn",
+    role: "Entdeckungs-Agent",
+    model: "claude-haiku-4-5",
+    modelLabel: "Claude Haiku 4.5",
+    color: "#10b981",
+    initials: "F",
+    description:
+      "Finn scannt täglich Yahoo Finance Trending Tickers und kombiniert sie mit den Watchlist-Aktien des Nutzers. Er bewertet alle Kandidaten anhand ihrer Analyse-Scores und kürt täglich den Hot Pick — die vielversprechendste Aktie des Tages.",
+    tasks: [
+      "Yahoo Finance Trending Tickers auswerten",
+      "Score-basierte Kandidatenauswahl",
+      "Tagesaktueller Hot Pick mit Begründung",
+      "Entdeckung außerhalb der eigenen Watchlist",
+    ],
+    requiresFinanceApi: true,
+  },
+  {
     id: "lena",
     name: "Lena",
     role: "News-Kuratorin",
