@@ -329,7 +329,10 @@ async function runMarketIntelAgent(
   trends: TrendPoint[],
   institutional: InstitutionalData | null,
 ): Promise<MarketIntelAnalysis> {
-  const noData = trades.length === 0 && trends.length === 0 && !institutional;
+  const hasInstitutionalData =
+    institutional != null &&
+    (institutional.pct_institutions != null || institutional.top_holders.length > 0);
+  const noData = trades.length === 0 && trends.length === 0 && !hasInstitutionalData;
   if (noData) {
     return {
       insider_signal: "neutral",

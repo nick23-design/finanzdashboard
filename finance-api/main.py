@@ -433,12 +433,13 @@ def get_insider_trades(symbol: str):
     accessions = recent.get("accessionNumber", [])
     primary_docs = recent.get("primaryDocument", [])
 
-    # Collect the 5 most recent Form 4 filings
+    # Scan up to 30 most recent Form 4 filings (executives at large firms file many
+    # non-P/S transactions like grants and option exercises before an open-market trade)
     form4_list = [
         (accessions[i], primary_docs[i])
         for i, f in enumerate(forms)
         if f in ("4", "4/A") and i < len(accessions) and i < len(primary_docs)
-    ][:5]
+    ][:30]
 
     all_trades: list[dict] = []
     with ThreadPoolExecutor(max_workers=5) as pool:
@@ -462,6 +463,8 @@ def get_trends(symbol: str):
     if not TICKER_RE.match(symbol):
         raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
 
+    # pytrends is often blocked by Google from cloud server IPs.
+    # Return empty list (not an error) so the analysis still runs without trend data.
     try:
         from pytrends.request import TrendReq
         pt = TrendReq(hl="en-US", tz=0, timeout=(10, 15))
@@ -476,10 +479,8 @@ def get_trends(symbol: str):
             for ts, v in zip(df.index, df[symbol])
             if not math.isnan(float(v))
         ]
-    except ImportError:
-        raise HTTPException(status_code=503, detail="pytrends nicht installiert")
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception:
+        return []  # Graceful fallback – Google often blocks server IPs
 
 
 @app.get("/assets/{symbol}/institutional", response_model=InstitutionalData)
@@ -497,15 +498,22 @@ def get_institutional(symbol: str):
         try:
             major = ticker.major_holders
             if major is not None and not major.empty:
-                for _, row in major.iterrows():
+                for idx_val, row in major.iterrows():
                     row_vals = list(row)
-                    if len(row_vals) < 2:
+                    # Newer yfinance: index IS the label (string), single value column
+                    # Older yfinance: col 0 = value, col 1 = label
+                    if isinstance(idx_val, str) and any(c.isalpha() for c in idx_val):
+                        label = idx_val.lower()
+                        val_raw = row_vals[0] if row_vals else None
+                    elif len(row_vals) >= 2:
+                        label = str(row_vals[1]).lower()
+                        val_raw = row_vals[0]
+                    else:
                         continue
-                    label = str(row_vals[1]).lower()
-                    val = _safe_float(str(row_vals[0]).replace("%", "").strip())
+                    val = _safe_float(str(val_raw).replace("%", "").strip()) if val_raw is not None else None
                     if val is not None and val > 1:
-                        val /= 100  # convert from percent to fraction
-                    if "insider" in label and pct_insider is None:
+                        val /= 100
+                    if "insider" in label and "float" not in label and pct_insider is None:
                         pct_insider = val
                     elif "institution" in label and "float" not in label and pct_institutions is None:
                         pct_institutions = val
@@ -515,14 +523,37 @@ def get_institutional(symbol: str):
         try:
             inst_df = ticker.institutional_holders
             if inst_df is not None and not inst_df.empty:
-                col_map = {c.lower().replace(" ", "_"): c for c in inst_df.columns}
                 for _, row in inst_df.head(5).iterrows():
-                    holder = str(row.get(col_map.get("holder", "Holder"), row.iloc[1] if len(row) > 1 else ""))
-                    pct_col = col_map.get("pctheld", col_map.get("%_out", None))
-                    pct = _safe_float(row.get(pct_col)) if pct_col else None
-                    shares_col = col_map.get("shares", None)
-                    shares = _safe_int(row.get(shares_col)) if shares_col else None
-                    top_holders.append({"holder": holder, "pct_held": pct, "shares": shares})
+                    row_dict = row.to_dict()
+                    # Find holder name – try all known column variants
+                    holder = ""
+                    for key in ["Holder", "holder", "Name", "name", "Organization"]:
+                        v = row_dict.get(key)
+                        if v and str(v) not in ("nan", "None", ""):
+                            holder = str(v)
+                            break
+                    if not holder:
+                        for v in row_dict.values():
+                            if isinstance(v, str) and v not in ("nan", "None", ""):
+                                holder = v
+                                break
+                    # Find % held
+                    pct = None
+                    for key in ["pctHeld", "% Out", "Pct Held", "% Held", "pct_held"]:
+                        if key in row_dict:
+                            pct = _safe_float(row_dict[key])
+                            if pct is not None:
+                                break
+                    # Find shares
+                    shares = None
+                    for key in ["Shares", "shares", "Value"]:
+                        if key in row_dict:
+                            s = _safe_int(row_dict[key])
+                            if s and s > 0:
+                                shares = s
+                                break
+                    if holder:
+                        top_holders.append({"holder": holder, "pct_held": pct, "shares": shares})
         except Exception:
             pass
 
