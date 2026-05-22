@@ -117,6 +117,25 @@ export async function fetchEdgarFacts(symbol: string): Promise<EdgarFacts | null
   return res.json();
 }
 
+export interface AnalystData {
+  mean_target: number | null;
+  high_target: number | null;
+  low_target: number | null;
+  strong_buy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strong_sell: number;
+}
+
+export async function fetchAnalystData(symbol: string): Promise<AnalystData | null> {
+  const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/analyst-data`, {
+    next: { revalidate: 0 },
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
 export async function fetchPriceHistory(
   symbol: string,
   period: string = "6mo"

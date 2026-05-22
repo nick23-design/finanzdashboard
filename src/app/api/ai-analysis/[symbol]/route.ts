@@ -39,6 +39,7 @@ import {
   fetchInsiderTrades,
   fetchTrends,
   fetchInstitutional,
+  fetchAnalystData,
 } from "@/lib/finance-client";
 import type {
   GoogleNewsItem,
@@ -46,6 +47,7 @@ import type {
   InsiderTrade,
   TrendPoint,
   InstitutionalData,
+  AnalystData,
 } from "@/lib/finance-client";
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
@@ -75,6 +77,12 @@ interface SynthesisResult {
   bull_case: string[];
   bear_case: string[];
   growth_outlook: string;
+}
+
+interface FactCheckResult {
+  corrections: string[];
+  verified_claims: string[];
+  confidence_adjustment: number; // -3 to +3 applied to conviction
 }
 
 interface MarketIntelAnalysis {
@@ -158,6 +166,20 @@ function formatEdgarTrend(facts: EdgarFacts | null): string {
   return lines.join("\n");
 }
 
+function formatAnalystData(a: AnalystData | null): string {
+  if (!a) return "";
+  const total = a.strong_buy + a.buy + a.hold + a.sell + a.strong_sell;
+  if (total === 0 && a.mean_target == null) return "";
+  const lines: string[] = [];
+  if (a.mean_target != null) {
+    lines.push(`Analysten-Kursziel: Ø $${a.mean_target.toFixed(2)} (Hoch $${a.high_target?.toFixed(2) ?? "N/A"} / Tief $${a.low_target?.toFixed(2) ?? "N/A"})`);
+  }
+  if (total > 0) {
+    lines.push(`Analysten-Empfehlungen (${total} Analysten): Strong Buy ${a.strong_buy} | Buy ${a.buy} | Hold ${a.hold} | Sell ${a.sell} | Strong Sell ${a.strong_sell}`);
+  }
+  return lines.join("\n");
+}
+
 async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null): Promise<FundamentalAnalysis> {
   const client = getClient();
   const edgarSection = formatEdgarTrend(edgar);
@@ -227,6 +249,7 @@ async function runSynthesisAgent(
   fundamental: FundamentalAnalysis,
   sentiment: SentimentAnalysis,
   marketIntel: MarketIntelAnalysis | null,
+  analystData: AnalystData | null,
 ): Promise<SynthesisResult> {
   const client = getClient();
 
@@ -238,10 +261,12 @@ Google Trends: ${marketIntel.trends_momentum.toUpperCase()}
 Beobachtungen: ${marketIntel.key_observations.join(" | ")}`
     : "";
 
+  const analystSection = formatAnalystData(analystData);
+
   const context = `AKTIE: ${symbol}
 KENNZAHLEN:
 ${formatMetrics(s)}
-
+${analystSection ? "\nANALYSTEN-KONSENS:\n" + analystSection : ""}
 WACHSTUMSBEWERTUNG: ${fundamental.growth_rating}/10
 Stärken: ${fundamental.key_positives.join(" | ")}
 Risiken: ${fundamental.key_risks.join(" | ")}
@@ -256,7 +281,7 @@ ${sentiment.sentiment_summary}${marketIntelSection}`;
     max_tokens: 1200,
     thinking: { type: "adaptive" },
     system:
-      "Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Investmentempfehlung auf Deutsch. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
+      "Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Investmentempfehlung auf Deutsch. WICHTIG: Beziehe dich ausschließlich auf die bereitgestellten Daten. Erwähne keine Firmennamen, Deals, Produkte oder Ereignisse, die nicht explizit in den Daten enthalten sind. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
     messages: [
       {
         role: "user",
@@ -278,6 +303,62 @@ ${sentiment.sentiment_summary}${marketIntelSection}`;
     return parseJSON<SynthesisResult>(extractText(response.content));
   } catch {
     return fallback;
+  }
+}
+
+async function runFactCheckAgent(
+  symbol: string,
+  synthesis: SynthesisResult,
+  analystData: AnalystData | null,
+  googleNews: GoogleNewsItem[],
+): Promise<SynthesisResult> {
+  const client = getClient();
+
+  const newsHeadlines = googleNews.slice(0, 10).map(n => `- ${n.title}`).join("\n") || "Keine Schlagzeilen verfügbar";
+  const analystSection = formatAnalystData(analystData) || "Keine Analysten-Daten verfügbar";
+
+  const draftText = `Empfehlung: ${synthesis.recommendation} (Überzeugung: ${synthesis.conviction}/10)
+Zusammenfassung: ${synthesis.summary}
+Bull-Case: ${synthesis.bull_case.join(" | ")}
+Bear-Case: ${synthesis.bear_case.join(" | ")}
+Wachstumsausblick: ${synthesis.growth_outlook}`;
+
+  const prompt = `Du prüfst eine KI-generierte Aktienanalyse für ${symbol} auf Faktengenauigkeit.
+
+VERFÜGBARE FAKTEN:
+${analystSection}
+
+AKTUELLE SCHLAGZEILEN:
+${newsHeadlines}
+
+ZU PRÜFENDE ANALYSE:
+${draftText}
+
+Identifiziere Aussagen in der Analyse, die NICHT durch die obigen Fakten belegt sind (z.B. erfundene Firmennamen, nicht genannte Deals, nicht belegte Zahlen). Korrigiere NUR nachweisliche Fehler.
+
+JSON-Format:
+{"corrections":["konkrete Korrektur oder leer array wenn alles korrekt"],"verified_claims":["verifizierte Aussagen"],"confidence_adjustment":<-3 bis 0, negativ wenn Fehler gefunden>}`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 600,
+      system: "Du bist ein kritischer Fact-Checker für Finanzanalysen. Antworte ausschließlich mit validem JSON.",
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const factCheck = parseJSON<FactCheckResult>(extractText(response.content));
+
+    if (factCheck.corrections.length > 0) {
+      const convictionAdjusted = Math.max(1, Math.min(10,
+        synthesis.conviction + (factCheck.confidence_adjustment ?? 0)
+      ));
+      return { ...synthesis, conviction: convictionAdjusted };
+    }
+
+    return synthesis;
+  } catch {
+    return synthesis;
   }
 }
 
@@ -480,7 +561,7 @@ export async function POST(
   if (cached) return NextResponse.json(cached);
 
   try {
-    const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional] =
+    const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData] =
       await Promise.all([
         fetchAssetData(symbol),
         fetchGoogleNews(symbol).catch(() => [] as GoogleNewsItem[]),
@@ -488,6 +569,7 @@ export async function POST(
         fetchInsiderTrades(symbol).catch(() => [] as InsiderTrade[]),
         fetchTrends(symbol).catch(() => [] as TrendPoint[]),
         fetchInstitutional(symbol).catch(() => null),
+        fetchAnalystData(symbol).catch(() => null as AnalystData | null),
       ]);
 
     const snapshot: AssetSnapshot = {
@@ -512,7 +594,8 @@ export async function POST(
       runMarketIntelAgent(insiderTrades, trends, institutional),
     ]);
 
-    const synthesis = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, market_intel);
+    const rawSynthesis = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, market_intel, analystData);
+    const synthesis = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews);
 
     const result: AIAnalysisResult = {
       symbol,

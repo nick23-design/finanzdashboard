@@ -327,6 +327,59 @@ def get_edgar_facts(symbol: str):
     return result
 
 
+class AnalystData(BaseModel):
+    mean_target: Optional[float]
+    high_target: Optional[float]
+    low_target: Optional[float]
+    strong_buy: int = 0
+    buy: int = 0
+    hold: int = 0
+    sell: int = 0
+    strong_sell: int = 0
+
+
+@app.get("/assets/{symbol}/analyst-data", response_model=AnalystData)
+def get_analyst_data(symbol: str):
+    symbol = symbol.upper().strip()
+    if not TICKER_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
+
+    try:
+        ticker = yf.Ticker(symbol)
+        mean_t = high_t = low_t = None
+        strong_buy = buy = hold = sell = strong_sell = 0
+
+        try:
+            targets = ticker.analyst_price_targets
+            if isinstance(targets, dict):
+                mean_t = _safe_float(targets.get("mean"))
+                high_t = _safe_float(targets.get("high"))
+                low_t = _safe_float(targets.get("low"))
+        except Exception:
+            pass
+
+        try:
+            rec = ticker.recommendations_summary
+            if rec is not None and not rec.empty:
+                # Take most recent period (first row after sorting)
+                row = rec.sort_values("period").iloc[-1].to_dict() if "period" in rec.columns else rec.iloc[0].to_dict()
+                strong_buy = int(_safe_float(row.get("strongBuy", 0)) or 0)
+                buy = int(_safe_float(row.get("buy", 0)) or 0)
+                hold = int(_safe_float(row.get("hold", 0)) or 0)
+                sell = int(_safe_float(row.get("sell", 0)) or 0)
+                strong_sell = int(_safe_float(row.get("strongSell", 0)) or 0)
+        except Exception:
+            pass
+
+        return AnalystData(
+            mean_target=mean_t, high_target=high_t, low_target=low_t,
+            strong_buy=strong_buy, buy=buy, hold=hold,
+            sell=sell, strong_sell=strong_sell,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 class InsiderTrade(BaseModel):
     date: str
     name: str
