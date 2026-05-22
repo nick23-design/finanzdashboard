@@ -327,6 +327,49 @@ def get_edgar_facts(symbol: str):
     return result
 
 
+class EarningsCalendar(BaseModel):
+    next_earnings_date: Optional[str]
+    eps_estimate: Optional[float]
+    revenue_estimate: Optional[int]
+
+
+@app.get("/assets/{symbol}/calendar", response_model=EarningsCalendar)
+def get_calendar(symbol: str):
+    symbol = symbol.upper().strip()
+    if not TICKER_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
+    try:
+        ticker = yf.Ticker(symbol)
+        cal = ticker.calendar
+        next_date = eps_est = None
+        rev_est = None
+        if isinstance(cal, dict):
+            dates = cal.get("Earnings Date")
+            if dates is not None:
+                try:
+                    date_list = (
+                        list(dates)
+                        if hasattr(dates, "__iter__") and not isinstance(dates, str)
+                        else [dates]
+                    )
+                    for d in date_list:
+                        if d is not None:
+                            next_date = str(d)[:10]
+                            break
+                except Exception:
+                    pass
+            eps_est = _safe_float(cal.get("Earnings Average") or cal.get("EPS Estimate"))
+            rev_raw = cal.get("Revenue Average") or cal.get("Revenue Estimate")
+            rev_est = _safe_int(rev_raw)
+        return EarningsCalendar(
+            next_earnings_date=next_date,
+            eps_estimate=eps_est,
+            revenue_estimate=rev_est,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 class AnalystData(BaseModel):
     mean_target: Optional[float]
     high_target: Optional[float]

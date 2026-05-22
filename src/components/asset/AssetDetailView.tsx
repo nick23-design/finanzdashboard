@@ -10,6 +10,10 @@ import { Disclaimer } from "@/components/ui/Disclaimer";
 import { CardSkeleton, Skeleton } from "@/components/ui/Skeleton";
 import { PriceChart } from "./PriceChart";
 import { AIAnalysisCard } from "./AIAnalysisCard";
+import { EarningsCard } from "./EarningsCard";
+import { AnalysisHistoryCard } from "./AnalysisHistoryCard";
+import { fetchEarningsCalendar } from "@/lib/finance-client";
+import type { EarningsCalendar } from "@/lib/finance-client";
 import type { SignalType } from "@/types/finance";
 import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
 
@@ -25,6 +29,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysisResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [earnings, setEarnings] = useState<EarningsCalendar | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,6 +43,8 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
           fetch(`/api/assets/${symbol}`),
           fetch(`/api/analyze/${symbol}`, { method: "POST" }),
         ]);
+
+        fetchEarningsCalendar(symbol).then(e => { if (e) setEarnings(e); }).catch(() => null);
 
         if (cancelled) return;
 
@@ -199,6 +206,12 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
       )}
 
       {aiAnalysis && <AIAnalysisCard analysis={aiAnalysis} />}
+
+      {/* Earnings Calendar */}
+      {earnings && <EarningsCard earnings={earnings} />}
+
+      {/* Analysis History */}
+      <AnalysisHistoryCard symbol={symbol} />
 
       {/* Chart */}
       <PriceChart symbol={symbol} />

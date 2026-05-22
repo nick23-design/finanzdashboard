@@ -128,6 +128,20 @@ export interface AnalystData {
   strong_sell: number;
 }
 
+export interface EarningsCalendar {
+  next_earnings_date: string | null;
+  eps_estimate: number | null;
+  revenue_estimate: number | null;
+}
+
+export async function fetchEarningsCalendar(symbol: string): Promise<EarningsCalendar | null> {
+  const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/calendar`, {
+    next: { revalidate: 0 },
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
 export async function fetchAnalystData(symbol: string): Promise<AnalystData | null> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/analyst-data`, {
     next: { revalidate: 0 },

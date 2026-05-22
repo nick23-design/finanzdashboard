@@ -203,6 +203,75 @@ export interface Database {
         };
         Relationships: [];
       };
+      portfolio_positions: {
+        Row: {
+          id: string;
+          user_id: string;
+          symbol: string;
+          name: string;
+          shares: number;
+          purchase_price: number;
+          purchase_date: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          symbol: string;
+          name?: string;
+          shares: number;
+          purchase_price: number;
+          purchase_date: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          symbol?: string;
+          name?: string;
+          shares?: number;
+          purchase_price?: number;
+          purchase_date?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      price_alerts: {
+        Row: {
+          id: string;
+          user_id: string;
+          symbol: string;
+          name: string;
+          target_price: number;
+          direction: "above" | "below";
+          triggered: boolean;
+          triggered_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          symbol: string;
+          name?: string;
+          target_price: number;
+          direction: "above" | "below";
+          triggered?: boolean;
+          triggered_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          symbol?: string;
+          name?: string;
+          target_price?: number;
+          direction?: "above" | "below";
+          triggered?: boolean;
+          triggered_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -210,6 +279,8 @@ export interface Database {
 }
 
 export type AIAnalysis = Database["public"]["Tables"]["ai_analyses"]["Row"];
+export type PortfolioPosition = Database["public"]["Tables"]["portfolio_positions"]["Row"];
+export type PriceAlert = Database["public"]["Tables"]["price_alerts"]["Row"];
 export type Profile = Database["public"]["Tables"]["profiles"]["Row"];
 export type WatchlistItem = Database["public"]["Tables"]["watchlist_items"]["Row"];
 export type AssetSnapshot = Database["public"]["Tables"]["asset_snapshots"]["Row"];

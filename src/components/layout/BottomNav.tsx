@@ -6,6 +6,8 @@ import { logout } from "@/app/auth/actions";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Watchlist", icon: "📊" },
+  { href: "/dashboard/portfolio", label: "Portfolio", icon: "💼" },
+  { href: "/dashboard/alerts", label: "Alarme", icon: "🔔" },
   { href: "/dashboard/search", label: "Suche", icon: "🔍" },
   { href: "/dashboard/settings", label: "Einstellungen", icon: "⚙️" },
 ];
