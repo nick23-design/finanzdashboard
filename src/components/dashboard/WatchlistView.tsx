@@ -1,10 +1,16 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef, useEffect } from "react";
 import type { WatchlistItem } from "@/types/database";
 import { WatchlistCard } from "./WatchlistCard";
-import { AddTickerForm } from "./AddTickerForm";
 import { CardSkeleton } from "@/components/ui/Skeleton";
+import { searchStocks, STOCKS, type StockEntry } from "@/lib/stocks-list";
+import Link from "next/link";
+import { Search, X, Plus } from "lucide-react";
+
+const REGION_LABEL: Record<StockEntry["region"], string> = {
+  US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
+};
 
 interface WatchlistViewProps {
   initialItems: WatchlistItem[];
@@ -14,36 +20,241 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
   const [items, setItems] = useState<WatchlistItem[]>(initialItems);
   const [isPending, startTransition] = useTransition();
 
-  function handleAdd(item: WatchlistItem) {
-    setItems((prev) => [item, ...prev]);
+  // Search state
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<StockEntry[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchResult, setSearchResult] = useState<{ symbol: string; name: string; price: number | null; currency: string | null } | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [addedSymbol, setAddedSymbol] = useState<string | null>(null);
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const hits = searchStocks(query);
+    setSuggestions(hits);
+    setShowSuggestions(query.length >= 1 && hits.length > 0);
+    if (!query) { setSearchResult(null); setSearchError(null); }
+  }, [query]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
+        !inputRef.current?.contains(e.target as Node)
+      ) setShowSuggestions(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  async function fetchStock(symbol: string, name?: string) {
+    setSearchError(null);
+    setSearchResult(null);
+    setShowSuggestions(false);
+    setSearchLoading(true);
+    try {
+      const res = await fetch(`/api/assets/${symbol}`);
+      const data = await res.json();
+      if (!res.ok) { setSearchError(data.error ?? "Nicht gefunden"); return; }
+      setSearchResult({ symbol, name: data.name || name || symbol, price: data.price, currency: data.currency });
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const sym = query.trim().toUpperCase();
+    if (sym) fetchStock(sym);
+  }
+
+  async function addToWatchlist(symbol: string, name: string) {
+    const res = await fetch("/api/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, name }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setItems(prev => [data as WatchlistItem, ...prev]);
+      setAddedSymbol(symbol);
+      setQuery("");
+      setSearchResult(null);
+      setTimeout(() => setAddedSymbol(null), 2000);
+    } else {
+      setSearchError(data.error ?? "Fehler");
+    }
   }
 
   function handleRemove(id: string) {
     startTransition(async () => {
       const res = await fetch(`/api/watchlist/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setItems((prev) => prev.filter((i) => i.id !== id));
-      }
+      if (res.ok) setItems(prev => prev.filter(i => i.id !== id));
     });
   }
 
+  const alreadyInList = (symbol: string) => items.some(i => i.symbol === symbol);
+
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">Meine Watchlist</h2>
-        <span className="text-sm" style={{ color: "var(--muted)" }}>
+        <h2 className="text-lg font-bold text-white">Watchlist</h2>
+        <span
+          className="text-xs px-2 py-1 rounded-full font-medium"
+          style={{ background: "var(--card-border)", color: "var(--muted)" }}>
           {items.length} Aktie{items.length !== 1 ? "n" : ""}
         </span>
       </div>
 
-      <AddTickerForm onAdd={handleAdd} />
+      {/* Search Bar */}
+      <div className="relative">
+        <form onSubmit={handleSubmit} className="relative">
+          <Search
+            size={16}
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+            style={{ color: "var(--muted)" }}
+          />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value.toUpperCase())}
+            onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+            placeholder="Aktie suchen oder Ticker eingeben…"
+            maxLength={50}
+            autoComplete="off"
+            className="w-full rounded-xl pl-9 pr-10 py-3 text-white text-sm border outline-none"
+            style={{ background: "var(--card)", borderColor: "var(--card-border)" }}
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => { setQuery(""); setSearchResult(null); setSearchError(null); }}
+              className="absolute right-3.5 top-1/2 -translate-y-1/2"
+              style={{ color: "var(--muted)" }}>
+              <X size={14} />
+            </button>
+          )}
+        </form>
 
-      {isPending && (
-        <div className="space-y-3">
-          <CardSkeleton />
+        {/* Autocomplete Dropdown */}
+        {showSuggestions && (
+          <div
+            ref={dropdownRef}
+            className="absolute top-full left-0 right-0 mt-1 rounded-xl border overflow-hidden z-50 shadow-xl"
+            style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+            {suggestions.map(stock => (
+              <button
+                key={stock.symbol}
+                type="button"
+                onMouseDown={e => { e.preventDefault(); setQuery(stock.symbol); fetchStock(stock.symbol, stock.name); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left border-b last:border-b-0"
+                style={{ borderColor: "var(--card-border)" }}>
+                <span className="text-base">{REGION_LABEL[stock.region]}</span>
+                <div className="flex-1 min-w-0">
+                  <span className="font-bold text-white text-sm">{stock.symbol}</span>
+                  <p className="text-xs truncate" style={{ color: "var(--muted)" }}>{stock.name}</p>
+                </div>
+                <span
+                  className="text-xs px-2 py-0.5 rounded-full flex-shrink-0"
+                  style={{ background: "rgba(100,116,139,0.2)", color: "var(--muted)" }}>
+                  {stock.region}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Search Result */}
+      {(searchLoading || searchResult || searchError) && (
+        <div
+          className="rounded-2xl border p-4"
+          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+          {searchLoading && <p className="text-sm" style={{ color: "var(--muted)" }}>Lade…</p>}
+          {searchError && <p className="text-sm" style={{ color: "#ef4444" }}>{searchError}</p>}
+          {searchResult && (
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-bold text-white">{searchResult.symbol}</p>
+                <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>{searchResult.name}</p>
+                {searchResult.price != null && (
+                  <p className="text-sm font-semibold text-white mt-1">
+                    {searchResult.price.toFixed(2)} {searchResult.currency ?? ""}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2 flex-shrink-0">
+                <Link
+                  href={`/dashboard/asset/${searchResult.symbol}`}
+                  className="text-xs px-3 py-2 rounded-xl font-semibold text-white"
+                  style={{ background: "var(--primary)", color: "#000" }}>
+                  Details
+                </Link>
+                {!alreadyInList(searchResult.symbol) ? (
+                  <button
+                    onClick={() => addToWatchlist(searchResult!.symbol, searchResult!.name)}
+                    className="text-xs px-3 py-2 rounded-xl font-semibold flex items-center gap-1 border"
+                    style={{ borderColor: "var(--card-border)", color: "var(--muted)" }}>
+                    <Plus size={12} /> Watchlist
+                  </button>
+                ) : (
+                  <span
+                    className="text-xs px-3 py-2 rounded-xl font-semibold"
+                    style={{ background: "rgba(34,197,94,0.1)", color: "#22c55e" }}>
+                    ✓ In Liste
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
+      {/* Added feedback */}
+      {addedSymbol && (
+        <div
+          className="rounded-xl px-4 py-2.5 text-sm font-medium text-center"
+          style={{ background: "rgba(34,197,94,0.1)", color: "#22c55e" }}>
+          {addedSymbol} zur Watchlist hinzugefügt
+        </div>
+      )}
+
+      {/* Quick chips */}
+      {!query && (
+        <div className="space-y-2">
+          {(["US", "DE", "ETF"] as const).map(region => (
+            <div key={region}>
+              <p className="text-xs font-medium mb-1.5" style={{ color: "var(--muted)" }}>
+                {REGION_LABEL[region]} {region === "ETF" ? "ETFs" : region === "DE" ? "Deutschland" : "USA"}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {STOCKS.filter(s => s.region === region).slice(0, region === "ETF" ? 6 : 8).map(s => (
+                  <button
+                    key={s.symbol}
+                    onClick={() => { setQuery(s.symbol); fetchStock(s.symbol, s.name); }}
+                    className="rounded-full px-3 py-1 text-xs font-medium border transition-all"
+                    style={{
+                      background: alreadyInList(s.symbol) ? "rgba(34,197,94,0.1)" : "var(--card)",
+                      borderColor: alreadyInList(s.symbol) ? "#22c55e" : "var(--card-border)",
+                      color: alreadyInList(s.symbol) ? "#22c55e" : "var(--muted)",
+                    }}>
+                    {s.symbol}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isPending && <CardSkeleton />}
+
+      {/* Watchlist Items */}
       {items.length === 0 && !isPending ? (
         <div
           className="rounded-2xl border p-8 text-center"
@@ -51,12 +262,12 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
           <p className="text-3xl mb-2">📋</p>
           <p className="text-white font-medium">Watchlist ist leer</p>
           <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
-            Füge oben einen Ticker hinzu, z.B. AAPL oder MSFT
+            Suche oben nach einer Aktie um sie hinzuzufügen
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map((item) => (
+          {items.map(item => (
             <WatchlistCard key={item.id} item={item} onRemove={handleRemove} />
           ))}
         </div>
