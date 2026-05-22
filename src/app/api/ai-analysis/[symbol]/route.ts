@@ -32,8 +32,8 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
-import { fetchAssetData, fetchNews } from "@/lib/finance-client";
-import type { NewsItem } from "@/lib/finance-client";
+import { fetchAssetData, fetchGoogleNews, fetchEdgarFacts } from "@/lib/finance-client";
+import type { GoogleNewsItem, EdgarFacts } from "@/lib/finance-client";
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
 import type { AssetSnapshot, Database } from "@/types/database";
@@ -110,19 +110,40 @@ function formatMetrics(s: AssetSnapshot): string {
   ].join("\n");
 }
 
-async function runFundamentalAgent(s: AssetSnapshot): Promise<FundamentalAnalysis> {
+function formatEdgarTrend(facts: EdgarFacts | null): string {
+  if (!facts) return "";
+  const fmtVal = (v: number) => {
+    if (Math.abs(v) >= 1e12) return `$${(v / 1e12).toFixed(1)}T`;
+    if (Math.abs(v) >= 1e9) return `$${(v / 1e9).toFixed(1)} Mrd.`;
+    return `$${(v / 1e6).toFixed(1)} Mio.`;
+  };
+  const lines: string[] = [];
+  if (facts.revenue.length > 0) {
+    lines.push("SEC EDGAR Umsatz (letzte Quartale): " +
+      facts.revenue.slice(0, 6).map(r => `${r.period}: ${fmtVal(r.value)}`).join(" | "));
+  }
+  if (facts.net_income.length > 0) {
+    lines.push("Nettogewinn: " +
+      facts.net_income.slice(0, 4).map(r => `${r.period}: ${fmtVal(r.value)}`).join(" | "));
+  }
+  if (facts.gross_profit.length > 0) {
+    lines.push("Bruttogewinn: " +
+      facts.gross_profit.slice(0, 4).map(r => `${r.period}: ${fmtVal(r.value)}`).join(" | "));
+  }
+  return lines.join("\n");
+}
+
+async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null): Promise<FundamentalAnalysis> {
   const client = getClient();
+  const edgarSection = formatEdgarTrend(edgar);
+  const prompt = `Bewerte diese Aktie für einen wachstumsorientierten Investor:\n\n${formatMetrics(s)}${edgarSection ? "\n\n" + edgarSection : ""}\n\nJSON-Format:\n{"growth_rating":<1-10>,"key_positives":["..."],"key_risks":["..."],"valuation_comment":"..."}`;
+
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 600,
     system:
       "Du bist ein wachstumsorientierter Aktienanalyst. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
-    messages: [
-      {
-        role: "user",
-        content: `Bewerte diese Aktie für einen wachstumsorientierten Investor:\n\n${formatMetrics(s)}\n\nJSON-Format:\n{"growth_rating":<1-10>,"key_positives":["..."],"key_risks":["..."],"valuation_comment":"..."}`,
-      },
-    ],
+    messages: [{ role: "user", content: prompt }],
   });
 
   const fallback: FundamentalAnalysis = {
@@ -139,7 +160,7 @@ async function runFundamentalAgent(s: AssetSnapshot): Promise<FundamentalAnalysi
   }
 }
 
-async function runSentimentAgent(news: NewsItem[]): Promise<SentimentAnalysis> {
+async function runSentimentAgent(news: GoogleNewsItem[]): Promise<SentimentAnalysis> {
   if (news.length === 0) {
     return {
       sentiment: "neutral",
@@ -149,7 +170,7 @@ async function runSentimentAgent(news: NewsItem[]): Promise<SentimentAnalysis> {
   }
 
   const client = getClient();
-  const headlines = news.map(n => `- ${n.title} (${n.publisher})`).join("\n");
+  const headlines = news.map(n => `- ${n.title} (${n.source})`).join("\n");
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -332,9 +353,10 @@ export async function POST(
   if (cached) return NextResponse.json(cached);
 
   try {
-    const [assetData, newsData] = await Promise.all([
+    const [assetData, googleNews, edgarFacts] = await Promise.all([
       fetchAssetData(symbol),
-      fetchNews(symbol).catch(() => [] as NewsItem[]),
+      fetchGoogleNews(symbol).catch(() => [] as GoogleNewsItem[]),
+      fetchEdgarFacts(symbol).catch(() => null),
     ]);
 
     const snapshot: AssetSnapshot = {
@@ -354,8 +376,8 @@ export async function POST(
     };
 
     const [fundamental, sentiment] = await Promise.all([
-      runFundamentalAgent(snapshot),
-      runSentimentAgent(newsData),
+      runFundamentalAgent(snapshot, edgarFacts),
+      runSentimentAgent(googleNews),
     ]);
 
     const synthesis = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment);

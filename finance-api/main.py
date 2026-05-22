@@ -3,9 +3,13 @@ Finanzdashboard – Finance Data API (FastAPI + yfinance)
 Run: uvicorn main:app --reload --port 8000
 """
 
+import json
 import math
 import os
 import re
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -192,6 +196,134 @@ def get_news(symbol: str):
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+class GoogleNewsItem(BaseModel):
+    title: str
+    source: str
+    published: Optional[str]
+
+
+class EdgarFacts(BaseModel):
+    cik: str
+    revenue: list[dict]
+    net_income: list[dict]
+    gross_profit: list[dict]
+
+
+# Module-level CIK cache – loaded once per server start
+_cik_map: Optional[dict] = None
+
+
+def _load_cik_map() -> dict:
+    global _cik_map
+    if _cik_map is not None:
+        return _cik_map
+    req = urllib.request.Request(
+        "https://www.sec.gov/files/company_tickers.json",
+        headers={"User-Agent": "Finanzdashboard/1.0 contact@nexthorizon-ai.com"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read())
+    _cik_map = {
+        entry["ticker"].upper(): str(entry["cik_str"]).zfill(10)
+        for entry in data.values()
+    }
+    return _cik_map
+
+
+def _get_cik(ticker: str) -> Optional[str]:
+    try:
+        return _load_cik_map().get(ticker.upper())
+    except Exception:
+        return None
+
+
+def _fetch_edgar_concept(cik: str, concept: str, max_items: int = 8) -> list[dict]:
+    url = f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/us-gaap/{concept}.json"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Finanzdashboard/1.0 contact@nexthorizon-ai.com"}
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+
+    usd_units = data.get("units", {}).get("USD", [])
+    seen: dict[str, dict] = {}
+    for entry in usd_units:
+        form = entry.get("form", "")
+        if form not in ("10-Q", "10-K"):
+            continue
+        period = entry.get("end", "")
+        filed = entry.get("filed", "")
+        if period not in seen or filed > seen[period]["filed"]:
+            seen[period] = {"period": period, "value": entry.get("val", 0), "form": form}
+
+    items = sorted(seen.values(), key=lambda x: x["period"], reverse=True)
+    return items[:max_items]
+
+
+@app.get("/assets/{symbol}/google-news", response_model=list[GoogleNewsItem])
+def get_google_news(symbol: str):
+    symbol = symbol.upper().strip()
+    if not TICKER_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
+
+    try:
+        query = urllib.parse.quote(f"{symbol} stock")
+        url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0 (compatible; Finanzdashboard/1.0)"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            root = ET.fromstring(resp.read())
+
+        channel = root.find("channel")
+        if channel is None:
+            return []
+
+        items = []
+        for item in channel.findall("item")[:10]:
+            title_el = item.find("title")
+            source_el = item.find("source")
+            pub_el = item.find("pubDate")
+            title = title_el.text if title_el is not None else ""
+            if title:
+                items.append(GoogleNewsItem(
+                    title=title,
+                    source=source_el.text if source_el is not None else "",
+                    published=pub_el.text if pub_el is not None else None,
+                ))
+        return items
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/assets/{symbol}/edgar-facts", response_model=EdgarFacts)
+def get_edgar_facts(symbol: str):
+    symbol = symbol.upper().strip()
+    if not TICKER_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
+
+    cik = _get_cik(symbol)
+    if not cik:
+        raise HTTPException(status_code=404, detail=f"Kein SEC-Eintrag für {symbol}")
+
+    result: dict = {"cik": cik, "revenue": [], "net_income": [], "gross_profit": []}
+
+    for concept in ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"]:
+        try:
+            result["revenue"] = _fetch_edgar_concept(cik, concept)
+            break
+        except Exception:
+            continue
+
+    for concept, key in [("NetIncomeLoss", "net_income"), ("GrossProfit", "gross_profit")]:
+        try:
+            result[key] = _fetch_edgar_concept(cik, concept)
+        except Exception:
+            pass
+
+    return result
 
 
 @app.get("/assets/{symbol}/history", response_model=list[PricePoint])
