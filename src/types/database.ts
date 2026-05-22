@@ -160,6 +160,7 @@ export interface Database {
           news_sentiment: string;
           news_themes: Json;
           sentiment_summary: string;
+          extra_data: Json;
           analyzed_at: string;
         };
         Insert: {
@@ -178,6 +179,7 @@ export interface Database {
           news_sentiment: string;
           news_themes: Json;
           sentiment_summary: string;
+          extra_data?: Json;
           analyzed_at?: string;
         };
         Update: {
@@ -196,6 +198,7 @@ export interface Database {
           news_sentiment?: string;
           news_themes?: Json;
           sentiment_summary?: string;
+          extra_data?: Json;
           analyzed_at?: string;
         };
         Relationships: [];

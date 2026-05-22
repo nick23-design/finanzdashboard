@@ -20,6 +20,24 @@ const SENTIMENT_STYLES: Record<string, { label: string; color: string }> = {
   bearish:  { label: "Negativ",  color: "#ef4444" },
 };
 
+const INSIDER_STYLES: Record<string, { label: string; color: string }> = {
+  bullish: { label: "Insider kaufen", color: "#22c55e" },
+  neutral: { label: "Insider neutral", color: "#ca8a04" },
+  bearish: { label: "Insider verkaufen", color: "#ef4444" },
+};
+
+const INST_STYLES: Record<string, { label: string; color: string }> = {
+  accumulating: { label: "Institutionen kaufen", color: "#22c55e" },
+  stable:        { label: "Institutionen stabil", color: "#ca8a04" },
+  reducing:      { label: "Institutionen reduzieren", color: "#ef4444" },
+};
+
+const TREND_STYLES: Record<string, { label: string; color: string }> = {
+  rising:   { label: "Trends steigen", color: "#22c55e" },
+  stable:   { label: "Trends stabil",  color: "#ca8a04" },
+  declining:{ label: "Trends fallen",  color: "#ef4444" },
+};
+
 function ConvictionBar({ value }: { value: number }) {
   const pct = Math.min(100, Math.max(0, (value / 10) * 100));
   const color = value >= 7 ? "#22c55e" : value >= 5 ? "#ca8a04" : "#ef4444";
@@ -143,6 +161,34 @@ export function AIAnalysisCard({ analysis }: Props) {
           {sentStyle.label}
         </span>
       </div>
+
+      {/* Market Intelligence */}
+      {analysis.market_intel && (
+        <div>
+          <p className="text-xs font-semibold text-white mb-2">Markt-Signale</p>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {[
+              INSIDER_STYLES[analysis.market_intel.insider_signal],
+              INST_STYLES[analysis.market_intel.institutional_trend],
+              TREND_STYLES[analysis.market_intel.trends_momentum],
+            ].map((style, i) => style && (
+              <span
+                key={i}
+                className="text-xs px-2 py-0.5 rounded-full font-medium"
+                style={{ color: style.color, background: style.color + "22" }}>
+                {style.label}
+              </span>
+            ))}
+          </div>
+          <ul className="space-y-0.5">
+            {analysis.market_intel.key_observations.slice(0, 4).map((obs, i) => (
+              <li key={i} className="text-xs" style={{ color: "var(--muted)" }}>
+                · {obs}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Footer */}
       <p className="text-xs" style={{ color: "var(--muted)" }}>

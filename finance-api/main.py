@@ -10,6 +10,7 @@ import re
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -324,6 +325,214 @@ def get_edgar_facts(symbol: str):
             pass
 
     return result
+
+
+class InsiderTrade(BaseModel):
+    date: str
+    name: str
+    title: str
+    transaction_type: str  # "buy" or "sell"
+    shares: Optional[int]
+    price: Optional[float]
+    value: Optional[float]
+
+
+class TrendPoint(BaseModel):
+    date: str
+    value: int  # 0–100
+
+
+class InstitutionalHolder(BaseModel):
+    holder: str
+    pct_held: Optional[float]
+    shares: Optional[int]
+
+
+class InstitutionalData(BaseModel):
+    pct_insider: Optional[float]
+    pct_institutions: Optional[float]
+    top_holders: list[InstitutionalHolder]
+
+
+def _parse_form4(cik_int: str, accession: str, primary_doc: str) -> list[dict]:
+    """Fetch and parse a single Form 4 XML, returning buy/sell transactions."""
+    acc_nodash = accession.replace("-", "")
+    url = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}/{primary_doc}"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Finanzdashboard/1.0 contact@nexthorizon-ai.com"}
+    )
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        root = ET.fromstring(resp.read())
+
+    # Extract owner info
+    owner_name, owner_title = "", ""
+    owner_el = root.find(".//reportingOwner")
+    if owner_el is not None:
+        name_el = owner_el.find(".//rptOwnerName")
+        title_el = owner_el.find(".//officerTitle")
+        is_dir = owner_el.find(".//isDirector")
+        if name_el is not None and name_el.text:
+            owner_name = name_el.text.strip().title()
+        if title_el is not None and title_el.text:
+            owner_title = title_el.text.strip()
+        elif is_dir is not None and is_dir.text == "1":
+            owner_title = "Director"
+
+    trades = []
+    for trans in root.findall(".//nonDerivativeTransaction"):
+        code_el = trans.find(".//transactionAcquiredDisposedCode/value")
+        code = code_el.text.strip() if code_el is not None and code_el.text else ""
+        # P = open-market purchase, S = open-market sale (most significant signals)
+        if code not in ("P", "S"):
+            continue
+
+        date_el = trans.find(".//transactionDate/value")
+        shares_el = trans.find(".//transactionShares/value")
+        price_el = trans.find(".//transactionPricePerShare/value")
+
+        t_date = date_el.text.strip() if date_el is not None and date_el.text else ""
+        shares = _safe_int(shares_el.text) if shares_el is not None else None
+        price = _safe_float(price_el.text) if price_el is not None else None
+
+        trades.append({
+            "date": t_date,
+            "name": owner_name,
+            "title": owner_title,
+            "transaction_type": "buy" if code == "P" else "sell",
+            "shares": shares,
+            "price": price,
+            "value": round(shares * price, 2) if shares and price else None,
+        })
+    return trades
+
+
+@app.get("/assets/{symbol}/insider-trades", response_model=list[InsiderTrade])
+def get_insider_trades(symbol: str):
+    symbol = symbol.upper().strip()
+    if not TICKER_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
+
+    cik = _get_cik(symbol)
+    if not cik:
+        raise HTTPException(status_code=404, detail=f"Kein SEC-Eintrag für {symbol}")
+
+    cik_int = str(int(cik))
+
+    try:
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "Finanzdashboard/1.0 contact@nexthorizon-ai.com"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            submissions = json.loads(resp.read())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    recent = submissions.get("filings", {}).get("recent", {})
+    forms = recent.get("form", [])
+    accessions = recent.get("accessionNumber", [])
+    primary_docs = recent.get("primaryDocument", [])
+
+    # Collect the 5 most recent Form 4 filings
+    form4_list = [
+        (accessions[i], primary_docs[i])
+        for i, f in enumerate(forms)
+        if f in ("4", "4/A") and i < len(accessions) and i < len(primary_docs)
+    ][:5]
+
+    all_trades: list[dict] = []
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {
+            pool.submit(_parse_form4, cik_int, acc, doc): (acc, doc)
+            for acc, doc in form4_list
+        }
+        for future in as_completed(futures):
+            try:
+                all_trades.extend(future.result())
+            except Exception:
+                continue
+
+    all_trades.sort(key=lambda t: t.get("date", ""), reverse=True)
+    return all_trades[:20]
+
+
+@app.get("/assets/{symbol}/trends", response_model=list[TrendPoint])
+def get_trends(symbol: str):
+    symbol = symbol.upper().strip()
+    if not TICKER_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
+
+    try:
+        from pytrends.request import TrendReq
+        pt = TrendReq(hl="en-US", tz=0, timeout=(10, 15))
+        pt.build_payload([symbol], timeframe="today 12-m", geo="US")
+        df = pt.interest_over_time()
+
+        if df is None or df.empty or symbol not in df.columns:
+            return []
+
+        return [
+            TrendPoint(date=str(ts.date()), value=int(v))
+            for ts, v in zip(df.index, df[symbol])
+            if not math.isnan(float(v))
+        ]
+    except ImportError:
+        raise HTTPException(status_code=503, detail="pytrends nicht installiert")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/assets/{symbol}/institutional", response_model=InstitutionalData)
+def get_institutional(symbol: str):
+    symbol = symbol.upper().strip()
+    if not TICKER_RE.match(symbol):
+        raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
+
+    try:
+        ticker = yf.Ticker(symbol)
+        pct_insider: Optional[float] = None
+        pct_institutions: Optional[float] = None
+        top_holders: list[dict] = []
+
+        try:
+            major = ticker.major_holders
+            if major is not None and not major.empty:
+                for _, row in major.iterrows():
+                    row_vals = list(row)
+                    if len(row_vals) < 2:
+                        continue
+                    label = str(row_vals[1]).lower()
+                    val = _safe_float(str(row_vals[0]).replace("%", "").strip())
+                    if val is not None and val > 1:
+                        val /= 100  # convert from percent to fraction
+                    if "insider" in label and pct_insider is None:
+                        pct_insider = val
+                    elif "institution" in label and "float" not in label and pct_institutions is None:
+                        pct_institutions = val
+        except Exception:
+            pass
+
+        try:
+            inst_df = ticker.institutional_holders
+            if inst_df is not None and not inst_df.empty:
+                col_map = {c.lower().replace(" ", "_"): c for c in inst_df.columns}
+                for _, row in inst_df.head(5).iterrows():
+                    holder = str(row.get(col_map.get("holder", "Holder"), row.iloc[1] if len(row) > 1 else ""))
+                    pct_col = col_map.get("pctheld", col_map.get("%_out", None))
+                    pct = _safe_float(row.get(pct_col)) if pct_col else None
+                    shares_col = col_map.get("shares", None)
+                    shares = _safe_int(row.get(shares_col)) if shares_col else None
+                    top_holders.append({"holder": holder, "pct_held": pct, "shares": shares})
+        except Exception:
+            pass
+
+        return InstitutionalData(
+            pct_insider=pct_insider,
+            pct_institutions=pct_institutions,
+            top_holders=top_holders,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/assets/{symbol}/history", response_model=list[PricePoint])

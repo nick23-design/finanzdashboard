@@ -2,3 +2,4 @@ fastapi==0.115.5
 uvicorn[standard]==0.32.1
 yfinance>=0.2.54
 pydantic==2.10.3
+pytrends>=4.9.0

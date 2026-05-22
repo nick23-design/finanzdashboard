@@ -50,6 +50,57 @@ export async function fetchNews(symbol: string): Promise<NewsItem[]> {
   return res.json();
 }
 
+export interface InsiderTrade {
+  date: string;
+  name: string;
+  title: string;
+  transaction_type: "buy" | "sell";
+  shares: number | null;
+  price: number | null;
+  value: number | null;
+}
+
+export interface TrendPoint {
+  date: string;
+  value: number;
+}
+
+export interface InstitutionalHolder {
+  holder: string;
+  pct_held: number | null;
+  shares: number | null;
+}
+
+export interface InstitutionalData {
+  pct_insider: number | null;
+  pct_institutions: number | null;
+  top_holders: InstitutionalHolder[];
+}
+
+export async function fetchInsiderTrades(symbol: string): Promise<InsiderTrade[]> {
+  const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/insider-trades`, {
+    next: { revalidate: 0 },
+  });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function fetchTrends(symbol: string): Promise<TrendPoint[]> {
+  const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/trends`, {
+    next: { revalidate: 0 },
+  });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function fetchInstitutional(symbol: string): Promise<InstitutionalData | null> {
+  const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/institutional`, {
+    next: { revalidate: 0 },
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
 export async function fetchGoogleNews(symbol: string): Promise<GoogleNewsItem[]> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/google-news`, {
     next: { revalidate: 0 },

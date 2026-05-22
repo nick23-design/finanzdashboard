@@ -32,8 +32,21 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
-import { fetchAssetData, fetchGoogleNews, fetchEdgarFacts } from "@/lib/finance-client";
-import type { GoogleNewsItem, EdgarFacts } from "@/lib/finance-client";
+import {
+  fetchAssetData,
+  fetchGoogleNews,
+  fetchEdgarFacts,
+  fetchInsiderTrades,
+  fetchTrends,
+  fetchInstitutional,
+} from "@/lib/finance-client";
+import type {
+  GoogleNewsItem,
+  EdgarFacts,
+  InsiderTrade,
+  TrendPoint,
+  InstitutionalData,
+} from "@/lib/finance-client";
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
 import type { AssetSnapshot, Database } from "@/types/database";
@@ -64,10 +77,18 @@ interface SynthesisResult {
   growth_outlook: string;
 }
 
+interface MarketIntelAnalysis {
+  insider_signal: "bullish" | "neutral" | "bearish";
+  institutional_trend: "accumulating" | "stable" | "reducing";
+  trends_momentum: "rising" | "stable" | "declining";
+  key_observations: string[];
+}
+
 export interface AIAnalysisResult extends SynthesisResult {
   symbol: string;
   fundamental: FundamentalAnalysis;
   sentiment: SentimentAnalysis;
+  market_intel: MarketIntelAnalysis | null;
   analyzed_at: string;
   from_cache: boolean;
 }
@@ -201,8 +222,17 @@ async function runSynthesisAgent(
   s: AssetSnapshot,
   fundamental: FundamentalAnalysis,
   sentiment: SentimentAnalysis,
+  marketIntel: MarketIntelAnalysis | null,
 ): Promise<SynthesisResult> {
   const client = getClient();
+
+  const marketIntelSection = marketIntel
+    ? `\nMARKT-INTELLIGENZ:
+Insider-Signal: ${marketIntel.insider_signal.toUpperCase()}
+Institutioneller Trend: ${marketIntel.institutional_trend.toUpperCase()}
+Google Trends: ${marketIntel.trends_momentum.toUpperCase()}
+Beobachtungen: ${marketIntel.key_observations.join(" | ")}`
+    : "";
 
   const context = `AKTIE: ${symbol}
 KENNZAHLEN:
@@ -215,7 +245,7 @@ Bewertungskommentar: ${fundamental.valuation_comment}
 
 NACHRICHTENSTIMMUNG: ${sentiment.sentiment.toUpperCase()}
 Themen: ${sentiment.key_themes.join(", ")}
-${sentiment.sentiment_summary}`;
+${sentiment.sentiment_summary}${marketIntelSection}`;
 
   const response = await client.messages.create({
     model: "claude-opus-4-7",
@@ -244,6 +274,92 @@ ${sentiment.sentiment_summary}`;
     return parseJSON<SynthesisResult>(extractText(response.content));
   } catch {
     return fallback;
+  }
+}
+
+function formatMarketIntel(
+  trades: InsiderTrade[],
+  trends: TrendPoint[],
+  institutional: InstitutionalData | null,
+): string {
+  const lines: string[] = [];
+
+  if (trades.length > 0) {
+    const fmtVal = (v: number | null) =>
+      v != null ? `$${(v / 1e6).toFixed(2)} Mio.` : "";
+    const tradeLines = trades.slice(0, 5).map(t =>
+      `${t.transaction_type === "buy" ? "KAUF" : "VERKAUF"} ${t.name} (${t.title}): ${t.shares?.toLocaleString()} Aktien @ $${t.price?.toFixed(2)} ${fmtVal(t.value)} am ${t.date}`
+    );
+    lines.push("INSIDER-TRANSAKTIONEN:\n" + tradeLines.join("\n"));
+  }
+
+  if (institutional) {
+    const pctI = institutional.pct_institutions != null
+      ? `${(institutional.pct_institutions * 100).toFixed(1)}%`
+      : "N/A";
+    const pctIn = institutional.pct_insider != null
+      ? `${(institutional.pct_insider * 100).toFixed(2)}%`
+      : "N/A";
+    const holders = institutional.top_holders
+      .slice(0, 5)
+      .map(h => `${h.holder}${h.pct_held != null ? " " + (h.pct_held * 100).toFixed(1) + "%" : ""}`)
+      .join(", ");
+    lines.push(`INSTITUTIONELLE: Insider ${pctIn} | Institutionen ${pctI}\nTop-Holder: ${holders}`);
+  }
+
+  if (trends.length > 0) {
+    const recent = trends.slice(0, 4).map(t => t.value);
+    const old = trends.slice(-4).map(t => t.value);
+    const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const avgOld = old.reduce((a, b) => a + b, 0) / old.length;
+    const current = trends[0].value;
+    const trendDir = avgRecent > avgOld * 1.1 ? "steigend" : avgRecent < avgOld * 0.9 ? "fallend" : "stabil";
+    lines.push(`GOOGLE TRENDS (0-100): Aktuell ${current} | Trend: ${trendDir} | Ø letzt. 4 Wochen: ${avgRecent.toFixed(0)} vs. Ø vor 1 Jahr: ${avgOld.toFixed(0)}`);
+  }
+
+  return lines.join("\n\n");
+}
+
+async function runMarketIntelAgent(
+  trades: InsiderTrade[],
+  trends: TrendPoint[],
+  institutional: InstitutionalData | null,
+): Promise<MarketIntelAnalysis> {
+  const noData = trades.length === 0 && trends.length === 0 && !institutional;
+  if (noData) {
+    return {
+      insider_signal: "neutral",
+      institutional_trend: "stable",
+      trends_momentum: "stable",
+      key_observations: ["Keine Markt-Intelligenz-Daten verfügbar"],
+    };
+  }
+
+  const client = getClient();
+  const context = formatMarketIntel(trades, trends, institutional);
+
+  const response = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 500,
+    system:
+      "Du bist ein Marktanalyse-Experte. Bewerte Insider-Aktivität, institutionelle Positionierung und Suchtrends als Investmentsignale. Antworte ausschließlich mit validem JSON.",
+    messages: [
+      {
+        role: "user",
+        content: `Analysiere diese Markt-Signale:\n\n${context}\n\nJSON-Format:\n{"insider_signal":"bullish"|"neutral"|"bearish","institutional_trend":"accumulating"|"stable"|"reducing","trends_momentum":"rising"|"stable"|"declining","key_observations":["..."]}`,
+      },
+    ],
+  });
+
+  try {
+    return parseJSON<MarketIntelAnalysis>(extractText(response.content));
+  } catch {
+    return {
+      insider_signal: "neutral",
+      institutional_trend: "stable",
+      trends_momentum: "stable",
+      key_observations: ["Markt-Intelligenz konnte nicht ausgewertet werden"],
+    };
   }
 }
 
@@ -282,6 +398,7 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
         key_themes: data.news_themes as string[],
         sentiment_summary: data.sentiment_summary,
       },
+      market_intel: (data.extra_data as Record<string, unknown>)?.market_intel as MarketIntelAnalysis | null ?? null,
       analyzed_at: data.analyzed_at,
       from_cache: true,
     };
@@ -308,6 +425,9 @@ async function saveAnalysis(result: AIAnalysisResult): Promise<void> {
       news_sentiment: result.sentiment.sentiment,
       news_themes: result.sentiment.key_themes,
       sentiment_summary: result.sentiment.sentiment_summary,
+      extra_data: result.market_intel
+        ? ({ market_intel: result.market_intel } as unknown as import("@/types/database").Json)
+        : {},
     };
     await supabase.from("ai_analyses").insert(payload);
   } catch {
@@ -353,11 +473,15 @@ export async function POST(
   if (cached) return NextResponse.json(cached);
 
   try {
-    const [assetData, googleNews, edgarFacts] = await Promise.all([
-      fetchAssetData(symbol),
-      fetchGoogleNews(symbol).catch(() => [] as GoogleNewsItem[]),
-      fetchEdgarFacts(symbol).catch(() => null),
-    ]);
+    const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional] =
+      await Promise.all([
+        fetchAssetData(symbol),
+        fetchGoogleNews(symbol).catch(() => [] as GoogleNewsItem[]),
+        fetchEdgarFacts(symbol).catch(() => null),
+        fetchInsiderTrades(symbol).catch(() => [] as InsiderTrade[]),
+        fetchTrends(symbol).catch(() => [] as TrendPoint[]),
+        fetchInstitutional(symbol).catch(() => null),
+      ]);
 
     const snapshot: AssetSnapshot = {
       id: "",
@@ -375,18 +499,20 @@ export async function POST(
       fetched_at: assetData.fetched_at,
     };
 
-    const [fundamental, sentiment] = await Promise.all([
+    const [fundamental, sentiment, market_intel] = await Promise.all([
       runFundamentalAgent(snapshot, edgarFacts),
       runSentimentAgent(googleNews),
+      runMarketIntelAgent(insiderTrades, trends, institutional),
     ]);
 
-    const synthesis = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment);
+    const synthesis = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, market_intel);
 
     const result: AIAnalysisResult = {
       symbol,
       ...synthesis,
       fundamental,
       sentiment,
+      market_intel,
       analyzed_at: new Date().toISOString(),
       from_cache: false,
     };
