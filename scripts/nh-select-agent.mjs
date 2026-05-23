@@ -244,18 +244,23 @@ const SYNTHESIS_TOOLS = [
 async function runSynthesis(usResult, deResult, podcastResult) {
   console.log("\n[Synthesizer] Startet...");
 
+  const safe = (r) => ({ theme: r?.theme || "Keine Daten", sources: Array.isArray(r?.sources) ? r.sources : [] });
+  const us = safe(usResult);
+  const de = safe(deResult);
+  const pod = safe(podcastResult);
+
   const context = `
-## US-Scout (${usResult.sources.length} Quellen)
-Thema: ${usResult.theme}
-${usResult.sources.map((s) => `- ${s.name}: "${s.title}"\n  ${s.summary}`).join("\n")}
+## US-Scout (${us.sources.length} Quellen)
+Thema: ${us.theme}
+${us.sources.map((s) => `- ${s.name}: "${s.title}"\n  ${s.summary}`).join("\n")}
 
-## DE-Scout (${deResult.sources.length} Quellen)
-Thema: ${deResult.theme}
-${deResult.sources.map((s) => `- ${s.name}: "${s.title}"\n  ${s.summary}`).join("\n")}
+## DE-Scout (${de.sources.length} Quellen)
+Thema: ${de.theme}
+${de.sources.map((s) => `- ${s.name}: "${s.title}"\n  ${s.summary}`).join("\n")}
 
-## Podcast-Scout (${podcastResult.sources.length} Quellen)
-Thema: ${podcastResult.theme}
-${podcastResult.sources.map((s) => `- ${s.name}: "${s.title}"\n  ${s.summary}`).join("\n")}
+## Podcast-Scout (${pod.sources.length} Quellen)
+Thema: ${pod.theme}
+${pod.sources.map((s) => `- ${s.name}: "${s.title}"\n  ${s.summary}`).join("\n")}
 `.trim();
 
   const messages = [{
@@ -364,10 +369,11 @@ async function main() {
   } catch { /* ignorieren */ }
 
   // Alle Quellen mit Agent-Label zusammenführen
+  const toSources = (r, agent) => Array.isArray(r?.sources) ? r.sources.map((s) => ({ ...s, agent })) : [];
   const allSources = [
-    ...usResult.sources.map((s) => ({ ...s, agent: "US-Scout" })),
-    ...deResult.sources.map((s) => ({ ...s, agent: "DE-Scout" })),
-    ...podcastResult.sources.map((s) => ({ ...s, agent: "Podcast-Scout" })),
+    ...toSources(usResult, "US-Scout"),
+    ...toSources(deResult, "DE-Scout"),
+    ...toSources(podcastResult, "Podcast-Scout"),
   ];
 
   const { data: saved, error } = await supabase
