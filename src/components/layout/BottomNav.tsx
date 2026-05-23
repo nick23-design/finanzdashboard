@@ -2,15 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Star, Briefcase, Newspaper, Bell, Bot, Settings2 } from "lucide-react";
+import { Star, Target, Newspaper, Bot, Settings2 } from "lucide-react";
 
 const NAV_ITEMS = [
-  { href: "/dashboard",           label: "Watchlist",    Icon: Star },
-  { href: "/dashboard/portfolio", label: "Portfolio",    Icon: Briefcase },
-  { href: "/dashboard/news",      label: "News",         Icon: Newspaper },
-  { href: "/dashboard/alerts",    label: "Alarme",       Icon: Bell },
-  { href: "/dashboard/team",      label: "KI-Team",      Icon: Bot },
-  { href: "/dashboard/settings",  label: "Mehr",         Icon: Settings2 },
+  { href: "/dashboard",          label: "Watchlist",  Icon: Star },
+  { href: "/dashboard/search",   label: "NH Select",  Icon: Target },
+  { href: "/dashboard/news",     label: "News",       Icon: Newspaper },
+  { href: "/dashboard/team",     label: "KI-Team",    Icon: Bot },
+  { href: "/dashboard/settings", label: "Mehr",       Icon: Settings2 },
 ];
 
 export function BottomNav() {

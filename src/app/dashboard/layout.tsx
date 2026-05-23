@@ -26,11 +26,8 @@ export default async function DashboardLayout({
           background: "var(--card)",
           borderColor: "var(--card-border)",
         }}>
-        <div className="flex items-center gap-2.5">
-          <div className="rounded-md overflow-hidden flex-shrink-0" style={{ background: "white", padding: "2px 4px" }}>
-            <Image src="/LogoNH.png" alt="NH" width={40} height={24} className="h-6 w-auto object-contain" />
-          </div>
-          <span className="font-bold text-white text-sm tracking-tight">Finanzdashboard</span>
+        <div className="flex items-center">
+          <Image src="/logo-nh.png" alt="Next Horizon" width={120} height={36} className="h-9 w-auto object-contain" />
         </div>
         <Disclaimer compact />
       </header>

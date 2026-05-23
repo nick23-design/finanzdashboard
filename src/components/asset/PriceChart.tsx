@@ -29,18 +29,27 @@ export function PriceChart({ symbol }: PriceChartProps) {
   const [data, setData] = useState<PricePoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [changePct, setChangePct] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setChangePct(null);
 
     fetch(`/api/assets/${symbol}/history?period=${period}`)
       .then((r) => r.json())
       .then((d: PricePoint[]) => {
         if (!cancelled) {
-          setData(Array.isArray(d) ? d : []);
+          const pts = Array.isArray(d) ? d : [];
+          setData(pts);
           setLoading(false);
+
+          if (pts.length >= 2) {
+            const first = pts[0].value;
+            const last = pts[pts.length - 1].value;
+            setChangePct(first > 0 ? ((last - first) / first) * 100 : null);
+          }
         }
       })
       .catch(() => {
@@ -58,46 +67,42 @@ export function PriceChart({ symbol }: PriceChartProps) {
 
     let unmounted = false;
 
-    // Single idempotent teardown used both by cleanup and before re-create.
-    // Nulls chartRef BEFORE calling .remove() so a second call is a no-op.
     function destroyChart() {
       roRef.current?.disconnect();
       roRef.current = null;
 
       const c = chartRef.current;
-      chartRef.current = null; // null first — guards double-dispose
+      chartRef.current = null;
       if (c) {
         try { c.remove(); } catch { /* already disposed in Strict Mode */ }
       }
     }
 
     import("lightweight-charts").then(({ createChart, ColorType }) => {
-      // Guard: effect may have already been cleaned up while import was in flight
       if (unmounted || !containerRef.current) return;
 
-      // Tear down any chart left by a previous render before creating a new one
       destroyChart();
 
       const chart = createChart(containerRef.current, {
         layout: {
-          background: { type: ColorType.Solid, color: "#1e293b" },
-          textColor: "#94a3b8",
+          background: { type: ColorType.Solid, color: "#111111" },
+          textColor: "#64748b",
         },
         grid: {
-          vertLines: { color: "#334155" },
-          horzLines: { color: "#334155" },
+          vertLines: { color: "#222222" },
+          horzLines: { color: "#222222" },
         },
         width: containerRef.current.clientWidth,
         height: 220,
         crosshair: { mode: 1 },
-        rightPriceScale: { borderColor: "#334155" },
-        timeScale: { borderColor: "#334155", timeVisible: false },
+        rightPriceScale: { borderColor: "#222222" },
+        timeScale: { borderColor: "#222222", timeVisible: false },
       });
 
       const series = chart.addAreaSeries({
-        lineColor: "#3b82f6",
-        topColor: "rgba(59,130,246,0.25)",
-        bottomColor: "rgba(59,130,246,0)",
+        lineColor: "#00e676",
+        topColor: "rgba(0,230,118,0.20)",
+        bottomColor: "rgba(0,230,118,0)",
         lineWidth: 2,
       });
 
@@ -111,10 +116,8 @@ export function PriceChart({ symbol }: PriceChartProps) {
         chart.timeScale().fitContent();
       }
 
-      // Store in ref only after fully initialised
       chartRef.current = chart;
 
-      // ResizeObserver guards against calling applyOptions on a disposed chart
       const ro = new ResizeObserver((entries) => {
         for (const entry of entries) {
           if (chartRef.current) {
@@ -134,12 +137,26 @@ export function PriceChart({ symbol }: PriceChartProps) {
     };
   }, [data, loading, error]);
 
+  const isUp = (changePct ?? 0) >= 0;
+
   return (
     <div
       className="rounded-2xl border p-4"
       style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-white">Kursverlauf</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="font-semibold text-white">Kursverlauf</h3>
+          {!loading && changePct != null && (
+            <span
+              className="text-xs font-semibold px-2 py-0.5 rounded-full"
+              style={{
+                color: isUp ? "#22c55e" : "#ef4444",
+                background: isUp ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+              }}>
+              {isUp ? "+" : ""}{changePct.toFixed(2)}%
+            </span>
+          )}
+        </div>
         <div className="flex gap-1">
           {PERIODS.map((p) => (
             <button
@@ -148,7 +165,7 @@ export function PriceChart({ symbol }: PriceChartProps) {
               className="px-2 py-1 rounded-lg text-xs font-medium transition-all"
               style={{
                 background: period === p ? "var(--primary)" : "transparent",
-                color: period === p ? "white" : "var(--muted)",
+                color: period === p ? "#000" : "var(--muted)",
               }}>
               {PERIOD_LABELS[p]}
             </button>

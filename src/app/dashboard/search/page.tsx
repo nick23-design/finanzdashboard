@@ -1,5 +1,7 @@
-import { SearchView } from "@/components/dashboard/SearchView";
+import { NHSelectView } from "@/components/dashboard/NHSelectView";
 
-export default function SearchPage() {
-  return <SearchView />;
+export const metadata = { title: "NH Select – Next Horizon" };
+
+export default function NHSelectPage() {
+  return <NHSelectView />;
 }

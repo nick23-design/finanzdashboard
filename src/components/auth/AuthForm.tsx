@@ -30,11 +30,16 @@ export function AuthForm({ mode }: AuthFormProps) {
     <div className="min-h-dvh flex flex-col items-center justify-center p-4"
       style={{ background: "var(--background)" }}>
       <div className="w-full max-w-sm">
-        {/* Logo / Title */}
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-white">Finanzdashboard</h1>
-          <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
-            Regelbasierte Aktienanalyse
+        {/* Logo */}
+        <div className="text-center mb-10">
+          <img
+            src="/logo-nh.png"
+            alt="Next Horizon"
+            className="w-52 h-auto mx-auto"
+            style={{ filter: "drop-shadow(0 0 24px rgba(0,230,118,0.35))" }}
+          />
+          <p className="text-sm mt-3 tracking-wide" style={{ color: "var(--muted)" }}>
+            KI-gestützte Aktienanalyse
           </p>
         </div>
 
@@ -104,9 +109,9 @@ export function AuthForm({ mode }: AuthFormProps) {
             <button
               type="submit"
               disabled={isPending}
-              className="w-full rounded-xl py-3 font-semibold text-white transition-all
+              className="w-full rounded-xl py-3 font-semibold transition-all
                 disabled:opacity-50"
-              style={{ background: isPending ? "var(--muted)" : "var(--primary)" }}>
+              style={{ background: isPending ? "var(--muted)" : "var(--primary)", color: isPending ? "#fff" : "#000" }}>
               {isPending
                 ? "Laden…"
                 : mode === "login"

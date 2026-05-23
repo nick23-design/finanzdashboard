@@ -72,12 +72,21 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
           ? hist.map((p: { value: number }) => p.value)
           : [];
 
+        const currentPrice: number | null = asset?.price ?? null;
+        const prevClose: number | null = sparkline.length >= 1
+          ? sparkline[sparkline.length - 1]
+          : null;
+        const priceChangePct =
+          currentPrice != null && prevClose != null && prevClose > 0
+            ? ((currentPrice - prevClose) / prevClose) * 100
+            : (asset?.price_change_pct ?? null);
+
         setData({
-          price: asset?.price ?? null,
+          price: currentPrice,
           currency: asset?.currency ?? null,
           signal: score?.signal ?? "Neutral",
           totalScore: score?.total_score ?? 50,
-          priceChangePct: asset?.price_change_pct ?? null,
+          priceChangePct,
           sparkline,
         });
       } catch {

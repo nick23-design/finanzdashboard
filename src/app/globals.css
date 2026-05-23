@@ -1,12 +1,12 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0f172a;
+  --background: #000000;
   --foreground: #f1f5f9;
-  --card: #1e293b;
-  --card-border: #334155;
-  --primary: #6ECF97;
-  --primary-hover: #4FBF82;
+  --card: #111111;
+  --card-border: #222222;
+  --primary: #00e676;
+  --primary-hover: #00c95e;
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #ef4444;

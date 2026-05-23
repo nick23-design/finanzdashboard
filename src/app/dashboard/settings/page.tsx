@@ -51,7 +51,7 @@ export default async function SettingsPage() {
       </form>
 
       <p className="text-xs text-center" style={{ color: "var(--muted)" }}>
-        Finanzdashboard v0.1.0 · Nur zu Research-Zwecken
+        Next Horizon v0.1.0 · Nur zu Research-Zwecken
       </p>
     </div>
   );

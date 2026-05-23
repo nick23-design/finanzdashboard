@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { AssetSnapshot, AnalysisScore } from "@/types/database";
 import { ScoreBadge } from "@/components/ui/ScoreBadge";
@@ -12,6 +13,7 @@ import { PriceChart } from "./PriceChart";
 import { AIAnalysisCard } from "./AIAnalysisCard";
 import { EarningsCard } from "./EarningsCard";
 import { AnalysisHistoryCard } from "./AnalysisHistoryCard";
+import { AssetNewsCard } from "./AssetNewsCard";
 import { fetchEarningsCalendar } from "@/lib/finance-client";
 import type { EarningsCalendar } from "@/lib/finance-client";
 import type { SignalType } from "@/types/finance";
@@ -39,6 +41,11 @@ interface AssetDetailViewProps {
 }
 
 export function AssetDetailView({ symbol }: AssetDetailViewProps) {
+  const searchParams = useSearchParams();
+  const from = searchParams.get("from");
+  const backHref = from === "nh-select" ? "/dashboard/search" : "/dashboard";
+  const backLabel = from === "nh-select" ? "← NH Select" : "← Watchlist";
+
   const [asset, setAsset] = useState<AssetSnapshot | null>(null);
   const [score, setScore] = useState<AnalysisScore | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,9 +184,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   return (
     <div className="space-y-4">
       {/* Back */}
-      <Link href="/dashboard" className="text-sm flex items-center gap-1"
+      <Link href={backHref} className="text-sm flex items-center gap-1"
         style={{ color: "var(--muted)" }}>
-        ← Watchlist
+        {backLabel}
       </Link>
 
       {/* Hero */}
@@ -287,10 +294,11 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
           {aiLoading && (
             <div className="space-y-2 mt-2">
               {/* Active agents */}
-              <div className="flex items-center gap-3 justify-center">
-                <AgentAvatar agent="analyst" size="sm" showName working />
-                <AgentAvatar agent="finn" size="sm" showName working />
-                <AgentAvatar agent="synthesizer" size="sm" showName working />
+              <div className="flex items-center gap-3 justify-center flex-wrap">
+                <AgentAvatar agent="opus" size="sm" showName working />
+                <AgentAvatar agent="felix" size="sm" showName working />
+                <AgentAvatar agent="nina" size="sm" showName working />
+                <AgentAvatar agent="marco" size="sm" showName working />
               </div>
               {/* Progress bar */}
               <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: "var(--card-border)" }}>
@@ -311,6 +319,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
 
       {/* Earnings Calendar */}
       {earnings && <EarningsCard earnings={earnings} />}
+
+      {/* News */}
+      <AssetNewsCard symbol={symbol} />
 
       {/* Analysis History */}
       <AnalysisHistoryCard symbol={symbol} />

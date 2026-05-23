@@ -237,9 +237,9 @@ export function AIAnalysisCard({ analysis }: Props) {
       {/* Footer – KI-Team */}
       <div className="pt-2 border-t" style={{ borderColor: "var(--card-border)" }}>
         <AgentAvatarGroup
-          agents={["analyst", "finn", "synthesizer"]}
+          agents={["opus", "felix", "nina", "marco"]}
           size="xs"
-          label={`Analysiert von KI-Team · ${dateStr}${analysis.from_cache ? " · Gecacht" : ""}`}
+          label={`Analysiert von Opus & Team · ${dateStr}${analysis.from_cache ? " · Gecacht" : ""}`}
         />
       </div>
     </div>

@@ -24,5 +24,5 @@ export default async function AssetPage({ params }: PageProps) {
 
 export async function generateMetadata({ params }: PageProps) {
   const { symbol } = await params;
-  return { title: `${symbol.toUpperCase()} – Finanzdashboard` };
+  return { title: `${symbol.toUpperCase()} – Next Horizon` };
 }

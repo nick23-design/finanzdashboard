@@ -1,8 +1,28 @@
 {
   "crons": [
     {
-      "path": "/api/cron/check-alerts",
-      "schedule": "0 9 * * *"
+      "path": "/api/cron/us-scout",
+      "schedule": "0 5 * * 1-5"
+    },
+    {
+      "path": "/api/cron/de-scout",
+      "schedule": "0 5 * * 1-5"
+    },
+    {
+      "path": "/api/cron/podcast-scout",
+      "schedule": "0 5 * * 1-5"
+    },
+    {
+      "path": "/api/cron/radar",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/nh-synthesize",
+      "schedule": "30 8 * * 1-5"
+    },
+    {
+      "path": "/api/cron/check-outcomes",
+      "schedule": "0 10 * * *"
     }
   ]
 }

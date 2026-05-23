@@ -190,10 +190,11 @@ function formatAnalystData(a: AnalystData | null): string {
   return lines.join("\n");
 }
 
-async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null): Promise<FundamentalAnalysis> {
+async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, focus?: string): Promise<FundamentalAnalysis> {
   const client = getClient();
   const edgarSection = formatEdgarTrend(edgar);
-  const prompt = `Bewerte diese Aktie für einen wachstumsorientierten Investor:\n\n${formatMetrics(s)}${edgarSection ? "\n\n" + edgarSection : ""}\n\nJSON-Format:\n{"growth_rating":<1-10>,"key_positives":["..."],"key_risks":["..."],"valuation_comment":"..."}`;
+  const focusNote = focus ? `\n\nBesonderer Fokus für diesen Durchlauf: ${focus}` : "";
+  const prompt = `Bewerte diese Aktie für einen wachstumsorientierten Investor:\n\n${formatMetrics(s)}${edgarSection ? "\n\n" + edgarSection : ""}${focusNote}\n\nJSON-Format:\n{"growth_rating":<1-10>,"key_positives":["..."],"key_risks":["..."],"valuation_comment":"..."}`;
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -461,6 +462,191 @@ async function runMarketIntelAgent(
   }
 }
 
+interface OrchestratorResult {
+  recommendation: string;
+  conviction: number;
+  summary: string;
+  bull_case: string[];
+  bear_case: string[];
+  growth_outlook: string;
+  price_levels: PriceLevels | null;
+  fundamental: FundamentalAnalysis;
+  sentiment: SentimentAnalysis;
+  market_intel: MarketIntelAnalysis | null;
+}
+
+async function runOrchestrator(
+  symbol: string,
+  snapshot: AssetSnapshot,
+  googleNews: GoogleNewsItem[],
+  edgarFacts: EdgarFacts | null,
+  insiderTrades: InsiderTrade[],
+  trends: TrendPoint[],
+  institutional: InstitutionalData | null,
+  analystData: AnalystData | null,
+): Promise<OrchestratorResult> {
+  const client = getClient();
+  let fundamental: FundamentalAnalysis | null = null;
+  let sentiment: SentimentAnalysis | null = null;
+  let marketIntel: MarketIntelAnalysis | null = null;
+
+  const dataAvailability = [
+    `Finanzkennzahlen: ${snapshot.price != null ? "vorhanden" : "fehlen"}`,
+    `SEC EDGAR Quartalsdaten: ${edgarFacts ? `vorhanden (${edgarFacts.revenue.length} Quartale)` : "fehlen"}`,
+    `Aktuelle News: ${googleNews.length > 0 ? `${googleNews.length} Artikel` : "keine"}`,
+    `Insider-Transaktionen: ${insiderTrades.length > 0 ? `${insiderTrades.length} Einträge` : "keine"}`,
+    `Google Trends: ${trends.length > 0 ? "vorhanden" : "fehlen"}`,
+    `Institutionelle Daten: ${institutional ? "vorhanden" : "fehlen"}`,
+    `Analysten-Konsens: ${analystData ? `Kursziel $${analystData.mean_target?.toFixed(2) ?? "N/A"}` : "fehlen"}`,
+  ].join("\n");
+
+  const tools: Anthropic.Messages.Tool[] = [
+    {
+      name: "analyze_fundamentals",
+      description: "Felix (Fundamental-Analyst): Bewertet KGV, FCF, Verschuldung, Wachstum und SEC EDGAR Quartalsdaten. Kann mit spezifischem Fokus erneut aufgerufen werden.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          focus: {
+            type: "string",
+            description: "Optionaler Fokus, z.B. 'Verschuldung genauer prüfen' oder 'Wachstumstrend vertiefen'",
+          },
+        },
+      },
+    },
+    {
+      name: "analyze_sentiment",
+      description: "Nina (Sentiment-Analystin): Bewertet Nachrichtenstimmung aus aktuellen Headlines.",
+      input_schema: { type: "object" as const, properties: {} },
+    },
+    {
+      name: "analyze_market_intelligence",
+      description: "Marco (Markt-Intelligence): Analysiert Insider-Transaktionen, institutionelle Positionen und Google Trends. Nur aufrufen wenn Daten laut Datenverfügbarkeit vorhanden.",
+      input_schema: { type: "object" as const, properties: {} },
+    },
+    {
+      name: "complete_analysis",
+      description: "Schließt die Analyse ab. Erst aufrufen wenn mindestens Fundamental- und Sentiment-Analyse vorliegen und du mit den Ergebnissen zufrieden bist.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          recommendation: {
+            type: "string",
+            enum: ["Kaufen", "Leicht kaufen", "Halten", "Leicht verkaufen", "Verkaufen"],
+          },
+          conviction: { type: "number", description: "Überzeugungswert 1–10" },
+          summary: { type: "string", description: "2–3 prägnante Sätze" },
+          bull_case: { type: "array", items: { type: "string" }, description: "3 Argumente für die Aktie" },
+          bear_case: { type: "array", items: { type: "string" }, description: "2–3 Risiken" },
+          growth_outlook: { type: "string" },
+          entry: { type: "number", description: "Idealer Einstiegskurs" },
+          target: { type: "number", description: "12-Monats-Kursziel" },
+          stop_loss: { type: "number", description: "Stop-Loss-Marke" },
+          entry_rationale: { type: "string" },
+          target_rationale: { type: "string" },
+        },
+        required: ["recommendation", "conviction", "summary", "bull_case", "bear_case", "growth_outlook"],
+      },
+    },
+  ];
+
+  const messages: Anthropic.Messages.MessageParam[] = [
+    {
+      role: "user",
+      content: `Führe eine vollständige Investmentanalyse für ${symbol} durch.
+
+DATENVERFÜGBARKEIT:
+${dataAvailability}
+
+KENNZAHLEN:
+${formatMetrics(snapshot)}${analystData ? "\n\n" + formatAnalystData(analystData) : ""}
+
+Vorgehen: Starte mit Fundamental- und Sentiment-Analyse. Rufe Markt-Intelligenz ab wenn Daten vorhanden. Bei widersprüchlichen Signalen oder unzureichenden Ergebnissen: vertiefe die relevante Analyse mit spezifischem Fokus. Schließe mit complete_analysis ab.`,
+    },
+  ];
+
+  for (let i = 0; i < 10; i++) {
+    const response = await client.messages.create({
+      model: "claude-opus-4-7",
+      max_tokens: 2000,
+      thinking: { type: "adaptive" },
+      system: `Du bist Opus, der leitende Investment-Stratege. Du koordinierst dein Analyse-Team:
+- Felix (analyze_fundamentals): Fundamental-Analyst, kann mit Fokus mehrfach aufgerufen werden
+- Nina (analyze_sentiment): Sentiment-Analystin
+- Marco (analyze_market_intelligence): Markt-Intelligence-Spezialist
+
+Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und entscheidest selbst welche Analysen du benötigst. Erstelle faktenbasierte, präzise Empfehlungen auf Deutsch. Beziehe dich ausschließlich auf bereitgestellte Daten.`,
+      tools,
+      messages,
+    });
+
+    messages.push({ role: "assistant", content: response.content });
+    if (response.stop_reason === "end_turn") break;
+
+    const toolUses = response.content.filter(
+      (b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use",
+    );
+    if (toolUses.length === 0) break;
+
+    // complete_analysis → return immediately
+    const completeCall = toolUses.find(t => t.name === "complete_analysis");
+    if (completeCall) {
+      const inp = completeCall.input as {
+        recommendation: string; conviction: number; summary: string;
+        bull_case: string[]; bear_case: string[]; growth_outlook: string;
+        entry?: number | null; target?: number | null; stop_loss?: number | null;
+        entry_rationale?: string; target_rationale?: string;
+      };
+      return {
+        recommendation: inp.recommendation,
+        conviction: Math.min(10, Math.max(1, Math.round(inp.conviction))),
+        summary: inp.summary,
+        bull_case: inp.bull_case ?? [],
+        bear_case: inp.bear_case ?? [],
+        growth_outlook: inp.growth_outlook,
+        price_levels: (inp.entry != null || inp.target != null || inp.stop_loss != null) ? {
+          entry: inp.entry ?? null, target: inp.target ?? null, stop_loss: inp.stop_loss ?? null,
+          entry_rationale: inp.entry_rationale ?? "", target_rationale: inp.target_rationale ?? "",
+        } : null,
+        fundamental: fundamental ?? { growth_rating: 5, key_positives: [], key_risks: [], valuation_comment: "" },
+        sentiment: sentiment ?? { sentiment: "neutral", key_themes: [], sentiment_summary: "" },
+        market_intel: marketIntel,
+      };
+    }
+
+    // Process remaining tool calls and continue
+    const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
+    for (const toolUse of toolUses) {
+      let content: string;
+      if (toolUse.name === "analyze_fundamentals") {
+        const { focus } = toolUse.input as { focus?: string };
+        fundamental = await runFundamentalAgent(snapshot, edgarFacts, focus);
+        content = JSON.stringify(fundamental);
+      } else if (toolUse.name === "analyze_sentiment") {
+        sentiment = await runSentimentAgent(googleNews);
+        content = JSON.stringify(sentiment);
+      } else if (toolUse.name === "analyze_market_intelligence") {
+        marketIntel = await runMarketIntelAgent(insiderTrades, trends, institutional);
+        content = JSON.stringify(marketIntel);
+      } else {
+        content = JSON.stringify({ error: "Unbekanntes Tool" });
+      }
+      toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content });
+    }
+    messages.push({ role: "user", content: toolResults });
+  }
+
+  // Fallback: Orchestrator hat nicht sauber abgeschlossen → alte Pipeline
+  const [fb_f, fb_s, fb_m] = await Promise.all([
+    fundamental ?? runFundamentalAgent(snapshot, edgarFacts),
+    sentiment ?? runSentimentAgent(googleNews),
+    marketIntel ?? runMarketIntelAgent(insiderTrades, trends, institutional),
+  ]);
+  const rawSynthesis = await runSynthesisAgent(symbol, snapshot, fb_f, fb_s, fb_m, analystData);
+  const synthesis = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews);
+  return { ...synthesis, price_levels: synthesis.price_levels ?? null, fundamental: fb_f, sentiment: fb_s, market_intel: fb_m };
+}
+
 async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
   try {
     const supabase = await createClient();
@@ -503,6 +689,28 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
     };
   } catch {
     return null;
+  }
+}
+
+async function saveOutcome(result: AIAnalysisResult): Promise<void> {
+  try {
+    const supabase = await createClient();
+    const checkAt = new Date(result.analyzed_at);
+    checkAt.setDate(checkAt.getDate() + 30);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("analysis_outcomes").insert({
+      symbol: result.symbol,
+      recommendation: result.recommendation,
+      conviction: result.conviction,
+      price_at_analysis: result.price_levels?.entry ?? null,
+      price_target: result.price_levels?.target ?? null,
+      stop_loss: result.price_levels?.stop_loss ?? null,
+      analyzed_at: result.analyzed_at,
+      check_at: checkAt.toISOString(),
+    });
+  } catch {
+    // Non-critical
   }
 }
 
@@ -602,27 +810,28 @@ export async function POST(
       fetched_at: assetData.fetched_at,
     };
 
-    const [fundamental, sentiment, market_intel] = await Promise.all([
-      runFundamentalAgent(snapshot, edgarFacts),
-      runSentimentAgent(googleNews),
-      runMarketIntelAgent(insiderTrades, trends, institutional),
-    ]);
-
-    const rawSynthesis = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, market_intel, analystData);
-    const synthesis = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews);
+    const orchestrated = await runOrchestrator(
+      symbol, snapshot, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData,
+    );
 
     const result: AIAnalysisResult = {
       symbol,
-      ...synthesis,
-      fundamental,
-      sentiment,
-      market_intel,
-      price_levels: synthesis.price_levels ?? null,
+      recommendation: orchestrated.recommendation,
+      conviction: orchestrated.conviction,
+      summary: orchestrated.summary,
+      bull_case: orchestrated.bull_case,
+      bear_case: orchestrated.bear_case,
+      growth_outlook: orchestrated.growth_outlook,
+      fundamental: orchestrated.fundamental,
+      sentiment: orchestrated.sentiment,
+      market_intel: orchestrated.market_intel,
+      price_levels: orchestrated.price_levels,
       analyzed_at: new Date().toISOString(),
       from_cache: false,
     };
 
     await saveAnalysis(result);
+    void saveOutcome(result);
 
     return NextResponse.json(result);
   } catch (err) {

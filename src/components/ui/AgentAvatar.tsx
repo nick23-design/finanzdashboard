@@ -2,50 +2,28 @@
 
 // Agent definitions – swap src to a local /public/agents/{id}.png for real AI-generated photos
 export const AGENTS = {
-  finn: {
-    name: "Finn",
-    description: "Autonomer Markt-Analyst",
-    seed: "FinnNHAgent",
-    color: "#f59e0b",
-  },
-  "us-scout": {
-    name: "US-Scout",
-    description: "US-Markt Analyst",
-    seed: "USScoutNH",
-    color: "#3b82f6",
-  },
-  "de-scout": {
-    name: "DE-Scout",
-    description: "DE-Markt Analyst",
-    seed: "DEScoutNH",
-    color: "#6ECF97",
-  },
-  "podcast-scout": {
-    name: "Podcast-Scout",
-    description: "Investment-Podcast Analyst",
-    seed: "PodcastScoutNH",
-    color: "#8b5cf6",
-  },
-  synthesizer: {
-    name: "Synthesizer",
-    description: "Chef-Analyst NH Select",
-    seed: "SynthesizerNH",
-    color: "#6366f1",
-  },
-  analyst: {
-    name: "KI-Analyst",
-    description: "Multi-Agenten Analyse",
-    seed: "AIAnalystNH",
-    color: "#a78bfa",
-  },
+  finn:           { name: "Finn",             description: "Autonomer Markt-Analyst",          seed: "FinnNHAgent",       color: "#f59e0b" },
+  "us-scout":     { name: "US-Scout",         description: "US-Markt Analyst",                 seed: "USScoutNH",         color: "#3b82f6" },
+  "de-scout":     { name: "DE-Scout",         description: "DE-Markt Analyst",                 seed: "DEScoutNH",         color: "#6ECF97" },
+  "podcast-scout":{ name: "Podcast-Scout",    description: "Investment-Podcast Analyst",       seed: "PodcastScoutNH",    color: "#8b5cf6" },
+  synthesizer:    { name: "Synthesizer",      description: "Chef-Analyst NH Select",           seed: "SynthesizerNH",     color: "#6366f1" },
+  radar:          { name: "Radar",             description: "Autonomer Trend-Scanner",          seed: "RadarNHAgent",      color: "#22c55e" },
+  opus:           { name: "Opus",             description: "Leitender Investment-Stratege",    seed: "OpusNHAgent",       color: "#f59e0b" },
+  felix:          { name: "Felix",            description: "Fundamental-Analyst",              seed: "FelixNHAgent",      color: "#3b82f6" },
+  nina:           { name: "Nina",             description: "Sentiment-Analystin",              seed: "NinaNHAgent",       color: "#8b5cf6" },
+  marco:          { name: "Marco",            description: "Markt-Intelligence-Spezialist",    seed: "MarcoNHAgent",      color: "#f97316" },
+  vera:           { name: "Vera",             description: "Fakten-Prüferin",                  seed: "VeraNHAgent",       color: "#ef4444" },
+  lena:           { name: "Lena",             description: "News-Kuratorin",                   seed: "LenaNHAgent",       color: "#06b6d4" },
+  lisa:           { name: "Lisa",             description: "News-Kuratorin",                   seed: "LisaNHAgent",       color: "#06b6d4" },
 } as const;
 
 export type AgentId = keyof typeof AGENTS;
 
 const SIZE = {
-  xs: { wh: "w-6 h-6", px: 24, ring: 1.5, dot: "w-2 h-2" },
-  sm: { wh: "w-8 h-8", px: 32, ring: 2,   dot: "w-2.5 h-2.5" },
-  md: { wh: "w-10 h-10", px: 40, ring: 2,  dot: "w-3 h-3" },
+  xs: { wh: "w-6 h-6",   px: 24, ring: 1.5, dot: "w-2 h-2" },
+  sm: { wh: "w-8 h-8",   px: 32, ring: 2,   dot: "w-2.5 h-2.5" },
+  md: { wh: "w-10 h-10", px: 40, ring: 2,   dot: "w-3 h-3" },
+  lg: { wh: "w-14 h-14", px: 56, ring: 2.5, dot: "w-3.5 h-3.5" },
 } as const;
 
 interface AgentAvatarProps {

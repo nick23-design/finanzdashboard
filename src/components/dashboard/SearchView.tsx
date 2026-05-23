@@ -162,8 +162,8 @@ export function SearchView() {
           <button
             type="submit"
             disabled={isPending || !query.trim()}
-            className="rounded-xl px-4 py-3 font-semibold text-white text-sm disabled:opacity-50 flex-shrink-0"
-            style={{ background: "var(--primary)" }}>
+            className="rounded-xl px-4 py-3 font-semibold text-sm disabled:opacity-50 flex-shrink-0"
+            style={{ background: "var(--primary)", color: "#000" }}>
             {isPending ? "…" : "Suchen"}
           </button>
         </form>
@@ -221,8 +221,8 @@ export function SearchView() {
               <div className="flex gap-2">
                 <Link
                   href={`/dashboard/asset/${searched}`}
-                  className="flex-1 rounded-xl py-2.5 text-center text-sm font-semibold text-white"
-                  style={{ background: "var(--primary)" }}>
+                  className="flex-1 rounded-xl py-2.5 text-center text-sm font-semibold"
+                  style={{ background: "var(--primary)", color: "#000" }}>
                   Vollständige Analyse
                 </Link>
                 <button

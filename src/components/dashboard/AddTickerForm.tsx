@@ -55,9 +55,9 @@ export function AddTickerForm({ onAdd }: AddTickerFormProps) {
       <button
         type="submit"
         disabled={isPending || !symbol.trim()}
-        className="rounded-xl px-4 py-3 font-semibold text-white text-sm transition-all
+        className="rounded-xl px-4 py-3 font-semibold text-sm transition-all
           disabled:opacity-50 flex-shrink-0"
-        style={{ background: "var(--primary)" }}>
+        style={{ background: "var(--primary)", color: "#000" }}>
         {isPending ? "…" : "+ Hinzufügen"}
       </button>
       {error && (

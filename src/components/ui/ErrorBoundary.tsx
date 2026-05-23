@@ -40,8 +40,8 @@ export class ErrorBoundary extends Component<Props, State> {
             </p>
             <button
               onClick={() => this.setState({ hasError: false, message: "" })}
-              className="rounded-xl px-4 py-2 text-sm font-medium text-white"
-              style={{ background: "var(--primary)" }}>
+              className="rounded-xl px-4 py-2 text-sm font-medium"
+              style={{ background: "var(--primary)", color: "#000" }}>
               Erneut versuchen
             </button>
           </div>
