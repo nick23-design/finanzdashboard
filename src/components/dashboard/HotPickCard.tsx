@@ -21,12 +21,15 @@ export function HotPickCard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [noData, setNoData] = useState(false);
-  const [finnCountdown, setFinnCountdown] = useState("");
+  const [finnCountdown, setFinnCountdown] = useState(() =>
+    formatCountdown(getNextWeekdayCron(7, 0).getTime() - Date.now())
+  );
 
   useEffect(() => {
-    const update = () => setFinnCountdown(formatCountdown(getNextWeekdayCron(7, 0).getTime() - Date.now()));
-    update();
-    const id = setInterval(update, 10_000);
+    const id = setInterval(
+      () => setFinnCountdown(formatCountdown(getNextWeekdayCron(7, 0).getTime() - Date.now())),
+      10_000
+    );
     return () => clearInterval(id);
   }, []);
 

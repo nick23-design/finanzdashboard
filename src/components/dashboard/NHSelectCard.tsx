@@ -37,12 +37,15 @@ export function NHSelectCard() {
   const [pick, setPick] = useState<NHSelect | null>(null);
   const [loading, setLoading] = useState(true);
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [nhCountdown, setNhCountdown] = useState("");
+  const [nhCountdown, setNhCountdown] = useState(() =>
+    formatCountdown(getNextWeekdayCron(6, 30).getTime() - Date.now())
+  );
 
   useEffect(() => {
-    const update = () => setNhCountdown(formatCountdown(getNextWeekdayCron(6, 30).getTime() - Date.now()));
-    update();
-    const id = setInterval(update, 10_000);
+    const id = setInterval(
+      () => setNhCountdown(formatCountdown(getNextWeekdayCron(6, 30).getTime() - Date.now())),
+      10_000
+    );
     return () => clearInterval(id);
   }, []);
 

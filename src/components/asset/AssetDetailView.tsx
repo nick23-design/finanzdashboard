@@ -48,7 +48,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [aiProgress, setAiProgress] = useState(0);
   const [earnings, setEarnings] = useState<EarningsCalendar | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
@@ -103,9 +103,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     return () => clearInterval(id);
   }, [symbol]);
 
-  // Ticker for countdown display (every 10 s is plenty)
+  // Ticker for countdown display (every 10 s is enough for hh:mm precision)
   useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 10_000);
+    const id = setInterval(() => setNow(Date.now()), 10_000);
     return () => clearInterval(id);
   }, []);
 
@@ -160,6 +160,11 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     );
   }
 
+  const cacheExpiresAt = asset?.fetched_at
+    ? new Date(asset.fetched_at).getTime() + 6 * 3_600_000
+    : null;
+  const cacheRemainingMs = cacheExpiresAt ? cacheExpiresAt - now : null;
+
   const formatBigNum = (n: number | null) => {
     if (n === null) return null;
     if (Math.abs(n) >= 1e12) return `${(n / 1e12).toFixed(2)} T`;
@@ -200,20 +205,16 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             <p className="text-2xl font-bold text-white">
               {asset?.price != null ? asset.price.toFixed(2) : "—"}
             </p>
-            {asset?.fetched_at && (() => {
-              const expiresAt = new Date(asset.fetched_at).getTime() + 6 * 3_600_000;
-              const remaining = expiresAt - Date.now();
-              void tick; // consumed so countdown re-renders
-              return (
-                <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                  {refreshing
-                    ? "Aktualisiere…"
-                    : remaining > 0
-                    ? `${formatRelativeTime(asset.fetched_at)} · in ${formatCountdown(remaining)}`
-                    : formatRelativeTime(asset.fetched_at)}
-                </p>
-              );
-            })()}</div>
+            {asset?.fetched_at && (
+              <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                {refreshing
+                  ? "Aktualisiere…"
+                  : cacheRemainingMs != null && cacheRemainingMs > 0
+                  ? `${formatRelativeTime(asset.fetched_at)} · in ${formatCountdown(cacheRemainingMs)}`
+                  : formatRelativeTime(asset.fetched_at)}
+              </p>
+            )}
+          </div>
         </div>
 
         {score && (
