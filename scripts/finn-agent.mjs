@@ -11,12 +11,15 @@ import { createClient } from "@supabase/supabase-js";
 
 const FINANCE_API_URL = process.env.FINANCE_API_URL;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // --- Validierung ---
-const missing = ["FINANCE_API_URL", "ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]
-  .filter((k) => !process.env[k]);
+const missing = [];
+if (!FINANCE_API_URL) missing.push("FINANCE_API_URL");
+if (!ANTHROPIC_API_KEY) missing.push("ANTHROPIC_API_KEY");
+if (!SUPABASE_URL) missing.push("SUPABASE_URL (oder NEXT_PUBLIC_SUPABASE_URL)");
+if (!SUPABASE_SERVICE_ROLE_KEY) missing.push("SUPABASE_SERVICE_ROLE_KEY");
 if (missing.length) {
   console.error("Fehlende Umgebungsvariablen:", missing.join(", "));
   process.exit(1);
