@@ -195,14 +195,15 @@ def get_asset(symbol: str, request: Request):
             price_change = _safe_float(info.get("regularMarketChange"))
             price_change_pct = _safe_float(info.get("regularMarketChangePercent"))
 
-        # ISIN – ticker.isin kann None zurückgeben
+        # ISIN – mehrere Quellen probieren (yfinance-Version abhängig)
         isin: Optional[str] = None
-        try:
-            raw_isin = ticker.isin
-            if raw_isin and str(raw_isin).strip().upper() not in ("NONE", "N/A", ""):
-                isin = str(raw_isin).strip()
-        except Exception:
-            pass
+        for _isin_candidate in [
+            info.get("isin"),
+            getattr(ticker, "isin", None),
+        ]:
+            if _isin_candidate and str(_isin_candidate).strip().upper() not in ("NONE", "N/A", ""):
+                isin = str(_isin_candidate).strip()
+                break
 
         description: Optional[str] = info.get("longBusinessSummary") or None
 
