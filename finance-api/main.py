@@ -204,7 +204,32 @@ def get_trending():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "eodhd_configured": bool(os.getenv("EODHD_API_KEY"))}
+
+
+@app.get("/debug/isin/{symbol}")
+def debug_isin(symbol: str):
+    """Temporary diagnostic endpoint – shows what each ISIN source returns."""
+    symbol = symbol.upper().strip()
+    result: dict = {"symbol": symbol, "eodhd_key_set": bool(os.getenv("EODHD_API_KEY"))}
+
+    result["eodhd"] = _fetch_isin_eodhd(symbol)
+
+    try:
+        info = yf.Ticker(symbol).info or {}
+        result["yf_info_isin"] = info.get("isin")
+    except Exception as e:
+        result["yf_info_isin"] = f"error: {e}"
+
+    for suffix in [".F", ".DE"]:
+        sym = symbol + suffix
+        try:
+            de_info = yf.Ticker(sym).info or {}
+            result[sym] = {"isin": de_info.get("isin"), "quote_type": _fetch_isin_via_quote_type(sym)}
+        except Exception as e:
+            result[sym] = {"error": str(e)}
+
+    return result
 
 
 @app.get("/assets/{symbol}", response_model=AssetResponse)
