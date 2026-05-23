@@ -8,20 +8,25 @@ on:
 jobs:
   finn-research:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Abhängigkeiten installieren
+        run: npm ci --omit=dev
+
       - name: Finn Research starten
-        run: |
-          HTTP_STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" \
-            -X GET \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            https://nexthorizon-ai.com/api/cron/finn-research)
-
-          echo "HTTP Status: $HTTP_STATUS"
-          cat /tmp/response.json
-
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "Fehler: HTTP $HTTP_STATUS"
-            exit 1
-          fi
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FINANCE_API_URL: ${{ secrets.FINANCE_API_URL }}
+        run: node scripts/finn-agent.mjs
