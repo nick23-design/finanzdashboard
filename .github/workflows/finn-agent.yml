@@ -1,0 +1,27 @@
+name: Finn – Täglicher Research-Agent
+
+on:
+  schedule:
+    - cron: "0 7 * * 1-5"  # 7:00 UTC, Mo–Fr (= 9:00 CEST)
+  workflow_dispatch:        # Manuell auslösbar
+
+jobs:
+  finn-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Finn Research starten
+        run: |
+          HTTP_STATUS=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X GET \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://nexthorizon-ai.com/api/cron/finn-research)
+
+          echo "HTTP Status: $HTTP_STATUS"
+          cat /tmp/response.json
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "Fehler: HTTP $HTTP_STATUS"
+            exit 1
+          fi

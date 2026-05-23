@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 const FINANCE_API_URL = process.env.FINANCE_API_URL || "http://localhost:8000";
 const CACHE_TTL_HOURS = 24;
@@ -117,6 +118,29 @@ async function generateHotPick(userId: string) {
   return saved;
 }
 
+async function getAgentPick(): Promise<(Record<string, unknown> & { is_agent_pick: true }) | null> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  try {
+    const admin = createSupabaseClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const { data } = await admin
+      .from("agent_daily_picks")
+      .select("*")
+      .gte("created_at", todayStart.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!data) return null;
+    return { ...data, is_agent_pick: true as const };
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
   if (isNextResponse(auth)) return auth;
@@ -124,6 +148,12 @@ export async function GET(request: NextRequest) {
 
   const forceRefresh = request.nextUrl.searchParams.get("refresh") === "1";
   const supabase = await createClient();
+
+  // Prefer agentischer Finn's autonomous daily pick (unless user explicitly refreshes)
+  if (!forceRefresh) {
+    const agentPick = await getAgentPick();
+    if (agentPick) return NextResponse.json(agentPick);
+  }
 
   if (!forceRefresh) {
     const cutoff = new Date(Date.now() - CACHE_TTL_HOURS * 3600 * 1000).toISOString();
