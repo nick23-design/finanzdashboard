@@ -195,15 +195,33 @@ def get_asset(symbol: str, request: Request):
             price_change = _safe_float(info.get("regularMarketChange"))
             price_change_pct = _safe_float(info.get("regularMarketChangePercent"))
 
-        # ISIN – mehrere Quellen probieren (yfinance-Version abhängig)
+        # ISIN – Yahoo Finance isinData-Modul direkt abfragen
         isin: Optional[str] = None
-        for _isin_candidate in [
-            info.get("isin"),
-            getattr(ticker, "isin", None),
-        ]:
-            if _isin_candidate and str(_isin_candidate).strip().upper() not in ("NONE", "N/A", ""):
-                isin = str(_isin_candidate).strip()
-                break
+        try:
+            isin_url = (
+                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}"
+                "?modules=isinData"
+            )
+            isin_req = urllib.request.Request(
+                isin_url, headers={"User-Agent": "Mozilla/5.0 (compatible; Finanzdashboard/1.0)"}
+            )
+            with urllib.request.urlopen(isin_req, timeout=5) as isin_resp:
+                isin_json = json.loads(isin_resp.read().decode())
+            isin_result = (
+                isin_json.get("quoteSummary", {})
+                .get("result", [{}])[0]
+                .get("isinData", {})
+                .get("isin")
+            )
+            if isin_result and str(isin_result).strip().upper() not in ("NONE", "N/A", ""):
+                isin = str(isin_result).strip()
+        except Exception:
+            pass
+        # Fallback: ticker.info (funktioniert bei manchen nicht-US-Aktien)
+        if not isin:
+            _fallback = info.get("isin")
+            if _fallback and str(_fallback).strip().upper() not in ("NONE", "N/A", ""):
+                isin = str(_fallback).strip()
 
         description: Optional[str] = info.get("longBusinessSummary") or None
 
