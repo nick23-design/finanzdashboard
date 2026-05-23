@@ -1,6 +1,7 @@
 "use client";
 
 import type { AIAnalysisResult, PriceLevels } from "@/app/api/ai-analysis/[symbol]/route";
+import { AgentAvatarGroup } from "@/components/ui/AgentAvatar";
 
 interface Props {
   analysis: AIAnalysisResult;
@@ -233,11 +234,14 @@ export function AIAnalysisCard({ analysis }: Props) {
         </div>
       )}
 
-      {/* Footer */}
-      <p className="text-xs" style={{ color: "var(--muted)" }}>
-        Analysiert: {dateStr}
-        {analysis.from_cache && " · Gecacht"}
-      </p>
+      {/* Footer – KI-Team */}
+      <div className="pt-2 border-t" style={{ borderColor: "var(--card-border)" }}>
+        <AgentAvatarGroup
+          agents={["analyst", "finn", "synthesizer"]}
+          size="xs"
+          label={`Analysiert von KI-Team · ${dateStr}${analysis.from_cache ? " · Gecacht" : ""}`}
+        />
+      </div>
     </div>
   );
 }

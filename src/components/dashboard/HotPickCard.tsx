@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Sparkles, RefreshCw, TrendingUp, Bot } from "lucide-react";
+import { Sparkles, RefreshCw, TrendingUp } from "lucide-react";
+import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import { getNextWeekdayCron, formatCountdown } from "@/lib/time";
 
 interface HotPick {
@@ -73,7 +74,9 @@ export function HotPickCard() {
       <div
         className="rounded-2xl border p-4 text-center"
         style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-        <Bot size={20} className="mx-auto mb-2" style={{ color: "var(--muted)" }} />
+        <div className="flex justify-center mb-2">
+          <AgentAvatar agent="finn" size="md" />
+        </div>
         <p className="text-sm font-medium text-white">Finn recherchiert noch</p>
         <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>
           Nächste autonome Analyse {finnCountdown ? `in ${finnCountdown}` : "täglich automatisch"} (Mo–Fr, 09:00 Uhr)
@@ -96,15 +99,15 @@ export function HotPickCard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 flex-wrap">
+          <AgentAvatar agent="finn" size="xs" />
           <Sparkles size={13} style={{ color: "#f59e0b" }} />
           <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#f59e0b" }}>
             Hot Pick · Finn
           </span>
           {pick.is_agent_pick && (
             <span
-              className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium"
+              className="text-xs px-1.5 py-0.5 rounded-full font-medium"
               style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa" }}>
-              <Bot size={9} />
               Autonome Analyse
             </span>
           )}

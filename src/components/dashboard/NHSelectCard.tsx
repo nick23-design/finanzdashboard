@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Diamond, TrendingUp, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { getNextWeekdayCron, formatCountdown } from "@/lib/time";
+import { AgentAvatar } from "@/components/ui/AgentAvatar";
+import type { AgentId } from "@/components/ui/AgentAvatar";
 
 interface NHSource {
   agent: "US-Scout" | "DE-Scout" | "Podcast-Scout";
@@ -25,10 +27,10 @@ interface NHSelect {
   created_at: string;
 }
 
-const AGENT_LABEL: Record<NHSource["agent"], { flag: string; label: string }> = {
-  "US-Scout":      { flag: "🇺🇸", label: "US-Scout" },
-  "DE-Scout":      { flag: "🇩🇪", label: "DE-Scout" },
-  "Podcast-Scout": { flag: "🎙", label: "Podcast-Scout" },
+const AGENT_LABEL: Record<NHSource["agent"], { flag: string; label: string; avatarId: AgentId }> = {
+  "US-Scout":      { flag: "🇺🇸", label: "US-Scout",      avatarId: "us-scout" },
+  "DE-Scout":      { flag: "🇩🇪", label: "DE-Scout",      avatarId: "de-scout" },
+  "Podcast-Scout": { flag: "🎙",  label: "Podcast-Scout", avatarId: "podcast-scout" },
 };
 
 const AGENT_ORDER: NHSource["agent"][] = ["US-Scout", "DE-Scout", "Podcast-Scout"];
@@ -184,9 +186,12 @@ export function NHSelectCard() {
           style={{ borderTop: "1px solid rgba(99,102,241,0.1)" }}>
           {sourcesByAgent.map((group) => (
             <div key={group.agent}>
-              <p className="text-xs font-semibold mt-3 mb-2" style={{ color: "#a5b4fc" }}>
-                {group.flag} {group.label} ({group.sources.length})
-              </p>
+              <div className="flex items-center gap-2 mt-3 mb-2">
+                <AgentAvatar agent={group.avatarId} size="xs" />
+                <p className="text-xs font-semibold" style={{ color: "#a5b4fc" }}>
+                  {group.flag} {group.label} ({group.sources.length})
+                </p>
+              </div>
               <div className="space-y-3">
                 {group.sources.map((source, i) => (
                   <div

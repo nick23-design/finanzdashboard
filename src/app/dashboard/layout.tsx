@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { BottomNav } from "@/components/layout/BottomNav";
@@ -25,7 +26,12 @@ export default async function DashboardLayout({
           background: "var(--card)",
           borderColor: "var(--card-border)",
         }}>
-        <h1 className="font-bold text-white text-base">📈 Finanzdashboard</h1>
+        <div className="flex items-center gap-2.5">
+          <div className="rounded-md overflow-hidden flex-shrink-0" style={{ background: "white", padding: "2px 4px" }}>
+            <Image src="/LogoNH.png" alt="NH" width={40} height={24} className="h-6 w-auto object-contain" />
+          </div>
+          <span className="font-bold text-white text-sm tracking-tight">Finanzdashboard</span>
+        </div>
         <Disclaimer compact />
       </header>
 

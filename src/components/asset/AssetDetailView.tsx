@@ -17,6 +17,7 @@ import type { EarningsCalendar } from "@/lib/finance-client";
 import type { SignalType } from "@/types/finance";
 import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
 import { formatCountdown, formatRelativeTime } from "@/lib/time";
+import { AgentAvatar } from "@/components/ui/AgentAvatar";
 
 const AI_STEPS = [
   "Marktdaten werden geladen…",
@@ -284,7 +285,14 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             {aiLoading ? "Analysiere…" : "KI-Analyse starten"}
           </button>
           {aiLoading && (
-            <div className="space-y-1.5 mt-1">
+            <div className="space-y-2 mt-2">
+              {/* Active agents */}
+              <div className="flex items-center gap-3 justify-center">
+                <AgentAvatar agent="analyst" size="sm" showName working />
+                <AgentAvatar agent="finn" size="sm" showName working />
+                <AgentAvatar agent="synthesizer" size="sm" showName working />
+              </div>
+              {/* Progress bar */}
               <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: "var(--card-border)" }}>
                 <div
                   className="h-full rounded-full transition-all duration-100"
