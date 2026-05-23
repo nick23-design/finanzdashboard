@@ -89,33 +89,44 @@ def _extract_isin(candidate) -> Optional[str]:
 
 
 def _fetch_isin_eodhd(symbol: str) -> Optional[str]:
-    """Primary ISIN source: EODHD fundamentals API (free tier, 20 calls/day).
-    Results are cached in-process so each symbol is only fetched once.
-    Exchange mapping: bare ticker → .US, suffix .DE → .XETRA."""
+    """ISIN via EODHD search endpoint (free tier). Cached in-process per symbol.
+    Takes the primary listing's ISIN; falls back to first result if none marked primary."""
     api_key = os.getenv("EODHD_API_KEY")
     if not api_key:
         return None
 
-    if "." in symbol:
-        base, suffix = symbol.rsplit(".", 1)
-        eodhd_sym = f"{base}.XETRA" if suffix == "DE" else symbol
-    else:
-        eodhd_sym = f"{symbol}.US"
+    base = symbol.split(".")[0].upper()  # strip exchange suffix (e.g. SAP from SAP.DE)
 
-    if eodhd_sym in _isin_cache:
-        return _isin_cache[eodhd_sym]
+    if base in _isin_cache:
+        return _isin_cache[base]
 
     try:
-        url = (
-            f"https://eodhd.com/api/fundamentals/{urllib.parse.quote(eodhd_sym)}"
-            f"?api_token={api_key}&filter=General::ISIN"
-        )
+        url = f"https://eodhd.com/api/search/{urllib.parse.quote(base)}?api_token={api_key}&limit=10"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=8) as r:
-            raw = r.read().decode().strip().strip('"')
-        isin = _extract_isin(raw)
+            results = json.loads(r.read())
+
+        if not isinstance(results, list):
+            return None
+
+        # Prefer isPrimary=true with matching ticker; fall back to first code match
+        primary_isin = None
+        fallback_isin = None
+        for item in results:
+            if item.get("Code", "").upper() != base:
+                continue
+            isin = _extract_isin(item.get("ISIN"))
+            if not isin:
+                continue
+            if item.get("isPrimary"):
+                primary_isin = isin
+                break
+            if fallback_isin is None:
+                fallback_isin = isin
+
+        isin = primary_isin or fallback_isin
         if isin:
-            _isin_cache[eodhd_sym] = isin
+            _isin_cache[base] = isin
         return isin
     except Exception:
         return None
@@ -209,34 +220,13 @@ def health():
 
 @app.get("/debug/isin/{symbol}")
 def debug_isin(symbol: str):
-    """Diagnostic endpoint – shows raw responses from each ISIN source."""
+    """Diagnostic endpoint – tests ISIN lookup for a given symbol."""
     symbol = symbol.upper().strip()
-    api_key = os.getenv("EODHD_API_KEY")
-    result: dict = {"symbol": symbol, "eodhd_key_set": bool(api_key)}
-
-    if api_key:
-        # Show raw response from fundamentals endpoint
-        try:
-            url = (
-                f"https://eodhd.com/api/fundamentals/{urllib.parse.quote(symbol)}.US"
-                f"?api_token={api_key}&filter=General::ISIN"
-            )
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=8) as r:
-                result["eodhd_fundamentals_raw"] = r.read().decode()[:300]
-        except Exception as e:
-            result["eodhd_fundamentals_error"] = str(e)
-
-        # Show raw response from search endpoint (may include ISIN on free tier)
-        try:
-            url = f"https://eodhd.com/api/search/{urllib.parse.quote(symbol)}?api_token={api_key}&limit=3"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=8) as r:
-                result["eodhd_search_raw"] = json.loads(r.read())
-        except Exception as e:
-            result["eodhd_search_error"] = str(e)
-
-    return result
+    return {
+        "symbol": symbol,
+        "eodhd_key_set": bool(os.getenv("EODHD_API_KEY")),
+        "isin": _fetch_isin_eodhd(symbol),
+    }
 
 
 @app.get("/assets/{symbol}", response_model=AssetResponse)
