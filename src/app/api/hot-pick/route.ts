@@ -23,7 +23,6 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 const FINANCE_API_URL = process.env.FINANCE_API_URL || "http://localhost:8000";
 const CACHE_TTL_HOURS = 24;
@@ -119,15 +118,11 @@ async function generateHotPick(userId: string) {
 }
 
 async function getAgentPick(): Promise<(Record<string, unknown> & { is_agent_pick: true }) | null> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
   try {
-    const admin = createSupabaseClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    );
+    const supabase = await createClient();
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const { data } = await admin
+    const { data } = await supabase
       .from("agent_daily_picks")
       .select("*")
       .gte("created_at", todayStart.toISOString())
@@ -135,7 +130,7 @@ async function getAgentPick(): Promise<(Record<string, unknown> & { is_agent_pic
       .limit(1)
       .maybeSingle();
     if (!data) return null;
-    return { ...data, is_agent_pick: true as const };
+    return { ...(data as Record<string, unknown>), is_agent_pick: true as const };
   } catch {
     return null;
   }
