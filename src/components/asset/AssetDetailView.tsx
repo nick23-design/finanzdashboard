@@ -16,6 +16,22 @@ import { fetchEarningsCalendar } from "@/lib/finance-client";
 import type { EarningsCalendar } from "@/lib/finance-client";
 import type { SignalType } from "@/types/finance";
 import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
+import { formatCountdown, formatRelativeTime } from "@/lib/time";
+
+const AI_STEPS = [
+  "Marktdaten werden geladen…",
+  "Fundamental-Analyse läuft…",
+  "Technische Analyse läuft…",
+  "Risikobewertung läuft…",
+  "Synthese der Ergebnisse…",
+];
+function aiStep(p: number) {
+  if (p < 18) return AI_STEPS[0];
+  if (p < 40) return AI_STEPS[1];
+  if (p < 62) return AI_STEPS[2];
+  if (p < 82) return AI_STEPS[3];
+  return AI_STEPS[4];
+}
 
 interface AssetDetailViewProps {
   symbol: string;
@@ -29,7 +45,10 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysisResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiProgress, setAiProgress] = useState(0);
   const [earnings, setEarnings] = useState<EarningsCalendar | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +89,33 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     load();
     return () => { cancelled = true; };
   }, [symbol]);
+
+  // Silent price refresh every 60 s (returns from Supabase cache instantly until TTL expires)
+  useEffect(() => {
+    const id = setInterval(async () => {
+      setRefreshing(true);
+      try {
+        const res = await fetch(`/api/assets/${symbol}`);
+        if (res.ok) setAsset(await res.json());
+      } catch { /* ignore */ }
+      setRefreshing(false);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [symbol]);
+
+  // Ticker for countdown display (every 10 s is plenty)
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // AI progress animation
+  useEffect(() => {
+    if (!aiLoading) { setAiProgress(0); return; }
+    setAiProgress(0);
+    const id = setInterval(() => setAiProgress(p => Math.min(p + 0.45, 90)), 100);
+    return () => clearInterval(id);
+  }, [aiLoading]);
 
   async function runAIAnalysis() {
     setAiLoading(true);
@@ -154,7 +200,20 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             <p className="text-2xl font-bold text-white">
               {asset?.price != null ? asset.price.toFixed(2) : "—"}
             </p>
-          </div>
+            {asset?.fetched_at && (() => {
+              const expiresAt = new Date(asset.fetched_at).getTime() + 6 * 3_600_000;
+              const remaining = expiresAt - Date.now();
+              void tick; // consumed so countdown re-renders
+              return (
+                <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                  {refreshing
+                    ? "Aktualisiere…"
+                    : remaining > 0
+                    ? `${formatRelativeTime(asset.fetched_at)} · in ${formatCountdown(remaining)}`
+                    : formatRelativeTime(asset.fetched_at)}
+                </p>
+              );
+            })()}</div>
         </div>
 
         {score && (
@@ -221,8 +280,21 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             disabled={aiLoading}
             className="w-full py-2.5 rounded-xl text-sm font-semibold transition-opacity disabled:opacity-60"
             style={{ background: "var(--primary)", color: "#000" }}>
-            {aiLoading ? "Analysiere… (ca. 20 Sek.)" : "KI-Analyse starten"}
+            {aiLoading ? "Analysiere…" : "KI-Analyse starten"}
           </button>
+          {aiLoading && (
+            <div className="space-y-1.5 mt-1">
+              <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: "var(--card-border)" }}>
+                <div
+                  className="h-full rounded-full transition-all duration-100"
+                  style={{ width: `${aiProgress}%`, background: "var(--primary)" }}
+                />
+              </div>
+              <p className="text-xs text-center" style={{ color: "var(--muted)" }}>
+                {aiStep(aiProgress)}
+              </p>
+            </div>
+          )}
         </div>
       )}
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Sparkles, RefreshCw, TrendingUp, Bot } from "lucide-react";
+import { getNextWeekdayCron, formatCountdown } from "@/lib/time";
 
 interface HotPick {
   symbol: string;
@@ -20,6 +21,14 @@ export function HotPickCard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [noData, setNoData] = useState(false);
+  const [finnCountdown, setFinnCountdown] = useState("");
+
+  useEffect(() => {
+    const update = () => setFinnCountdown(formatCountdown(getNextWeekdayCron(7, 0).getTime() - Date.now()));
+    update();
+    const id = setInterval(update, 10_000);
+    return () => clearInterval(id);
+  }, []);
 
   async function loadPick(force = false) {
     if (force) setRefreshing(true);
@@ -64,7 +73,7 @@ export function HotPickCard() {
         <Bot size={20} className="mx-auto mb-2" style={{ color: "var(--muted)" }} />
         <p className="text-sm font-medium text-white">Finn recherchiert noch</p>
         <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>
-          Der Agent startet täglich automatisch. Komm morgen wieder oder löse ihn manuell aus.
+          Nächste autonome Analyse {finnCountdown ? `in ${finnCountdown}` : "täglich automatisch"} (Mo–Fr, 09:00 Uhr)
         </p>
       </div>
     );
@@ -156,6 +165,11 @@ export function HotPickCard() {
           <button onClick={() => loadPick(true)} className="underline" style={{ color: "var(--primary)" }}>
             Aktualisieren
           </button>
+        </p>
+      )}
+      {!isOld && finnCountdown && (
+        <p className="text-xs text-center" style={{ color: "var(--muted)" }}>
+          Nächste Analyse in {finnCountdown}
         </p>
       )}
     </div>

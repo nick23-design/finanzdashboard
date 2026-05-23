@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Diamond, TrendingUp, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { getNextWeekdayCron, formatCountdown } from "@/lib/time";
 
 interface NHSource {
   agent: "US-Scout" | "DE-Scout" | "Podcast-Scout";
@@ -36,6 +37,14 @@ export function NHSelectCard() {
   const [pick, setPick] = useState<NHSelect | null>(null);
   const [loading, setLoading] = useState(true);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [nhCountdown, setNhCountdown] = useState("");
+
+  useEffect(() => {
+    const update = () => setNhCountdown(formatCountdown(getNextWeekdayCron(6, 30).getTime() - Date.now()));
+    update();
+    const id = setInterval(update, 10_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     fetch("/api/nh-select")
@@ -65,7 +74,7 @@ export function NHSelectCard() {
         <Diamond size={18} className="mx-auto mb-2" style={{ color: "var(--muted)" }} />
         <p className="text-sm font-medium text-white">NH Select noch nicht verfügbar</p>
         <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>
-          Startet täglich automatisch um 8:30 Uhr.
+          Nächste Analyse {nhCountdown ? `in ${nhCountdown}` : "täglich automatisch"} (Mo–Fr, 08:30 Uhr)
         </p>
       </div>
     );
@@ -143,6 +152,15 @@ export function NHSelectCard() {
           Details ansehen
         </Link>
       </div>
+
+      {/* Nächster Lauf */}
+      {nhCountdown && (
+        <div className="px-4 pb-3 -mt-1">
+          <p className="text-xs" style={{ color: "var(--muted)" }}>
+            Nächste NH Select Analyse in {nhCountdown}
+          </p>
+        </div>
+      )}
 
       {/* Quellen-Aufklapper */}
       <button
