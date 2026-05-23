@@ -209,25 +209,32 @@ def health():
 
 @app.get("/debug/isin/{symbol}")
 def debug_isin(symbol: str):
-    """Temporary diagnostic endpoint – shows what each ISIN source returns."""
+    """Diagnostic endpoint – shows raw responses from each ISIN source."""
     symbol = symbol.upper().strip()
-    result: dict = {"symbol": symbol, "eodhd_key_set": bool(os.getenv("EODHD_API_KEY"))}
+    api_key = os.getenv("EODHD_API_KEY")
+    result: dict = {"symbol": symbol, "eodhd_key_set": bool(api_key)}
 
-    result["eodhd"] = _fetch_isin_eodhd(symbol)
-
-    try:
-        info = yf.Ticker(symbol).info or {}
-        result["yf_info_isin"] = info.get("isin")
-    except Exception as e:
-        result["yf_info_isin"] = f"error: {e}"
-
-    for suffix in [".F", ".DE"]:
-        sym = symbol + suffix
+    if api_key:
+        # Show raw response from fundamentals endpoint
         try:
-            de_info = yf.Ticker(sym).info or {}
-            result[sym] = {"isin": de_info.get("isin"), "quote_type": _fetch_isin_via_quote_type(sym)}
+            url = (
+                f"https://eodhd.com/api/fundamentals/{urllib.parse.quote(symbol)}.US"
+                f"?api_token={api_key}&filter=General::ISIN"
+            )
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                result["eodhd_fundamentals_raw"] = r.read().decode()[:300]
         except Exception as e:
-            result[sym] = {"error": str(e)}
+            result["eodhd_fundamentals_error"] = str(e)
+
+        # Show raw response from search endpoint (may include ISIN on free tier)
+        try:
+            url = f"https://eodhd.com/api/search/{urllib.parse.quote(symbol)}?api_token={api_key}&limit=3"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                result["eodhd_search_raw"] = json.loads(r.read())
+        except Exception as e:
+            result["eodhd_search_error"] = str(e)
 
     return result
 
