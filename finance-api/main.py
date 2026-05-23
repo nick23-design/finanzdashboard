@@ -77,6 +77,67 @@ def _safe_int(value) -> Optional[int]:
     return int(f) if f is not None else None
 
 
+# ── ISIN helpers ─────────────────────────────────────────────────────────────
+
+_isin_cache: dict[str, str] = {}  # symbol → ISIN; survives for process lifetime
+
+
+def _extract_isin(candidate) -> Optional[str]:
+    if candidate and str(candidate).strip().upper() not in ("NONE", "N/A", ""):
+        return str(candidate).strip()
+    return None
+
+
+def _fetch_isin_eodhd(symbol: str) -> Optional[str]:
+    """Primary ISIN source: EODHD fundamentals API (free tier, 20 calls/day).
+    Results are cached in-process so each symbol is only fetched once.
+    Exchange mapping: bare ticker → .US, suffix .DE → .XETRA."""
+    api_key = os.getenv("EODHD_API_KEY")
+    if not api_key:
+        return None
+
+    if "." in symbol:
+        base, suffix = symbol.rsplit(".", 1)
+        eodhd_sym = f"{base}.XETRA" if suffix == "DE" else symbol
+    else:
+        eodhd_sym = f"{symbol}.US"
+
+    if eodhd_sym in _isin_cache:
+        return _isin_cache[eodhd_sym]
+
+    try:
+        url = (
+            f"https://eodhd.com/api/fundamentals/{urllib.parse.quote(eodhd_sym)}"
+            f"?api_token={api_key}&filter=General::ISIN"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            raw = r.read().decode().strip().strip('"')
+        isin = _extract_isin(raw)
+        if isin:
+            _isin_cache[eodhd_sym] = isin
+        return isin
+    except Exception:
+        return None
+
+
+def _fetch_isin_via_quote_type(ticker_sym: str) -> Optional[str]:
+    """Fallback: Yahoo Finance quoteSummary quoteType module (European listings only)."""
+    try:
+        url = (
+            f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
+            f"{urllib.parse.quote(ticker_sym)}?modules=quoteType"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.loads(r.read())
+        result = (data.get("quoteSummary") or {}).get("result") or []
+        qt = result[0].get("quoteType", {}) if result else {}
+        return _extract_isin(qt.get("isin"))
+    except Exception:
+        return None
+
+
 def _compute_rsi(prices: list[float], period: int = 14) -> Optional[float]:
     if len(prices) < period + 1:
         return None
@@ -195,29 +256,12 @@ def get_asset(symbol: str, request: Request):
             price_change = _safe_float(info.get("regularMarketChange"))
             price_change_pct = _safe_float(info.get("regularMarketChangePercent"))
 
-        def _extract_isin(candidate) -> Optional[str]:
-            if candidate and str(candidate).strip().upper() not in ("NONE", "N/A", ""):
-                return str(candidate).strip()
-            return None
+        # ISIN: EODHD as primary source, Yahoo Finance as fallback
+        isin: Optional[str] = _fetch_isin_eodhd(symbol)
 
-        def _fetch_isin_via_quote_type(ticker_sym: str) -> Optional[str]:
-            """Query Yahoo Finance quoteSummary quoteType module directly – includes ISIN for European listings."""
-            try:
-                url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{urllib.parse.quote(ticker_sym)}?modules=quoteType"
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=5) as r:
-                    data = json.loads(r.read())
-                result = (data.get("quoteSummary") or {}).get("result") or []
-                qt = result[0].get("quoteType", {}) if result else {}
-                return _extract_isin(qt.get("isin"))
-            except Exception:
-                return None
+        if not isin:
+            isin = _extract_isin(info.get("isin"))
 
-        # Primary: isin directly in info (works for some European tickers)
-        isin: Optional[str] = _extract_isin(info.get("isin"))
-
-        # Fallback for bare US/international tickers: look up the Frankfurt listing
-        # which always carries ISIN, first via yfinance then via direct quoteSummary call
         if not isin and "." not in symbol:
             for de_suffix in [".F", ".DE"]:
                 try:
@@ -228,7 +272,6 @@ def get_asset(symbol: str, request: Request):
                         break
                 except Exception:
                     continue
-            # If yfinance still gave nothing, try direct HTTP for the quoteSummary quoteType module
             if not isin:
                 for de_suffix in [".F", ".DE"]:
                     isin = _fetch_isin_via_quote_type(symbol + de_suffix)
