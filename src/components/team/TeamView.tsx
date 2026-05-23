@@ -5,9 +5,11 @@ import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import type { AgentId } from "@/components/ui/AgentAvatar";
 import { AccuracyCard } from "@/components/ui/AccuracyCard";
 
+type ServiceStatus = "online" | "warming" | "offline" | "checking";
+
 interface AgentStatus {
-  anthropic: "online" | "offline" | "checking";
-  finance_api: "online" | "offline" | "checking";
+  anthropic: ServiceStatus;
+  finance_api: ServiceStatus;
 }
 
 interface Agent {
@@ -277,26 +279,22 @@ const CATEGORIES: Category[] = [
   },
 ];
 
-function StatusDot({ status }: { status: "online" | "offline" | "checking" }) {
+function StatusDot({ status }: { status: ServiceStatus }) {
   if (status === "checking") {
     return <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "#ca8a04" }} />;
   }
-  return (
-    <span
-      className="inline-block w-1.5 h-1.5 rounded-full"
-      style={{ background: status === "online" ? "#22c55e" : "#ef4444" }}
-    />
-  );
+  const color = status === "online" ? "#22c55e" : status === "warming" ? "#f59e0b" : "#ef4444";
+  return <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />;
 }
 
-function getAgentStatus(agent: Agent, status: AgentStatus): "online" | "offline" | "checking" {
+function getAgentStatus(agent: Agent, status: AgentStatus): ServiceStatus {
   if (status.anthropic === "checking") return "checking";
   if (status.anthropic === "offline") return "offline";
-  if (agent.requiresFinanceApi && status.finance_api === "offline") return "offline";
+  if (agent.requiresFinanceApi && status.finance_api !== "online") return status.finance_api;
   return "online";
 }
 
-function AgentDetailPanel({ agent, agentStatus }: { agent: Agent; agentStatus: "online" | "offline" | "checking" }) {
+function AgentDetailPanel({ agent, agentStatus }: { agent: Agent; agentStatus: ServiceStatus }) {
   return (
     <div
       className="rounded-xl p-3 space-y-2.5 mt-2"
@@ -354,7 +352,7 @@ function AgentTile({
   onClick,
 }: {
   agent: Agent;
-  agentStatus: "online" | "offline" | "checking";
+  agentStatus: ServiceStatus;
   selected: boolean;
   onClick: () => void;
 }) {
@@ -371,7 +369,7 @@ function AgentTile({
         <span
           className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
           style={{
-            background: agentStatus === "online" ? "#22c55e" : agentStatus === "checking" ? "#ca8a04" : "#ef4444",
+            background: agentStatus === "online" ? "#22c55e" : agentStatus === "checking" || agentStatus === "warming" ? "#f59e0b" : "#ef4444",
             border: "1.5px solid var(--card)",
           }}
         />
@@ -446,6 +444,13 @@ function CategorySection({
   );
 }
 
+function statusLabel(s: ServiceStatus): string {
+  if (s === "checking") return "Prüfe…";
+  if (s === "online") return "Online";
+  if (s === "warming") return "Aufwärmt sich…";
+  return "Offline";
+}
+
 export function TeamView() {
   const [status, setStatus] = useState<AgentStatus>({
     anthropic: "checking",
@@ -453,13 +458,29 @@ export function TeamView() {
   });
 
   useEffect(() => {
-    fetch("/api/team/status")
-      .then(r => r.json())
-      .then(data => setStatus({ anthropic: data.anthropic, finance_api: data.finance_api }))
-      .catch(() => setStatus({ anthropic: "offline", finance_api: "offline" }));
+    function check() {
+      fetch("/api/team/status")
+        .then(r => r.json())
+        .then(data => setStatus({ anthropic: data.anthropic, finance_api: data.finance_api }))
+        .catch(() => setStatus({ anthropic: "offline", finance_api: "offline" }));
+    }
+    check();
   }, []);
 
+  // Auto-retry every 20 s while Finance API is warming up
+  useEffect(() => {
+    if (status.finance_api !== "warming") return;
+    const id = setTimeout(() => {
+      fetch("/api/team/status")
+        .then(r => r.json())
+        .then(data => setStatus({ anthropic: data.anthropic, finance_api: data.finance_api }))
+        .catch(() => {});
+    }, 20_000);
+    return () => clearTimeout(id);
+  }, [status.finance_api]);
+
   const allOnline = status.anthropic === "online" && status.finance_api === "online";
+  const warming = status.finance_api === "warming";
   const checking = status.anthropic === "checking" || status.finance_api === "checking";
 
   return (
@@ -483,7 +504,7 @@ export function TeamView() {
               <div className="flex items-center gap-2">
                 <StatusDot status={status[key]} />
                 <span className="text-xs" style={{ color: "var(--muted)" }}>
-                  {status[key] === "checking" ? "Prüfe…" : status[key] === "online" ? "Online" : "Offline"}
+                  {statusLabel(status[key])}
                 </span>
               </div>
             </div>
@@ -492,11 +513,11 @@ export function TeamView() {
         <div
           className="mt-3 rounded-xl px-3 py-2 text-xs font-medium flex items-center gap-2"
           style={{
-            background: checking ? "rgba(202,138,4,0.1)" : allOnline ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
-            color: checking ? "#ca8a04" : allOnline ? "#22c55e" : "#ef4444",
+            background: checking ? "rgba(202,138,4,0.1)" : allOnline ? "rgba(34,197,94,0.1)" : warming ? "rgba(245,158,11,0.1)" : "rgba(239,68,68,0.1)",
+            color: checking ? "#ca8a04" : allOnline ? "#22c55e" : warming ? "#f59e0b" : "#ef4444",
           }}>
-          <StatusDot status={checking ? "checking" : allOnline ? "online" : "offline"} />
-          {checking ? "Systeme werden geprüft…" : allOnline ? "Alle KI-Mitarbeiter einsatzbereit" : "Ein oder mehrere Systeme nicht erreichbar"}
+          <StatusDot status={checking ? "checking" : allOnline ? "online" : warming ? "warming" : "offline"} />
+          {checking ? "Systeme werden geprüft…" : allOnline ? "Alle KI-Mitarbeiter einsatzbereit" : warming ? "Finance API startet — wird automatisch neu geprüft…" : "Ein oder mehrere Systeme nicht erreichbar"}
         </div>
       </div>
 

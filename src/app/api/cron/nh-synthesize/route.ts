@@ -140,5 +140,40 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
       .gte("found_at", since);
   }
 
+  // 6. Send push notifications
+  try {
+    const webPush = await import("web-push");
+    const vapidPublic = process.env.VAPID_PUBLIC_KEY;
+    const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
+    const vapidSubject = process.env.VAPID_SUBJECT ?? "mailto:nick.muetze@gmail.com";
+
+    if (vapidPublic && vapidPrivate) {
+      webPush.default.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: subs } = await (supabase as any)
+        .from("push_subscriptions")
+        .select("endpoint, p256dh, auth")
+        .limit(500);
+
+      if (subs?.length) {
+        const payload = JSON.stringify({
+          title: `NH Select: ${pick.symbol}`,
+          body: `${pick.recommendation} · Überzeugung ${pick.conviction}/10`,
+          url: `/dashboard/asset/${pick.symbol}?from=nh-select`,
+        });
+
+        await Promise.allSettled(
+          subs.map((s: { endpoint: string; p256dh: string; auth: string }) =>
+            webPush.default.sendNotification(
+              { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+              payload
+            )
+          )
+        );
+      }
+    }
+  } catch { /* Push-Fehler dürfen den Cron nicht abbrechen */ }
+
   return NextResponse.json({ success: true, symbol: pick.symbol, conviction: pick.conviction });
 }

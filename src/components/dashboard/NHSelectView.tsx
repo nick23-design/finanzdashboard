@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import { formatRelativeTime } from "@/lib/time";
@@ -246,6 +246,98 @@ function HistoryList({ history }: { history: NHSelectEntry[] }) {
   );
 }
 
+const VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
+
+async function subscribeToPush(): Promise<boolean> {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") return false;
+
+  const reg = await navigator.serviceWorker.ready;
+  const existing = await reg.pushManager.getSubscription();
+  const sub = existing ?? await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: VAPID_PUBLIC,
+  });
+
+  await fetch("/api/push/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(sub),
+  });
+  return true;
+}
+
+async function unsubscribeFromPush(): Promise<void> {
+  if (!("serviceWorker" in navigator)) return;
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (!sub) return;
+  await fetch("/api/push/subscribe", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint: sub.endpoint }),
+  });
+  await sub.unsubscribe();
+}
+
+function PushButton() {
+  const [state, setState] = useState<"unknown" | "subscribed" | "denied" | "unsupported">("unknown");
+  const checked = useRef(false);
+
+  useEffect(() => {
+    if (checked.current) return;
+    checked.current = true;
+
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !VAPID_PUBLIC) {
+      setState("unsupported");
+      return;
+    }
+    // Register SW
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    // Check current subscription state
+    navigator.serviceWorker.ready.then(async (reg) => {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) setState("subscribed");
+      else if (Notification.permission === "denied") setState("denied");
+      else setState("unknown");
+    });
+  }, []);
+
+  if (state === "unsupported" || !VAPID_PUBLIC) return null;
+
+  if (state === "subscribed") {
+    return (
+      <button
+        onClick={async () => { await unsubscribeFromPush(); setState("unknown"); }}
+        className="text-xs px-3 py-1.5 rounded-xl"
+        style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}>
+        Benachrichtigungen aktiv ✓
+      </button>
+    );
+  }
+
+  if (state === "denied") {
+    return (
+      <span className="text-xs" style={{ color: "var(--muted)" }}>
+        Benachrichtigungen gesperrt
+      </span>
+    );
+  }
+
+  return (
+    <button
+      onClick={async () => {
+        const ok = await subscribeToPush();
+        setState(ok ? "subscribed" : Notification.permission === "denied" ? "denied" : "unknown");
+      }}
+      className="text-xs px-3 py-1.5 rounded-xl"
+      style={{ background: "var(--card-border)", color: "var(--muted)" }}>
+      Benachrichtigungen
+    </button>
+  );
+}
+
 export function NHSelectView() {
   const [today, setToday] = useState<NHSelectEntry | null | undefined>(undefined);
   const [data, setData] = useState<HistoryData | null>(null);
@@ -264,9 +356,9 @@ export function NHSelectView() {
     load();
   }, []);
 
-  // History without today's entry (already shown above)
-  const pastHistory = (data?.history ?? []).filter(
-    h => today && new Date(h.created_at).toDateString() !== new Date(today.created_at).toDateString()
+  // History without today's entry (already shown above as TodayPick)
+  const pastHistory = (data?.history ?? []).filter(h =>
+    !today || new Date(h.created_at).toDateString() !== new Date(today.created_at).toDateString()
   );
 
   return (
@@ -279,7 +371,10 @@ export function NHSelectView() {
             Täglich die eine vielversprechendste Aktie
           </p>
         </div>
-        <AgentAvatar agent="synthesizer" size="sm" />
+        <div className="flex items-center gap-2">
+          <PushButton />
+          <AgentAvatar agent="synthesizer" size="sm" />
+        </div>
       </div>
 
       {loading && (
@@ -308,10 +403,6 @@ export function NHSelectView() {
       {!loading && data && <ScoutFindings scouts={data.scouts} />}
 
       {!loading && pastHistory.length > 0 && <HistoryList history={pastHistory} />}
-
-      {!loading && !today && data && data.history.length > 0 && (
-        <HistoryList history={data.history} />
-      )}
 
       <p className="text-xs text-center pb-2" style={{ color: "var(--muted)" }}>
         Ausschließlich zu Research-Zwecken · Keine Anlageberatung

@@ -7,14 +7,19 @@ export async function GET() {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    // Last 10 Synthesizer picks (any day)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    // Synthesizer picks of the last 7 days
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: history } = await (supabase as any)
       .from("nh_select_daily")
       .select("symbol, name, recommendation, conviction, rationale, sources, agent, created_at")
       .eq("agent", "Synthesizer")
+      .gte("created_at", sevenDaysAgo.toISOString())
       .order("created_at", { ascending: false })
-      .limit(10);
+      .limit(14);
 
     // Today's scout findings
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
