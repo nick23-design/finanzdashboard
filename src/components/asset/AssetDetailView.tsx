@@ -137,9 +137,18 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         <div className="flex items-start justify-between gap-2">
           <div>
             <h2 className="text-2xl font-bold text-white">{symbol}</h2>
-            <p className="text-sm mt-0.5" style={{ color: "var(--muted)" }}>
-              {asset?.currency ?? ""}
-            </p>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <p className="text-sm" style={{ color: "var(--muted)" }}>
+                {asset?.currency ?? ""}
+              </p>
+              {asset?.isin && (
+                <span
+                  className="text-xs px-1.5 py-0.5 rounded font-mono"
+                  style={{ background: "var(--card-border)", color: "var(--muted)" }}>
+                  {asset.isin}
+                </span>
+              )}
+            </div>
           </div>
           <div className="text-right">
             <p className="text-2xl font-bold text-white">
@@ -169,6 +178,18 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             <summary className="cursor-pointer font-medium">Erklärung anzeigen</summary>
             <p className="mt-2 leading-relaxed">{score.explanation}</p>
           </details>
+        </div>
+      )}
+
+      {/* Unternehmensbeschreibung */}
+      {asset?.description && (
+        <div
+          className="rounded-2xl border p-4"
+          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+          <h3 className="font-semibold text-white mb-2">Über das Unternehmen</h3>
+          <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+            {asset.description}
+          </p>
         </div>
       )}
 

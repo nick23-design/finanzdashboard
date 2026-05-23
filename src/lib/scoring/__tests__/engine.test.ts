@@ -7,6 +7,8 @@ function makeSnapshot(overrides: Partial<AssetSnapshot> = {}): AssetSnapshot {
     symbol: "TEST",
     price: 100,
     currency: "USD",
+    isin: null,
+    description: null,
     pe_ratio: 20,
     market_cap: 1_000_000_000,
     debt_to_equity: 0.4,

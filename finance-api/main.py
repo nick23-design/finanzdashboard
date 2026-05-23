@@ -41,6 +41,8 @@ class AssetResponse(BaseModel):
     name: str
     price: Optional[float]
     currency: Optional[str]
+    isin: Optional[str]
+    description: Optional[str]
     pe_ratio: Optional[float]
     market_cap: Optional[int]
     debt_to_equity: Optional[float]
@@ -193,11 +195,24 @@ def get_asset(symbol: str, request: Request):
             price_change = _safe_float(info.get("regularMarketChange"))
             price_change_pct = _safe_float(info.get("regularMarketChangePercent"))
 
+        # ISIN – ticker.isin kann None zurückgeben
+        isin: Optional[str] = None
+        try:
+            raw_isin = ticker.isin
+            if raw_isin and str(raw_isin).strip().upper() not in ("NONE", "N/A", ""):
+                isin = str(raw_isin).strip()
+        except Exception:
+            pass
+
+        description: Optional[str] = info.get("longBusinessSummary") or None
+
         return AssetResponse(
             symbol=symbol,
             name=info.get("longName") or info.get("shortName") or symbol,
             price=last_price,
             currency=info.get("currency", "USD"),
+            isin=isin,
+            description=description,
             pe_ratio=_safe_float(info.get("trailingPE") or info.get("forwardPE")),
             market_cap=_safe_int(info.get("marketCap")),
             debt_to_equity=_safe_float(info.get("debtToEquity")),

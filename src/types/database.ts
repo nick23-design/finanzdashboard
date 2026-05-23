@@ -65,6 +65,8 @@ export interface Database {
           symbol: string;
           price: number | null;
           currency: string | null;
+          isin: string | null;
+          description: string | null;
           pe_ratio: number | null;
           market_cap: number | null;
           debt_to_equity: number | null;
@@ -80,6 +82,8 @@ export interface Database {
           symbol: string;
           price?: number | null;
           currency?: string | null;
+          isin?: string | null;
+          description?: string | null;
           pe_ratio?: number | null;
           market_cap?: number | null;
           debt_to_equity?: number | null;
@@ -95,6 +99,8 @@ export interface Database {
           symbol?: string;
           price?: number | null;
           currency?: string | null;
+          isin?: string | null;
+          description?: string | null;
           pe_ratio?: number | null;
           market_cap?: number | null;
           debt_to_equity?: number | null;

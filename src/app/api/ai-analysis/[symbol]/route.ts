@@ -589,6 +589,8 @@ export async function POST(
       symbol: assetData.symbol,
       price: assetData.price,
       currency: assetData.currency,
+      isin: assetData.isin ?? null,
+      description: assetData.description ?? null,
       pe_ratio: assetData.pe_ratio,
       market_cap: assetData.market_cap,
       debt_to_equity: assetData.debt_to_equity,

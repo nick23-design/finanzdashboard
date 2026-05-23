@@ -34,6 +34,8 @@ async function saveSnapshot(raw: Awaited<ReturnType<typeof fetchAssetData>>) {
     symbol: raw.symbol,
     price: raw.price,
     currency: raw.currency,
+    isin: raw.isin ?? null,
+    description: raw.description ?? null,
     pe_ratio: raw.pe_ratio,
     market_cap: raw.market_cap,
     debt_to_equity: raw.debt_to_equity,
