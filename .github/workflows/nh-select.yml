@@ -1,0 +1,33 @@
+name: NH Select – Tägliche Investitionsidee
+
+on:
+  schedule:
+    - cron: "30 6 * * 1-5"  # 6:30 UTC, Mo–Fr (= 8:30 CEST) – vor Finn
+  workflow_dispatch:
+
+jobs:
+  nh-select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Abhängigkeiten installieren
+        run: npm ci --omit=dev
+
+      - name: NH Select Agent starten
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FINANCE_API_URL: ${{ secrets.FINANCE_API_URL }}
+        run: node scripts/nh-select-agent.mjs

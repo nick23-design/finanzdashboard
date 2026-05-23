@@ -8,6 +8,7 @@ import { searchStocks, STOCKS, type StockEntry } from "@/lib/stocks-list";
 import Link from "next/link";
 import { Search, X, Plus, Globe } from "lucide-react";
 import { HotPickCard } from "./HotPickCard";
+import { NHSelectCard } from "./NHSelectCard";
 
 const REGION_LABEL: Record<StockEntry["region"], string> = {
   US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
@@ -145,6 +146,9 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
 
       {/* Hot Pick */}
       <HotPickCard />
+
+      {/* NH Select */}
+      <NHSelectCard />
 
       {/* Search Bar */}
       <div className="relative">
