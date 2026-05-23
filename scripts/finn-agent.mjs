@@ -268,7 +268,7 @@ Fokus: Positives Momentum (RSI 45–70, Kurs über MA50), starkes Umsatzwachstum
     .single();
 
   if (error) {
-    console.error("Supabase-Fehler:", error.message);
+    console.error("Supabase-Fehler:", JSON.stringify(error));
     process.exit(1);
   }
 
