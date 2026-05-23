@@ -218,16 +218,6 @@ def health():
     return {"status": "ok", "eodhd_configured": bool(os.getenv("EODHD_API_KEY"))}
 
 
-@app.get("/debug/isin/{symbol}")
-def debug_isin(symbol: str):
-    """Diagnostic endpoint – tests ISIN lookup for a given symbol."""
-    symbol = symbol.upper().strip()
-    return {
-        "symbol": symbol,
-        "eodhd_key_set": bool(os.getenv("EODHD_API_KEY")),
-        "isin": _fetch_isin_eodhd(symbol),
-    }
-
 
 @app.get("/assets/{symbol}", response_model=AssetResponse)
 def get_asset(symbol: str, request: Request):
