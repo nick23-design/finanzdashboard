@@ -28,6 +28,19 @@ async function getCachedSnapshot(symbol: string): Promise<AssetSnapshot | null> 
   return (data as AssetSnapshot | null) ?? null;
 }
 
+async function getStoredIsin(symbol: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("asset_snapshots")
+    .select("isin")
+    .eq("symbol", symbol)
+    .not("isin", "is", null)
+    .order("fetched_at", { ascending: false })
+    .limit(1)
+    .single();
+  return (data as { isin: string } | null)?.isin ?? null;
+}
+
 async function saveSnapshot(raw: Awaited<ReturnType<typeof fetchAssetData>>) {
   const supabase = await createClient();
   const insertPayload: AssetSnapshotInsert = {
@@ -82,6 +95,10 @@ export async function GET(
 
   try {
     const raw = await fetchAssetData(symbol);
+    // ISIN never changes — reuse last stored value if backend didn't return one
+    if (!raw.isin) {
+      raw.isin = await getStoredIsin(symbol);
+    }
     await saveSnapshot(raw);
     return NextResponse.json({ ...raw, fromCache: false });
   } catch (err) {
