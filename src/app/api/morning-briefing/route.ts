@@ -23,8 +23,8 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
-import { fetchAssetData, fetchGoogleNews } from "@/lib/finance-client";
-import type { GoogleNewsItem } from "@/lib/finance-client";
+import { fetchAssetData, fetchGoogleNews, fetchMarketIndices } from "@/lib/finance-client";
+import type { GoogleNewsItem, MarketIndex } from "@/lib/finance-client";
 
 export interface MorningBriefing {
   id: string;
@@ -33,6 +33,7 @@ export interface MorningBriefing {
   market_overview: string;
   watchlist_highlights: string[];
   daily_opportunity: { symbol: string; name: string; reason: string } | null;
+  indices: { symbol: string; name: string; price: number | null; change_pct: number | null }[];
   generated_at: string;
   from_cache: boolean;
 }
@@ -72,7 +73,10 @@ export async function GET(request: NextRequest) {
   const refresh = request.nextUrl.searchParams.get("refresh") === "1";
   const supabase = await createClient();
 
-  // Return cached briefing if available and not forced refresh
+  // Always fetch indices live (they change throughout the day)
+  const liveIndices = await fetchMarketIndices();
+
+  // Return cached briefing text if available and not forced refresh
   if (!refresh) {
     const { data: cached } = await supabase
       .from("morning_briefings")
@@ -87,6 +91,7 @@ export async function GET(request: NextRequest) {
         ...cached,
         watchlist_highlights: cached.watchlist_highlights as string[],
         daily_opportunity: cached.daily_opportunity as MorningBriefing["daily_opportunity"],
+        indices: liveIndices,
         from_cache: true,
       });
     }
@@ -108,11 +113,12 @@ export async function GET(request: NextRequest) {
 
   const top5 = watchlist.slice(0, 5);
 
-  // Fetch asset data + news in parallel
+  // Fetch asset data and news in parallel (indices already fetched above)
   const [assetSettled, newsSettled] = await Promise.all([
     Promise.allSettled(top5.map(item => fetchAssetData(item.symbol))),
     Promise.allSettled(top5.slice(0, 3).map(item => fetchGoogleNews(item.symbol))),
   ]);
+  const indices = liveIndices;
 
   // Build asset context string
   const assetLines = top5.map((item, i) => {
@@ -152,12 +158,26 @@ export async function GET(request: NextRequest) {
     ? scores.map(s => `${s.symbol}: ${s.signal} (${s.total_score}/100)`).join(", ")
     : "Keine Scores verfügbar";
 
+  // Build market indices context
+  const indicesLine = (indices as MarketIndex[]).length > 0
+    ? (indices as MarketIndex[]).map(idx => {
+        if (idx.price == null) return `${idx.name}: keine Daten`;
+        const pct = idx.change_pct != null
+          ? ` (${idx.change_pct >= 0 ? "+" : ""}${idx.change_pct.toFixed(2)}%)`
+          : "";
+        return `${idx.name}: ${idx.price.toLocaleString("de-DE")}${pct}`;
+      }).join(" | ")
+    : "Marktdaten nicht verfügbar";
+
   const today = new Date().toLocaleDateString("de-DE", {
     weekday: "long", day: "2-digit", month: "long", year: "numeric",
   });
   const isWeekend = [0, 6].includes(new Date().getDay());
 
   const prompt = `Morgen-Briefing für ${today}${isWeekend ? " (Wochenende – Märkte geschlossen)" : ""}.
+
+MARKTINDIZES:
+${indicesLine}
 
 WATCHLIST-POSITIONEN:
 ${assetLines.join("\n")}
@@ -211,6 +231,7 @@ JSON-Format:
       market_overview: parsed.market_overview,
       watchlist_highlights: parsed.watchlist_highlights,
       daily_opportunity: parsed.daily_opportunity,
+      indices: liveIndices,
       from_cache: false,
     });
   } catch (err) {

@@ -218,6 +218,42 @@ def health():
     return {"status": "ok", "eodhd_configured": bool(os.getenv("EODHD_API_KEY"))}
 
 
+INDICES = [
+    {"symbol": "^GSPC",  "name": "S&P 500"},
+    {"symbol": "^IXIC",  "name": "NASDAQ"},
+    {"symbol": "^GDAXI", "name": "DAX"},
+    {"symbol": "^DJI",   "name": "Dow Jones"},
+]
+
+
+def _fetch_index(symbol: str, name: str) -> dict:
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="5d", interval="1d", auto_adjust=True)
+        close_prices = [float(c) for c in hist["Close"].dropna().tolist()]
+        if not close_prices:
+            return {"symbol": symbol, "name": name, "price": None, "change_pct": None}
+        price = round(close_prices[-1], 2)
+        change_pct = None
+        if len(close_prices) >= 2 and close_prices[-2] != 0:
+            change_pct = round((close_prices[-1] - close_prices[-2]) / close_prices[-2] * 100, 2)
+        return {"symbol": symbol, "name": name, "price": price, "change_pct": change_pct}
+    except Exception:
+        return {"symbol": symbol, "name": name, "price": None, "change_pct": None}
+
+
+@app.get("/market/indices")
+def get_market_indices():
+    results = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(_fetch_index, idx["symbol"], idx["name"]): idx for idx in INDICES}
+        for future in as_completed(futures):
+            results.append(future.result())
+    # Return in original order
+    order = {idx["symbol"]: i for i, idx in enumerate(INDICES)}
+    results.sort(key=lambda r: order.get(r["symbol"], 99))
+    return results
+
 
 @app.get("/assets/{symbol}", response_model=AssetResponse)
 def get_asset(symbol: str, request: Request):

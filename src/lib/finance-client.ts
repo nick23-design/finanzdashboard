@@ -32,6 +32,25 @@ export interface EdgarFacts {
   gross_profit: EdgarFactPeriod[];
 }
 
+export interface MarketIndex {
+  symbol: string;
+  name: string;
+  price: number | null;
+  change_pct: number | null;
+}
+
+export async function fetchMarketIndices(): Promise<MarketIndex[]> {
+  try {
+    const res = await fetch(`${FINANCE_API_URL}/market/indices`, {
+      next: { revalidate: 0 },
+    });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchAssetData(symbol: string) {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}`, {
     next: { revalidate: 0 }, // caching handled at DB layer

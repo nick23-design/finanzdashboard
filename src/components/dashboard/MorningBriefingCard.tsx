@@ -105,6 +105,36 @@ export function MorningBriefingCard() {
       {/* Headline */}
       <p className="text-sm font-semibold text-white leading-snug">{briefing.headline}</p>
 
+      {/* Live Marktindizes */}
+      {briefing.indices && briefing.indices.length > 0 && (
+        <div className="grid grid-cols-2 gap-1.5">
+          {briefing.indices.map(idx => {
+            const up = idx.change_pct != null && idx.change_pct >= 0;
+            const color = idx.change_pct == null ? "var(--muted)"
+              : idx.change_pct > 0 ? "#22c55e"
+              : idx.change_pct < 0 ? "#ef4444"
+              : "var(--muted)";
+            return (
+              <div key={idx.symbol}
+                className="rounded-xl px-2.5 py-2"
+                style={{ background: "rgba(99,102,241,0.08)" }}>
+                <p className="text-[10px] font-medium" style={{ color: "var(--muted)" }}>{idx.name}</p>
+                <div className="flex items-baseline gap-1.5 mt-0.5">
+                  <span className="text-xs font-bold text-white">
+                    {idx.price != null ? idx.price.toLocaleString("de-DE") : "—"}
+                  </span>
+                  {idx.change_pct != null && (
+                    <span className="text-[10px] font-semibold" style={{ color }}>
+                      {up ? "▲" : "▼"} {Math.abs(idx.change_pct).toFixed(2)}%
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Market Overview */}
       <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
         {briefing.market_overview}
