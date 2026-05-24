@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { logout } from "@/app/auth/actions";
+import { PushToggle } from "@/components/settings/PushToggle";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -61,6 +62,8 @@ export default async function SettingsPage() {
           <span style={{ color: "var(--muted)" }}>›</span>
         </Link>
       </div>
+
+      <PushToggle />
 
       <Disclaimer />
 
