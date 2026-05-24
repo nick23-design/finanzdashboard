@@ -242,6 +242,36 @@ export interface Database {
         };
         Relationships: [];
       };
+      morning_briefings: {
+        Row: {
+          id: string;
+          user_id: string;
+          headline: string;
+          market_overview: string;
+          watchlist_highlights: Json;
+          daily_opportunity: Json | null;
+          generated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          headline: string;
+          market_overview: string;
+          watchlist_highlights: Json;
+          daily_opportunity?: Json | null;
+          generated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          headline?: string;
+          market_overview?: string;
+          watchlist_highlights?: Json;
+          daily_opportunity?: Json | null;
+          generated_at?: string;
+        };
+        Relationships: [];
+      };
       hot_picks: {
         Row: {
           id: string;

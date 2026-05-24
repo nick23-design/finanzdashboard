@@ -9,6 +9,7 @@ import Link from "next/link";
 import { Search, X, Plus, Globe } from "lucide-react";
 import { HotPickCard } from "./HotPickCard";
 import { NHSelectCard } from "./NHSelectCard";
+import { MorningBriefingCard } from "./MorningBriefingCard";
 
 const REGION_LABEL: Record<StockEntry["region"], string> = {
   US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
@@ -143,6 +144,9 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
           {items.length} Aktie{items.length !== 1 ? "n" : ""}
         </span>
       </div>
+
+      {/* Morgen-Briefing */}
+      <MorningBriefingCard />
 
       {/* Hot Pick */}
       <HotPickCard />
