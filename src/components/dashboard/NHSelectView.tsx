@@ -2,91 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Search } from "lucide-react";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import { formatRelativeTime } from "@/lib/time";
 import type { NHAccuracyStats, NHPickResult } from "@/app/api/nh-select/accuracy/route";
-
-// ── Stock Search ─────────────────────────────────────────────────────────────
-
-interface StockSearchResult {
-  symbol: string;
-  name: string;
-  exchange: string | null;
-  type: string | null;
-}
-
-const TYPE_LABEL: Record<string, string> = {
-  EQUITY: "Aktie", ETF: "ETF", INDEX: "Index",
-  CRYPTOCURRENCY: "Krypto", CURRENCY: "Währung", MUTUALFUND: "Fonds",
-};
-const EXCHANGE_LABEL: Record<string, string> = {
-  NMS: "NASDAQ", NYQ: "NYSE", NGM: "NASDAQ", PCX: "NYSE Arca",
-  GER: "XETRA", FRA: "Frankfurt", MCE: "Madrid", PAR: "Paris", AMS: "Amsterdam",
-};
-
-function SearchResults({ results, loading, query }: {
-  results: StockSearchResult[];
-  loading: boolean;
-  query: string;
-}) {
-  if (loading && results.length === 0) {
-    return (
-      <div className="rounded-2xl border p-5 text-center"
-        style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-        <div className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin mx-auto mb-2"
-          style={{ borderColor: "var(--primary)", borderTopColor: "transparent" }} />
-        <p className="text-xs" style={{ color: "var(--muted)" }}>Suche läuft…</p>
-      </div>
-    );
-  }
-  if (!loading && results.length === 0 && query.trim()) {
-    return (
-      <div className="rounded-2xl border p-5 text-center"
-        style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-        <p className="text-sm font-medium text-white">Keine Ergebnisse</p>
-        <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>
-          Versuche einen anderen Ticker oder Namen
-        </p>
-      </div>
-    );
-  }
-  if (!results.length) return null;
-  return (
-    <div className="rounded-2xl border overflow-hidden"
-      style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-      <p className="text-[10px] px-4 pt-3 pb-2 font-semibold uppercase tracking-widest"
-        style={{ color: "var(--muted)" }}>
-        Suchergebnisse
-      </p>
-      {results.map((r, i) => (
-        <Link key={i} href={`/dashboard/asset/${r.symbol}`}
-          className="flex items-center justify-between gap-3 px-4 py-3 border-t"
-          style={{ borderColor: "var(--card-border)" }}>
-          <div className="min-w-0">
-            <p className="font-bold text-white text-sm">{r.symbol}</p>
-            <p className="text-xs truncate mt-0.5" style={{ color: "var(--muted)" }}>{r.name}</p>
-          </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {r.exchange && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded"
-                style={{ background: "var(--card-border)", color: "var(--muted)" }}>
-                {EXCHANGE_LABEL[r.exchange] ?? r.exchange}
-              </span>
-            )}
-            {r.type && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded"
-                style={{ background: "rgba(99,102,241,0.12)", color: "#818cf8" }}>
-                {TYPE_LABEL[r.type] ?? r.type}
-              </span>
-            )}
-            <span className="text-sm" style={{ color: "var(--muted)" }}>›</span>
-          </div>
-        </Link>
-      ))}
-    </div>
-  );
-}
 
 interface NHSelectEntry {
   symbol: string;
@@ -588,12 +506,6 @@ export function NHSelectView() {
   const [data, setData] = useState<HistoryData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Search state
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<StockSearchResult[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   useEffect(() => {
     async function load() {
       const [todayRes, historyRes] = await Promise.all([
@@ -607,118 +519,55 @@ export function NHSelectView() {
     load();
   }, []);
 
-  function handleSearch(q: string) {
-    setSearchQuery(q);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (!q.trim()) {
-      setSearchResults([]);
-      setSearchLoading(false);
-      return;
-    }
-    setSearchLoading(true);
-    searchTimer.current = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q.trim())}`);
-        if (res.ok) setSearchResults(await res.json());
-        else setSearchResults([]);
-      } catch {
-        setSearchResults([]);
-      }
-      setSearchLoading(false);
-    }, 350);
-  }
-
-  const isSearching = searchQuery.trim().length > 0;
-
   const pastHistory = (data?.history ?? []).filter(h =>
     !today || new Date(h.created_at).toDateString() !== new Date(today.created_at).toDateString()
   );
 
   return (
     <div className="space-y-4">
-      {/* Search bar – always visible */}
-      <div className="flex items-center gap-2 rounded-2xl border px-4 py-3"
-        style={{
-          background: "var(--card)",
-          borderColor: isSearching ? "var(--primary)" : "var(--card-border)",
-          transition: "border-color 0.2s",
-        }}>
-        <Search size={16} style={{ color: "var(--muted)", flexShrink: 0 }} />
-        <input
-          value={searchQuery}
-          onChange={e => handleSearch(e.target.value)}
-          placeholder="Ticker oder Unternehmensname suchen…"
-          className="flex-1 bg-transparent text-sm text-white outline-none"
-          style={{ caretColor: "var(--primary)" }}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="characters"
-          spellCheck={false}
-        />
-        {searchLoading && (
-          <div className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin flex-shrink-0"
-            style={{ borderColor: "var(--primary)", borderTopColor: "transparent" }} />
-        )}
-        {searchQuery && !searchLoading && (
-          <button onClick={() => handleSearch("")}
-            className="text-sm flex-shrink-0"
-            style={{ color: "var(--muted)" }}>✕</button>
-        )}
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-white">NH Select</h2>
+          <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+            Täglich die eine vielversprechendste Aktie
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <PushButton />
+          <AgentAvatar agent="synthesizer" size="sm" />
+        </div>
       </div>
 
-      {/* Search results */}
-      {isSearching && (
-        <SearchResults results={searchResults} loading={searchLoading} query={searchQuery} />
+      {loading && (
+        <div className="rounded-2xl border p-8 text-center"
+          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+          <div className="w-5 h-5 rounded-full border-2 border-t-transparent animate-spin mx-auto mb-2"
+            style={{ borderColor: "var(--primary)", borderTopColor: "transparent" }} />
+          <p className="text-xs" style={{ color: "var(--muted)" }}>Lade NH Select…</p>
+        </div>
       )}
 
-      {/* NH Select content – hidden while searching */}
-      {!isSearching && (
-        <>
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-white">NH Select</h2>
-              <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                Täglich die eine vielversprechendste Aktie
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <PushButton />
-              <AgentAvatar agent="synthesizer" size="sm" />
-            </div>
-          </div>
-
-          {loading && (
-            <div className="rounded-2xl border p-8 text-center"
-              style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-              <div className="w-5 h-5 rounded-full border-2 border-t-transparent animate-spin mx-auto mb-2"
-                style={{ borderColor: "var(--primary)", borderTopColor: "transparent" }} />
-              <p className="text-xs" style={{ color: "var(--muted)" }}>Lade NH Select…</p>
-            </div>
-          )}
-
-          {!loading && !today && (
-            <div className="rounded-2xl border p-6 text-center space-y-2"
-              style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-              <p className="text-2xl">🕐</p>
-              <p className="font-semibold text-white">Noch kein Pick heute</p>
-              <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
-                Der Synthesizer läuft täglich um 10:30 Uhr (Mo–Fr).<br />
-                Am Wochenende gibt es keinen neuen Pick.
-              </p>
-            </div>
-          )}
-
-          {!loading && today && <TodayPick pick={today} />}
-          {!loading && data && <ScoutFindings scouts={data.scouts} />}
-          {!loading && pastHistory.length > 0 && <HistoryList history={pastHistory} />}
-          {!loading && <TrefferquoteSection />}
-
-          <p className="text-xs text-center pb-2" style={{ color: "var(--muted)" }}>
-            Ausschließlich zu Research-Zwecken · Keine Anlageberatung
+      {!loading && !today && (
+        <div className="rounded-2xl border p-6 text-center space-y-2"
+          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+          <p className="text-2xl">🕐</p>
+          <p className="font-semibold text-white">Noch kein Pick heute</p>
+          <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+            Der Synthesizer läuft täglich um 10:30 Uhr (Mo–Fr).<br />
+            Am Wochenende gibt es keinen neuen Pick.
           </p>
-        </>
+        </div>
       )}
+
+      {!loading && today && <TodayPick pick={today} />}
+      {!loading && data && <ScoutFindings scouts={data.scouts} />}
+      {!loading && pastHistory.length > 0 && <HistoryList history={pastHistory} />}
+      {!loading && <TrefferquoteSection />}
+
+      <p className="text-xs text-center pb-2" style={{ color: "var(--muted)" }}>
+        Ausschließlich zu Research-Zwecken · Keine Anlageberatung
+      </p>
     </div>
   );
 }
