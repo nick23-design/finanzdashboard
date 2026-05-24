@@ -20,6 +20,137 @@ import type { SignalType } from "@/types/finance";
 import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
 import { formatCountdown, formatRelativeTime } from "@/lib/time";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
+import { Bell } from "lucide-react";
+
+// ── Quick Alert ───────────────────────────────────────────────────────────────
+
+interface QuickAlertProps {
+  symbol: string;
+  name: string;
+  currentPrice: number | null;
+}
+
+function QuickAlertSection({ symbol, name, currentPrice }: QuickAlertProps) {
+  const [open, setOpen] = useState(false);
+  const [direction, setDirection] = useState<"above" | "below">("below");
+  const [targetPrice, setTargetPrice] = useState(currentPrice?.toFixed(2) ?? "");
+  const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (!targetPrice) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol, name,
+          target_price: parseFloat(targetPrice),
+          direction,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Fehler");
+      setSaved(true);
+      setTimeout(() => { setSaved(false); setOpen(false); }, 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Fehler");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const isBelow = direction === "below";
+  const activeColor = isBelow ? "#22c55e" : "#fb923c";
+  const activeBg   = isBelow ? "rgba(34,197,94,0.15)" : "rgba(251,146,60,0.15)";
+
+  return (
+    <div className="rounded-2xl border overflow-hidden"
+      style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+      {/* Toggle row */}
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3"
+      >
+        <div className="flex items-center gap-2">
+          <Bell size={15} style={{ color: open ? "var(--primary)" : "var(--muted)" }} />
+          <span className="text-sm font-semibold" style={{ color: open ? "var(--primary)" : "var(--muted)" }}>
+            Kurs-Alarm setzen
+          </span>
+        </div>
+        <span className="text-xs" style={{ color: "var(--muted)" }}>{open ? "▲" : "▼"}</span>
+      </button>
+
+      {/* Expanded form */}
+      {open && (
+        <div className="px-4 pb-4 space-y-3 border-t" style={{ borderColor: "var(--card-border)" }}>
+          {saved ? (
+            <p className="text-sm font-semibold text-center py-2" style={{ color: "#22c55e" }}>
+              ✓ Alarm gespeichert
+            </p>
+          ) : (
+            <>
+              {error && <p className="text-xs pt-2" style={{ color: "#ef4444" }}>{error}</p>}
+
+              {/* Direction toggle */}
+              <div className="flex gap-2 pt-3">
+                {(["below", "above"] as const).map(dir => {
+                  const active = direction === dir;
+                  const color = dir === "below" ? "#22c55e" : "#fb923c";
+                  const bg    = dir === "below" ? "rgba(34,197,94,0.15)" : "rgba(251,146,60,0.15)";
+                  return (
+                    <button key={dir} type="button"
+                      onClick={() => setDirection(dir)}
+                      className="flex-1 py-2 rounded-xl text-xs font-semibold border transition-all"
+                      style={{
+                        background: active ? bg : "var(--background)",
+                        borderColor: active ? color : "var(--card-border)",
+                        color: active ? color : "var(--muted)",
+                      }}>
+                      {dir === "below" ? "Kauf-Alarm" : "Verkauf-Alarm"}
+                      <br />
+                      <span className="text-[10px] font-normal opacity-70">
+                        {dir === "below" ? "fällt unter" : "steigt über"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Price input */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs" style={{ color: "var(--muted)" }}>
+                  {symbol} {isBelow ? "fällt unter" : "steigt über"}
+                </span>
+                <div className="flex items-center rounded-xl border px-3 py-1.5 flex-1"
+                  style={{ background: "var(--background)", borderColor: activeColor }}>
+                  <span className="text-sm font-semibold mr-1" style={{ color: activeColor }}>$</span>
+                  <input
+                    type="number" step="any" min="0"
+                    value={targetPrice}
+                    onChange={e => setTargetPrice(e.target.value)}
+                    className="flex-1 bg-transparent text-sm text-white outline-none"
+                    style={{ caretColor: activeColor }}
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleSave}
+                disabled={submitting || !targetPrice}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+                style={{ background: activeBg, color: activeColor, border: `1px solid ${activeColor}` }}>
+                {submitting ? "Speichern…" : "Alarm speichern"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const AI_STEPS = [
   "Marktdaten werden geladen…",
@@ -231,6 +362,13 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
           </div>
         )}
       </div>
+
+      {/* Quick Alert */}
+      <QuickAlertSection
+        symbol={symbol}
+        name={(asset as unknown as { name?: string })?.name ?? symbol}
+        currentPrice={asset?.price ?? null}
+      />
 
       {/* Score Card */}
       {score && (
