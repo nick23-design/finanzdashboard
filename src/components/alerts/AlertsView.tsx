@@ -178,7 +178,7 @@ export function AlertsView() {
                 onBlur={e => lookupName(e.target.value)}
                 placeholder="z.B. AAPL"
                 className="w-full rounded-xl px-3 py-2 text-sm text-white border"
-                style={{ background: "var(--bg)", borderColor: "var(--card-border)" }}
+                style={{ background: "var(--background)", borderColor: "var(--card-border)" }}
               />
             </div>
             <div>
@@ -189,7 +189,7 @@ export function AlertsView() {
                 value={form.direction}
                 onChange={e => setForm(f => ({ ...f, direction: e.target.value as "above" | "below" }))}
                 className="w-full rounded-xl px-3 py-2 text-sm text-white border"
-                style={{ background: "var(--bg)", borderColor: "var(--card-border)" }}>
+                style={{ background: "var(--background)", borderColor: "var(--card-border)" }}>
                 <option value="above">Über Preis</option>
                 <option value="below">Unter Preis</option>
               </select>
@@ -209,7 +209,7 @@ export function AlertsView() {
               onChange={e => setForm(f => ({ ...f, target_price: e.target.value }))}
               placeholder="200.00"
               className="w-full rounded-xl px-3 py-2 text-sm text-white border"
-              style={{ background: "var(--bg)", borderColor: "var(--card-border)" }}
+              style={{ background: "var(--background)", borderColor: "var(--card-border)" }}
             />
           </div>
 
