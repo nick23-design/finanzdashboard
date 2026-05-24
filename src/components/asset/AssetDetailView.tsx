@@ -67,25 +67,24 @@ function QuickAlertSection({ symbol, name, currentPrice }: QuickAlertProps) {
   const activeBg   = isBelow ? "rgba(34,197,94,0.15)" : "rgba(251,146,60,0.15)";
 
   return (
-    <div className="rounded-2xl border overflow-hidden"
-      style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-      {/* Toggle row */}
+    <div>
+      {/* Trigger button — visible bar below hero */}
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-3"
-      >
-        <div className="flex items-center gap-2">
-          <Bell size={15} style={{ color: open ? "var(--primary)" : "var(--muted)" }} />
-          <span className="text-sm font-semibold" style={{ color: open ? "var(--primary)" : "var(--muted)" }}>
-            Kurs-Alarm setzen
-          </span>
-        </div>
-        <span className="text-xs" style={{ color: "var(--muted)" }}>{open ? "▲" : "▼"}</span>
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border font-semibold text-sm transition-all"
+        style={{
+          background: open ? "rgba(168,85,247,0.12)" : "var(--card)",
+          borderColor: open ? "#a855f7" : "var(--card-border)",
+          color: open ? "#c084fc" : "var(--primary)",
+        }}>
+        <Bell size={14} />
+        {open ? "Alarm schließen" : "🔔 Kurs-Alarm setzen"}
       </button>
 
       {/* Expanded form */}
       {open && (
-        <div className="px-4 pb-4 space-y-3 border-t" style={{ borderColor: "var(--card-border)" }}>
+        <div className="mt-2 rounded-2xl border p-4 space-y-3"
+          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
           {saved ? (
             <p className="text-sm font-semibold text-center py-2" style={{ color: "#22c55e" }}>
               ✓ Alarm gespeichert
