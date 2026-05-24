@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import { formatRelativeTime } from "@/lib/time";
+import type { NHAccuracyStats, NHPickResult } from "@/app/api/nh-select/accuracy/route";
 
 interface NHSelectEntry {
   symbol: string;
@@ -246,6 +247,168 @@ function HistoryList({ history }: { history: NHSelectEntry[] }) {
   );
 }
 
+// ── Trefferquote ────────────────────────────────────────────────────────────
+
+const OUTCOME_STYLE = {
+  correct:   { label: "Korrekt",     color: "#22c55e", icon: "✓" },
+  neutral:   { label: "Neutral",     color: "#ca8a04", icon: "~" },
+  incorrect: { label: "Falsch",      color: "#ef4444", icon: "✗" },
+  pending:   { label: "Ausstehend",  color: "#6b7280", icon: "…" },
+};
+
+function TrefferquoteSection() {
+  const [stats, setStats] = useState<NHAccuracyStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/nh-select/accuracy")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setStats(d as NHAccuracyStats); })
+      .catch(() => null)
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="rounded-2xl border p-4 animate-pulse space-y-3"
+        style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+        <div className="h-4 w-32 rounded" style={{ background: "var(--card-border)" }} />
+        <div className="h-10 w-20 rounded" style={{ background: "var(--card-border)" }} />
+      </div>
+    );
+  }
+
+  const noData = !stats || stats.total_tracked === 0;
+
+  return (
+    <div className="rounded-2xl border p-4 space-y-4"
+      style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-white">Trefferquote</h3>
+        <div className="flex items-center gap-2">
+          {stats && stats.pending > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full"
+              style={{ background: "rgba(107,114,128,0.15)", color: "#6b7280" }}>
+              {stats.pending} ausstehend
+            </span>
+          )}
+          {stats && stats.evaluated > 0 && (
+            <button className="text-xs" style={{ color: "var(--muted)" }}
+              onClick={() => setExpanded(v => !v)}>
+              {expanded ? "Weniger ▲" : "Alle Picks ▼"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {noData ? (
+        <div className="text-center py-4 space-y-1">
+          <p className="text-2xl">📊</p>
+          <p className="text-sm font-medium text-white">Noch keine Daten</p>
+          <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+            Nach {7} Tagen werden Picks automatisch ausgewertet.<br />
+            Picks werden ab heute mit Preis gespeichert.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Hauptzahl */}
+          <div className="flex items-end gap-4">
+            <div>
+              <p className="text-4xl font-bold"
+                style={{
+                  color: stats!.accuracy_rate == null ? "var(--muted)"
+                    : stats!.accuracy_rate >= 0.6 ? "#22c55e"
+                    : stats!.accuracy_rate >= 0.4 ? "#ca8a04"
+                    : "#ef4444",
+                }}>
+                {stats!.accuracy_rate != null
+                  ? `${(stats!.accuracy_rate * 100).toFixed(0)}%`
+                  : "—"}
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                Trefferquote ({stats!.correct + stats!.incorrect} bewertet)
+              </p>
+            </div>
+            {stats!.avg_return != null && (
+              <div className="pb-1">
+                <p className="text-xl font-bold"
+                  style={{ color: stats!.avg_return >= 0 ? "#22c55e" : "#ef4444" }}>
+                  {stats!.avg_return >= 0 ? "+" : ""}{stats!.avg_return.toFixed(1)}%
+                </p>
+                <p className="text-xs" style={{ color: "var(--muted)" }}>Ø Rendite</p>
+              </div>
+            )}
+          </div>
+
+          {/* Balken */}
+          {stats!.evaluated > 0 && (
+            <div className="space-y-1.5">
+              {(["correct", "neutral", "incorrect"] as const).map(k => {
+                const count = stats![k];
+                const pct = stats!.evaluated > 0 ? (count / stats!.evaluated) * 100 : 0;
+                const s = OUTCOME_STYLE[k];
+                return (
+                  <div key={k} className="flex items-center gap-2">
+                    <span className="text-xs w-16 font-medium" style={{ color: s.color }}>
+                      {s.icon} {s.label}
+                    </span>
+                    <div className="flex-1 h-1.5 rounded-full overflow-hidden"
+                      style={{ background: "var(--card-border)" }}>
+                      <div className="h-full rounded-full"
+                        style={{ width: `${pct}%`, background: s.color }} />
+                    </div>
+                    <span className="text-xs w-4 text-right font-medium text-white">{count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Pick-Liste */}
+          {expanded && stats!.picks.length > 0 && (
+            <div className="space-y-1.5 pt-1 border-t" style={{ borderColor: "var(--card-border)" }}>
+              <p className="text-xs font-semibold text-white pt-2">Alle Picks</p>
+              {stats!.picks.map((p: NHPickResult, i: number) => {
+                const s = OUTCOME_STYLE[p.outcome];
+                const recStyle = REC_STYLE[p.recommendation] ?? { bg: "#6b7280", text: "#fff" };
+                const date = new Date(p.created_at).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+                return (
+                  <Link
+                    key={i}
+                    href={`/dashboard/asset/${p.symbol}?from=nh-select`}
+                    className="flex items-center justify-between gap-2 rounded-xl px-3 py-2"
+                    style={{ background: "var(--background)" }}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-bold text-white w-12 flex-shrink-0">{p.symbol}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0"
+                        style={{ background: recStyle.bg, color: recStyle.text }}>
+                        {p.recommendation}
+                      </span>
+                      <span className="text-[10px] flex-shrink-0" style={{ color: "var(--muted)" }}>{date}</span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {p.return_pct != null && (
+                        <span className="text-xs font-semibold"
+                          style={{ color: p.return_pct >= 0 ? "#22c55e" : "#ef4444" }}>
+                          {p.return_pct >= 0 ? "+" : ""}{p.return_pct.toFixed(1)}%
+                        </span>
+                      )}
+                      <span className="text-xs font-bold" style={{ color: s.color }}>{s.icon}</span>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 const VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 
 async function subscribeToPush(): Promise<boolean> {
@@ -403,6 +566,8 @@ export function NHSelectView() {
       {!loading && data && <ScoutFindings scouts={data.scouts} />}
 
       {!loading && pastHistory.length > 0 && <HistoryList history={pastHistory} />}
+
+      {!loading && <TrefferquoteSection />}
 
       <p className="text-xs text-center pb-2" style={{ color: "var(--muted)" }}>
         Ausschließlich zu Research-Zwecken · Keine Anlageberatung

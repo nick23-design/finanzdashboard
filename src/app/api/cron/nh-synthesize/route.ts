@@ -116,11 +116,23 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
     return NextResponse.json({ error: "Opus konnte keine Empfehlung generieren" }, { status: 500 });
   }
 
-  // 4. Save to nh_select_daily
-  const row: NHSelectResult = {
+  // 4. Fetch current price for Trefferquote tracking
+  let priceAtPick: number | null = null;
+  try {
+    const FINANCE_API_URL = process.env.FINANCE_API_URL || "http://localhost:8000";
+    const priceRes = await fetch(`${FINANCE_API_URL}/assets/${pick.symbol}`);
+    if (priceRes.ok) {
+      const priceData = await priceRes.json() as { price?: number };
+      priceAtPick = priceData.price ?? null;
+    }
+  } catch { /* non-critical */ }
+
+  // 5. Save to nh_select_daily
+  const row = {
     ...pick,
     agent: "Synthesizer",
     created_at: new Date().toISOString(),
+    price_at_pick: priceAtPick,
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -129,7 +141,7 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // 5. Mark used radar signals
+  // 6. Mark used radar signals
   if (radarSignals?.length) {
     const usedSymbols = [pick.symbol];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -140,7 +152,7 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
       .gte("found_at", since);
   }
 
-  // 6. Send push notifications
+  // 7. Send push notifications
   try {
     const webPush = await import("web-push");
     const vapidPublic = process.env.VAPID_PUBLIC_KEY;
