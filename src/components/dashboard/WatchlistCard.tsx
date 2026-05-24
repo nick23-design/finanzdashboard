@@ -113,76 +113,72 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
         borderLeftColor: accentColor,
       }}>
       <div className="p-4 space-y-3">
-        {/* Header row */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <span className="font-bold text-white text-base">{item.symbol}</span>
-            {item.name && item.name !== item.symbol && (
-              <p className="text-xs mt-0.5 truncate" style={{ color: "var(--muted)" }}>
-                {item.name}
-              </p>
-            )}
-          </div>
-          <div className="flex-shrink-0">
-            {loading ? (
-              <Skeleton className="w-20" height="h-6" />
-            ) : data ? (
-              <ScoreBadge signal={data.signal} score={data.totalScore} size="sm" />
-            ) : (
-              <span className="text-xs" style={{ color: "var(--muted)" }}>—</span>
-            )}
-          </div>
-        </div>
-
-        {/* Price + Sparkline row */}
-        <div className="flex items-center justify-between gap-3">
-          {loading ? (
-            <Skeleton className="w-24" height="h-6" />
-          ) : (
-            <div className="flex items-center gap-2 flex-wrap min-w-0">
-              <span className="text-lg font-semibold text-white">
-                {data?.price != null
-                  ? `${data.price.toFixed(2)} ${data.currency ?? ""}`
-                  : "—"}
-              </span>
-              {data?.priceChangePct != null && (
-                <span
-                  className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                  style={{
-                    color: isUp ? "#22c55e" : "#ef4444",
-                    background: isUp ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-                  }}>
-                  {isUp ? "+" : ""}
-                  {data.priceChangePct.toFixed(2)}%
-                </span>
+        {/* Clickable area → asset detail */}
+        <Link href={`/dashboard/asset/${item.symbol}`} className="block space-y-3">
+          {/* Header row */}
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <span className="font-bold text-white text-base">{item.symbol}</span>
+              {item.name && item.name !== item.symbol && (
+                <p className="text-xs mt-0.5 truncate" style={{ color: "var(--muted)" }}>
+                  {item.name}
+                </p>
               )}
             </div>
-          )}
-          {!loading && data && data.sparkline.length >= 2 && (
-            <Sparkline prices={data.sparkline} isUp={isUp} />
-          )}
-        </div>
+            <div className="flex-shrink-0">
+              {loading ? (
+                <Skeleton className="w-20" height="h-6" />
+              ) : data ? (
+                <ScoreBadge signal={data.signal} score={data.totalScore} size="sm" />
+              ) : (
+                <span className="text-xs" style={{ color: "var(--muted)" }}>—</span>
+              )}
+            </div>
+          </div>
+
+          {/* Price + Sparkline row */}
+          <div className="flex items-center justify-between gap-3">
+            {loading ? (
+              <Skeleton className="w-24" height="h-6" />
+            ) : (
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <span className="text-lg font-semibold text-white">
+                  {data?.price != null
+                    ? `${data.price.toFixed(2)} ${data.currency ?? ""}`
+                    : "—"}
+                </span>
+                {data?.priceChangePct != null && (
+                  <span
+                    className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                    style={{
+                      color: isUp ? "#22c55e" : "#ef4444",
+                      background: isUp ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                    }}>
+                    {isUp ? "+" : ""}
+                    {data.priceChangePct.toFixed(2)}%
+                  </span>
+                )}
+              </div>
+            )}
+            {!loading && data && data.sparkline.length >= 2 && (
+              <Sparkline prices={data.sparkline} isUp={isUp} />
+            )}
+          </div>
+        </Link>
 
         {/* Actions */}
-        <div className="flex gap-2">
-          <Link
-            href={`/dashboard/asset/${item.symbol}`}
-            className="flex-1 rounded-xl py-2 text-center text-sm font-medium transition-all"
-            style={{ background: "var(--primary)", color: "#000" }}>
-            Details
-          </Link>
-
+        <div className="flex justify-end">
           {confirmDelete ? (
-            <div className="flex gap-1 flex-1">
+            <div className="flex gap-1">
               <button
                 onClick={() => onRemove(item.id)}
-                className="flex-1 rounded-xl py-2 text-sm font-medium text-white"
+                className="rounded-xl px-3 py-1.5 text-sm font-medium text-white"
                 style={{ background: "var(--danger)" }}>
                 Löschen
               </button>
               <button
                 onClick={() => setConfirmDelete(false)}
-                className="flex-1 rounded-xl py-2 text-sm"
+                className="rounded-xl px-3 py-1.5 text-sm"
                 style={{ color: "var(--muted)" }}>
                 Nein
               </button>
@@ -190,7 +186,7 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
           ) : (
             <button
               onClick={() => setConfirmDelete(true)}
-              className="rounded-xl px-3 py-2 text-sm"
+              className="rounded-xl px-3 py-1.5 text-sm"
               style={{ color: "var(--muted)" }}>
               ✕
             </button>
