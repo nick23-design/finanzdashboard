@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { logout } from "@/app/auth/actions";
@@ -36,6 +37,29 @@ export default async function SettingsPage() {
           Yahoo Finance via yfinance (inoffiziell). Daten ohne Gewähr.
           Cache-TTL: 6 Stunden.
         </p>
+      </div>
+
+      {/* Navigation */}
+      <div
+        className="rounded-2xl border overflow-hidden"
+        style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+        <p className="text-xs uppercase tracking-wide font-medium px-4 pt-4 pb-2" style={{ color: "var(--muted)" }}>
+          Weitere Seiten
+        </p>
+        <Link
+          href="/dashboard/team"
+          className="flex items-center justify-between px-4 py-3 border-t"
+          style={{ borderColor: "var(--card-border)" }}>
+          <span className="text-sm text-white">KI-Team</span>
+          <span style={{ color: "var(--muted)" }}>›</span>
+        </Link>
+        <Link
+          href="/dashboard/alerts"
+          className="flex items-center justify-between px-4 py-3 border-t"
+          style={{ borderColor: "var(--card-border)" }}>
+          <span className="text-sm text-white">Preis-Alerts</span>
+          <span style={{ color: "var(--muted)" }}>›</span>
+        </Link>
       </div>
 
       <Disclaimer />
