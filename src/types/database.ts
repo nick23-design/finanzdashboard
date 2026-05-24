@@ -218,6 +218,7 @@ export interface Database {
           shares: number;
           purchase_price: number;
           purchase_date: string;
+          broker: string | null;
           created_at: string;
         };
         Insert: {
@@ -228,6 +229,7 @@ export interface Database {
           shares: number;
           purchase_price: number;
           purchase_date: string;
+          broker?: string | null;
           created_at?: string;
         };
         Update: {
