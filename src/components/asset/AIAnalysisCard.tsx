@@ -1,6 +1,7 @@
 "use client";
 
-import type { AIAnalysisResult, PriceLevels } from "@/app/api/ai-analysis/[symbol]/route";
+import { useState } from "react";
+import type { AIAnalysisResult, PriceLevels, ProtocolEntry } from "@/app/api/ai-analysis/[symbol]/route";
 import { AgentAvatarGroup } from "@/components/ui/AgentAvatar";
 
 interface Props {
@@ -91,6 +92,51 @@ function ConvictionBar({ value }: { value: number }) {
         />
       </div>
       <span className="text-xs font-semibold text-white">{value}/10</span>
+    </div>
+  );
+}
+
+const PROTOCOL_STATUS: Record<ProtocolEntry["status"], { icon: string; color: string }> = {
+  ok:      { icon: "✓", color: "#22c55e" },
+  warning: { icon: "⚠", color: "#f59e0b" },
+  skipped: { icon: "⊘", color: "#6b7280" },
+};
+
+function AnalysisProtocol({ entries }: { entries: ProtocolEntry[] }) {
+  const [open, setOpen] = useState(false);
+  if (!entries.length) return null;
+  const hasWarning = entries.some(e => e.status === "warning");
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--card-border)" }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-left"
+        style={{ background: "rgba(100,116,139,0.06)" }}>
+        <span className="text-xs font-semibold" style={{ color: "var(--muted)" }}>
+          Analyse-Protokoll
+          {hasWarning && (
+            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{ background: "#f59e0b22", color: "#f59e0b" }}>
+              Korrekturen
+            </span>
+          )}
+        </span>
+        <span className="text-xs" style={{ color: "var(--muted)" }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <ul className="px-3 py-2 space-y-1.5">
+          {entries.map((e, i) => {
+            const s = PROTOCOL_STATUS[e.status] ?? PROTOCOL_STATUS.skipped;
+            return (
+              <li key={i} className="flex items-start gap-2 text-xs">
+                <span className="font-bold mt-0.5 shrink-0" style={{ color: s.color }}>{s.icon}</span>
+                <span className="font-semibold text-white shrink-0 w-12">{e.agent}</span>
+                <span style={{ color: "var(--muted)" }}>{e.detail}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
@@ -232,6 +278,11 @@ export function AIAnalysisCard({ analysis }: Props) {
             ))}
           </ul>
         </div>
+      )}
+
+      {/* Protocol */}
+      {analysis.protocol?.length > 0 && (
+        <AnalysisProtocol entries={analysis.protocol} />
       )}
 
       {/* Footer – KI-Team */}
