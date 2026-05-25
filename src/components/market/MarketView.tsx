@@ -80,16 +80,14 @@ export function MarketView() {
       </div>
 
       {/* NH Select */}
-      <div className="rounded-2xl border overflow-hidden"
-        style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+      <div>
         <button
           onClick={toggleNH}
-          className="w-full px-4 py-3 flex items-center justify-between"
-          style={{ background: "transparent" }}>
+          className="w-full flex items-center justify-between mb-2">
           <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--muted)" }}>
             NH Select
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <span className="text-xs font-medium" style={{ color: "var(--primary)" }}>
               {nhOpen ? "Einklappen" : "Ausklappen"}
             </span>
@@ -98,11 +96,7 @@ export function MarketView() {
               : <ChevronDown size={14} style={{ color: "var(--muted)" }} />}
           </div>
         </button>
-        {nhOpen && (
-          <div className="border-t px-0 pb-0" style={{ borderColor: "var(--card-border)" }}>
-            <NHSelectView />
-          </div>
-        )}
+        {nhOpen && <NHSelectView />}
       </div>
     </div>
   );
