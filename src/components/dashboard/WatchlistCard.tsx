@@ -82,46 +82,52 @@ export function WatchlistCard({ item, onRemove, onDataLoaded }: WatchlistCardPro
 
     async function load() {
       try {
-        const [assetRes, scoreRes, histRes] = await Promise.all([
+        // Assets + history first — assets endpoint saves snapshot to Supabase
+        const [assetRes, histRes] = await Promise.all([
           fetch(`/api/assets/${item.symbol}`),
-          fetch(`/api/analyze/${item.symbol}`, { method: "POST" }),
           fetch(`/api/assets/${item.symbol}/history?period=1mo`),
         ]);
 
         if (cancelled) return;
 
         const asset = assetRes.ok ? await assetRes.json() : null;
-        const score = scoreRes.ok ? await scoreRes.json() : null;
         const hist = histRes.ok ? await histRes.json() : [];
-        const sparkline: number[] = Array.isArray(hist)
+
+        // Show price immediately while score loads
+        const sparklineEarly: number[] = Array.isArray(hist)
           ? hist.map((p: { value: number }) => p.value)
           : [];
-
-        const currentPrice: number | null = asset?.price ?? null;
-        const prevClose: number | null = sparkline.length >= 1
-          ? sparkline[sparkline.length - 1]
-          : null;
-        const priceChangePct =
-          currentPrice != null && prevClose != null && prevClose > 0
-            ? ((currentPrice - prevClose) / prevClose) * 100
+        const currentPriceEarly: number | null = asset?.price ?? null;
+        const prevCloseEarly = sparklineEarly.at(-1) ?? null;
+        const changePctEarly =
+          currentPriceEarly != null && prevCloseEarly != null && prevCloseEarly > 0
+            ? ((currentPriceEarly - prevCloseEarly) / prevCloseEarly) * 100
             : (asset?.price_change_pct ?? null);
+        if (!cancelled) {
+          setData({
+            price: currentPriceEarly,
+            currency: asset?.currency ?? null,
+            signal: "Neutral",
+            totalScore: null,
+            priceChangePct: changePctEarly,
+            sparkline: sparklineEarly,
+            name: asset?.name ?? item.name ?? null,
+          });
+          setLoading(false);
+        }
 
+        // Now fetch score — snapshot is guaranteed cached
+        const scoreRes = await fetch(`/api/analyze/${item.symbol}`, { method: "POST" });
+
+        if (cancelled) return;
+
+        const score = scoreRes.ok ? await scoreRes.json() : null;
         const totalScore = score?.total_score ?? null;
         const signal: SignalType = score?.signal ?? "Neutral";
-        setData({
-          price: currentPrice,
-          currency: asset?.currency ?? null,
-          signal,
-          totalScore,
-          priceChangePct,
-          sparkline,
-          name: asset?.name ?? item.name ?? null,
-        });
-        onDataLoaded?.(item.symbol, totalScore ?? 50, priceChangePct);
+        if (!cancelled) setData(prev => prev ? { ...prev, signal, totalScore } : prev);
+        onDataLoaded?.(item.symbol, totalScore ?? 50, changePctEarly);
       } catch {
-        if (!cancelled) setData(null);
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) { setData(null); setLoading(false); }
       }
     }
 
