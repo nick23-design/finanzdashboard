@@ -603,6 +603,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             <div className="space-y-2 mt-2">
               {/* Active agents */}
               <div className="flex items-center gap-3 justify-center flex-wrap">
+                <AgentAvatar agent="diana" size="sm" showName working />
                 <AgentAvatar agent="opus" size="sm" showName working />
                 <AgentAvatar agent="felix" size="sm" showName working />
                 <AgentAvatar agent="nina" size="sm" showName working />
