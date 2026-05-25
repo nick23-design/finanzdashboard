@@ -12,6 +12,30 @@ import type { GoogleNewsItem } from "@/lib/finance-client";
 
 type NewsItemWithDesc = GoogleNewsItem & { description: string | null };
 
+// --- In-memory cache (2 h TTL, survives across requests on warm Vercel instances) ---
+const _cache = new Map<string, { result: CompareResult; expiresAt: number }>();
+const CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+
+function cacheKey(a: string, b: string): string {
+  return [a, b].sort().join("_");
+}
+
+function getCache(symbolA: string, symbolB: string): CompareResult | null {
+  const entry = _cache.get(cacheKey(symbolA, symbolB));
+  if (!entry || entry.expiresAt < Date.now()) {
+    _cache.delete(cacheKey(symbolA, symbolB));
+    return null;
+  }
+  return entry.result;
+}
+
+function setCache(result: CompareResult): void {
+  _cache.set(cacheKey(result.symbolA, result.symbolB), {
+    result,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  });
+}
+
 export interface CompareResult {
   symbolA: string;
   symbolB: string;
@@ -164,6 +188,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Bitte zwei verschiedene Aktien wählen" }, { status: 400 });
   }
 
+  // Serve from cache if available (2 h TTL)
+  const cached = getCache(symbolA, symbolB);
+  if (cached) return NextResponse.json({ ...cached, cached: true });
+
   // Frontend can pass asset data directly (avoids Supabase snapshot dependency)
   const frontendA: Partial<AssetSnapshot> | null = body.dataA ?? null;
   const frontendB: Partial<AssetSnapshot> | null = body.dataB ?? null;
@@ -236,12 +264,14 @@ Antworte ausschließlich mit validem JSON:
     const raw = extractText(response.content);
     const result = parseJSON<Omit<CompareResult, "symbolA" | "symbolB" | "analyzed_at">>(raw);
 
-    return NextResponse.json({
+    const compareResult: CompareResult = {
       symbolA,
       symbolB,
       ...result,
       analyzed_at: new Date().toISOString(),
-    } satisfies CompareResult);
+    };
+    setCache(compareResult);
+    return NextResponse.json(compareResult);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unbekannter Fehler";
     return NextResponse.json({ error: message }, { status: 503 });

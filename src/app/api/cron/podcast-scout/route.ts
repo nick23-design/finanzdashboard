@@ -3,6 +3,31 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createServiceClient } from "@/lib/supabase/service";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const FINANCE_API_URL = process.env.FINANCE_API_URL || "http://localhost:8000";
+
+async function validateTicker(symbol: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { price?: number | null };
+    if (typeof data.price === "number" && data.price > 0) return symbol;
+    // Try .DE suffix for European stocks mentioned in German podcasts
+    if (!symbol.includes(".")) {
+      const res2 = await fetch(`${FINANCE_API_URL}/assets/${symbol}.DE`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (res2.ok) {
+        const data2 = await res2.json() as { price?: number | null };
+        if (typeof data2.price === "number" && data2.price > 0) return `${symbol}.DE`;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 // Investment podcast RSS feeds (show notes contain episode descriptions + mentioned stocks)
 const PODCAST_FEEDS = [
@@ -110,8 +135,22 @@ export async function GET(request: NextRequest) {
 
   if (!picks.length) return NextResponse.json({ picks: 0, reason: "no picks" });
 
+  // Validate each ticker against the Finance API (with .DE fallback for European stocks)
+  const validated = await Promise.all(
+    picks.map(async p => {
+      const validSymbol = await validateTicker(p.symbol);
+      return validSymbol ? { ...p, symbol: validSymbol } : null;
+    })
+  );
+  const validPicks = validated.filter((p): p is ScoutPick => p !== null);
+  const filtered = picks.length - validPicks.length;
+
+  if (!validPicks.length) {
+    return NextResponse.json({ picks: 0, reason: "all symbols invalid", filtered });
+  }
+
   const supabase = createServiceClient();
-  const rows = picks.map(p => ({
+  const rows = validPicks.map(p => ({
     symbol: p.symbol,
     name: p.name,
     recommendation: p.recommendation,
@@ -125,5 +164,5 @@ export async function GET(request: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (supabase as any).from("nh_select_daily").insert(rows);
 
-  return NextResponse.json({ picks: picks.length, symbols: picks.map(p => p.symbol) });
+  return NextResponse.json({ picks: validPicks.length, symbols: validPicks.map(p => p.symbol), filtered });
 }
