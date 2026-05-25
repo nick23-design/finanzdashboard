@@ -228,17 +228,22 @@ async function runSentimentAgent(news: GoogleNewsItem[]): Promise<SentimentAnaly
   }
 
   const client = getClient();
-  const headlines = news.map(n => `- ${n.title} (${n.source})`).join("\n");
+
+  const PREMIUM_SOURCES = ["Reuters", "Bloomberg", "Financial Times", "WSJ", "Wall Street Journal", "CNBC", "Handelsblatt", "FAZ", "Seeking Alpha"];
+  const headlines = news.map(n => {
+    const tier = PREMIUM_SOURCES.some(s => n.source.includes(s)) ? "[★]" : "[ ]";
+    return `${tier} ${n.title} (${n.source})`;
+  }).join("\n");
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
     system:
-      "Du bist ein Finanz-Nachrichtenanalyst. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
+      "Du bist ein Finanz-Nachrichtenanalyst. Artikel von Quellen mit [★] sind besonders zuverlässig und sollen stärker gewichtet werden. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
     messages: [
       {
         role: "user",
-        content: `Analysiere diese Schlagzeilen für Investoren:\n\n${headlines}\n\nJSON-Format:\n{"sentiment":"bullish"|"neutral"|"bearish","key_themes":["..."],"sentiment_summary":"..."}`,
+        content: `Analysiere diese Schlagzeilen für Investoren ([★] = hochwertige Quelle, stärker gewichten):\n\n${headlines}\n\nJSON-Format:\n{"sentiment":"bullish"|"neutral"|"bearish","key_themes":["..."],"sentiment_summary":"..."}`,
       },
     ],
   });
