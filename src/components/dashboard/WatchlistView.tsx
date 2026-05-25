@@ -11,6 +11,8 @@ import { HotPickCard } from "./HotPickCard";
 import { MorningBriefingCard } from "./MorningBriefingCard";
 import { MarketIndexBar } from "./MarketIndexBar";
 import { SectorTeaser } from "./SectorTeaser";
+import { MacroBar } from "./MacroBar";
+import { EarningsCalendarCard } from "./EarningsCalendarCard";
 
 const REGION_LABEL: Record<StockEntry["region"], string> = {
   US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
@@ -194,8 +196,14 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
       {/* Marktindizes */}
       <MarketIndexBar />
 
+      {/* Makro-Indikatoren */}
+      <MacroBar />
+
       {/* Sektor-Radar Teaser */}
       <SectorTeaser />
+
+      {/* Earnings-Kalender */}
+      <EarningsCalendarCard />
 
       {/* Morgen-Briefing */}
       <MorningBriefingCard />

@@ -10,6 +10,7 @@ interface Props {
 }
 
 interface ChartPoint { date: string; value: number }
+interface BenchmarkPoint { date: string; pct: number }
 
 const HIST_PERIOD: Record<string, string> = {
   all: "2y", "1mo": "1mo", "3mo": "3mo", "6mo": "6mo", "1y": "1y",
@@ -17,6 +18,7 @@ const HIST_PERIOD: Record<string, string> = {
 
 export function PortfolioChart({ groups, totalInvested, period }: Props) {
   const [points, setPoints] = useState<ChartPoint[]>([]);
+  const [spyPcts, setSpyPcts] = useState<BenchmarkPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,6 +26,16 @@ export function PortfolioChart({ groups, totalInvested, period }: Props) {
     setLoading(true);
 
     const histPeriod = HIST_PERIOD[period] ?? "1y";
+
+    // Fetch SPY benchmark alongside portfolio
+    fetch(`/api/assets/SPY/history?period=${histPeriod}`)
+      .then(r => r.ok ? r.json() : [])
+      .then((pts: { time: string; value: number }[]) => {
+        if (!pts.length) return;
+        const base = pts[0].value;
+        setSpyPcts(pts.map(p => ({ date: p.time, pct: ((p.value - base) / base) * 100 })));
+      })
+      .catch(() => {});
 
     Promise.all(
       groups.map(g =>
@@ -85,6 +97,8 @@ export function PortfolioChart({ groups, totalInvested, period }: Props) {
   const lastVal = points[points.length - 1].value;
   const isUp = lastVal >= totalInvested;
   const color = isUp ? "#22c55e" : "#ef4444";
+  const portfolioPct = totalInvested > 0 ? ((lastVal - totalInvested) / totalInvested) * 100 : null;
+  const spyLastPct = spyPcts.at(-1)?.pct ?? null;
   const investedY = yOf(totalInvested);
 
   const fmtDate = (d: string) => new Date(d).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
@@ -112,6 +126,41 @@ export function PortfolioChart({ groups, totalInvested, period }: Props) {
         <text x={PL + 2} y={H - 2} fontSize="6.5" fill="rgba(100,116,139,0.65)">{firstDate}</text>
         <text x={W - PR - 2} y={H - 2} fontSize="6.5" fill="rgba(100,116,139,0.65)" textAnchor="end">{lastDate}</text>
       </svg>
+
+      {/* Benchmark comparison row */}
+      {(portfolioPct != null || spyLastPct != null) && (
+        <div className="flex items-center justify-around px-4 py-2 border-t" style={{ borderColor: "var(--card-border)" }}>
+          {portfolioPct != null && (
+            <div className="text-center">
+              <p className="text-[10px]" style={{ color: "var(--muted)" }}>Mein Portfolio</p>
+              <p className="text-sm font-bold" style={{ color: portfolioPct >= 0 ? "#22c55e" : "#ef4444" }}>
+                {portfolioPct >= 0 ? "+" : ""}{portfolioPct.toFixed(2)}%
+              </p>
+            </div>
+          )}
+          {spyLastPct != null && (
+            <div className="text-center">
+              <p className="text-[10px]" style={{ color: "var(--muted)" }}>S&amp;P 500</p>
+              <p className="text-sm font-bold" style={{ color: spyLastPct >= 0 ? "#22c55e" : "#ef4444" }}>
+                {spyLastPct >= 0 ? "+" : ""}{spyLastPct.toFixed(2)}%
+              </p>
+            </div>
+          )}
+          {portfolioPct != null && spyLastPct != null && (
+            <div className="text-center">
+              <p className="text-[10px]" style={{ color: "var(--muted)" }}>Differenz</p>
+              {(() => {
+                const diff = portfolioPct - spyLastPct;
+                return (
+                  <p className="text-sm font-bold" style={{ color: diff >= 0 ? "#22c55e" : "#ef4444" }}>
+                    {diff >= 0 ? "+" : ""}{diff.toFixed(2)}%
+                  </p>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
