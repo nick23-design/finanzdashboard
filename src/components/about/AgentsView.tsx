@@ -25,7 +25,7 @@ interface AgentDoc {
 const AGENTS: AgentDoc[] = [
   {
     id: "lisa",
-    model: "Claude Haiku",
+    model: "Claude Haiku 4.5",
     modelColor: "#06b6d4",
     trigger: "On-demand (beim Öffnen der News-Seite)",
     cache: "Keine — wird bei jedem Seitenaufruf neu generiert",
@@ -64,7 +64,7 @@ const AGENTS: AgentDoc[] = [
   },
   {
     id: "felix",
-    model: "Claude Haiku",
+    model: "Claude Haiku 4.5",
     modelColor: "#3b82f6",
     trigger: "Teil der Vollanalyse-Pipeline (on-demand)",
     cache: "6 Stunden (als Teil des Gesamtergebnisses)",
@@ -104,7 +104,7 @@ const AGENTS: AgentDoc[] = [
   },
   {
     id: "nina",
-    model: "Claude Haiku",
+    model: "Claude Haiku 4.5",
     modelColor: "#8b5cf6",
     trigger: "Teil der Vollanalyse-Pipeline (on-demand)",
     cache: "6 Stunden (als Teil des Gesamtergebnisses)",
@@ -145,7 +145,7 @@ const AGENTS: AgentDoc[] = [
   },
   {
     id: "marco",
-    model: "Claude Haiku",
+    model: "Claude Haiku 4.5",
     modelColor: "#f97316",
     trigger: "Teil der Vollanalyse-Pipeline (on-demand)",
     cache: "6 Stunden (als Teil des Gesamtergebnisses)",
@@ -185,7 +185,7 @@ const AGENTS: AgentDoc[] = [
   },
   {
     id: "vera",
-    model: "Claude Haiku",
+    model: "Claude Haiku 4.5",
     modelColor: "#ef4444",
     trigger: "Teil der Vollanalyse-Pipeline (on-demand)",
     cache: "6 Stunden (als Teil des Gesamtergebnisses)",
@@ -327,7 +327,7 @@ const AGENTS: AgentDoc[] = [
   },
   {
     id: "us-scout",
-    model: "Claude Haiku",
+    model: "Claude Haiku 4.5",
     modelColor: "#3b82f6",
     trigger: "Täglich automatisch (Cron, Werktage)",
     cache: "Ergebnisse in Datenbank bis zum nächsten Tag",
@@ -366,7 +366,7 @@ const AGENTS: AgentDoc[] = [
   },
   {
     id: "de-scout",
-    model: "Claude Haiku",
+    model: "Claude Haiku 4.5",
     modelColor: "#6ECF97",
     trigger: "Täglich automatisch (Cron, Werktage)",
     cache: "Ergebnisse in Datenbank bis zum nächsten Tag",
@@ -405,7 +405,7 @@ const AGENTS: AgentDoc[] = [
   },
   {
     id: "podcast-scout",
-    model: "Claude Haiku",
+    model: "Claude Haiku 4.5",
     modelColor: "#8b5cf6",
     trigger: "Täglich automatisch (Cron, Werktage)",
     cache: "Ergebnisse in Datenbank bis zum nächsten Tag",
@@ -487,8 +487,8 @@ const AGENTS: AgentDoc[] = [
   },
   {
     id: "radar",
-    model: "Claude Haiku",
-    modelColor: "#22c55e",
+    model: "Claude Sonnet 4.6",
+    modelColor: "#10b981",
     trigger: "Täglich automatisch (Cron, unabhängig von Scouts)",
     cache: "Signale bleiben 48h aktiv für den Synthesizer",
     inputs: [
@@ -715,9 +715,9 @@ export function AgentsView() {
       <div className="rounded-2xl border p-3 flex flex-wrap gap-3"
         style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
         {[
-          { label: "Claude Haiku", color: "#06b6d4", note: "Schnell, günstig, gut für strukturierte Tasks" },
-          { label: "Claude Sonnet", color: "#6366f1", note: "Ausgewogen — Qualität & Geschwindigkeit" },
-          { label: "Claude Opus", color: "#f59e0b", note: "Stärkstes Modell, langsamer, für komplexe Synthese" },
+          { label: "Claude Haiku 4.5", color: "#06b6d4", note: "Schnell, günstig, gut für strukturierte Tasks" },
+          { label: "Claude Sonnet 4.6", color: "#10b981", note: "Ausgewogen — Qualität & Geschwindigkeit" },
+          { label: "Claude Opus 4.7", color: "#f59e0b", note: "Stärkstes Modell, langsamer, für komplexe Synthese" },
         ].map(m => (
           <div key={m.label} className="flex items-start gap-2">
             <div className="w-2 h-2 rounded-full mt-1 flex-shrink-0" style={{ background: m.color }} />
