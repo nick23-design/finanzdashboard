@@ -298,7 +298,7 @@ function formatMetrics(s: AssetSnapshot): string {
     `Preis: ${fmt(s.price)} ${s.currency ?? "USD"}`,
     `KGV (P/E): ${fmt(s.pe_ratio, 1)}`,
     `Marktkapitalisierung: ${fmtBig(s.market_cap)}`,
-    `Umsatzwachstum: ${s.revenue_growth != null ? (s.revenue_growth * 100).toFixed(1) + "%" : "N/A"}`,
+    `Umsatzwachstum (TTM, YoY): ${s.revenue_growth != null ? (s.revenue_growth * 100).toFixed(1) + "%" : "N/A"}`,
     `Free Cashflow: ${fmtBig(s.free_cashflow)}`,
     `Debt/Equity: ${fmt(s.debt_to_equity)}`,
     `RSI (14): ${fmt(s.rsi, 1)}`,
@@ -437,10 +437,11 @@ Beobachtungen: ${marketIntel.key_observations.join(" | ")}`
 
   const analystSection = formatAnalystData(analystData);
 
+  const currentPriceRef = s.price != null ? `AKTUELLER KURS: ${s.price.toFixed(2)} ${s.currency ?? "USD"} (nicht mit Kurszielen verwechseln)\n\n` : "";
   const context = `AKTIE: ${symbol}
-KENNZAHLEN:
+${currentPriceRef}KENNZAHLEN (aktuelle Marktdaten):
 ${formatMetrics(s)}
-${analystSection ? "\nANALYSTEN-KONSENS:\n" + analystSection : ""}
+${analystSection ? "\nANALYSTEN-KONSENS (Zukunftsprognosen, kein aktueller Kurs):\n" + analystSection : ""}
 WACHSTUMSBEWERTUNG: ${fundamental.growth_rating}/10
 Stärken: ${fundamental.key_positives.join(" | ")}
 Risiken: ${fundamental.key_risks.join(" | ")}
@@ -933,20 +934,27 @@ async function runOrchestrator(
     },
   ];
 
+  const currentPriceLine = snapshot.price != null
+    ? `AKTUELLER KURS: ${snapshot.price.toFixed(2)} ${snapshot.currency ?? "USD"} ← dieser Wert, nicht das Analysten-Kursziel`
+    : `AKTUELLER KURS: N/A`;
+
   const messages: Anthropic.Messages.MessageParam[] = [
     {
       role: "user",
       content: `Führe eine vollständige Investmentanalyse für ${symbol} durch.
 
+${currentPriceLine}
+
 DATENVERFÜGBARKEIT:
 ${dataAvailability}
 
-KENNZAHLEN:
-${formatMetrics(snapshot)}${analystData ? "\n\n" + formatAnalystData(analystData) : ""}
+KENNZAHLEN (aktuelle Marktdaten):
+${formatMetrics(snapshot)}
 
+${analystData ? "ANALYSTEN-KONSENS (Zukunftsprognosen, kein aktueller Kurs):\n" + formatAnalystData(analystData) + "\n" : ""}
 Vorgehen: Starte mit Fundamental- und Sentiment-Analyse. Rufe Markt-Intelligenz ab wenn Daten vorhanden. Bei widersprüchlichen Signalen oder unzureichenden Ergebnissen: vertiefe die relevante Analyse mit spezifischem Fokus. Schließe mit complete_analysis ab.
 
-KURSZIELE (immer angeben): entry = idealer Einstieg (nahe MA50 oder −3% vom Kurs), target = 12-Monats-Ziel (Analysten-Konsens bevorzugt, sonst +15–25%), stop_loss = PFLICHTFELD, immer −10% unter entry wenn keine bessere Grundlage vorhanden. entry_rationale und target_rationale sind kurze Begründungen (5–10 Wörter).`,
+KURSZIELE (immer angeben): entry = idealer Einstieg (nahe MA50 oder −3% vom aktuellen Kurs), target = 12-Monats-Ziel (Analysten-Konsens bevorzugt, sonst +15–25%), stop_loss = PFLICHTFELD, immer −10% unter entry wenn keine bessere Grundlage vorhanden. entry_rationale und target_rationale sind kurze Begründungen (5–10 Wörter).`,
     },
   ];
 
@@ -955,7 +963,13 @@ KURSZIELE (immer angeben): entry = idealer Einstieg (nahe MA50 oder −3% vom Ku
 - Nina (analyze_sentiment): Sentiment-Analystin
 - Marco (analyze_market_intelligence): Markt-Intelligence-Spezialist
 
-Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und entscheidest selbst welche Analysen du benötigst. Erstelle faktenbasierte, präzise Empfehlungen auf Deutsch. Beziehe dich ausschließlich auf bereitgestellte Daten.${guardrails ? "\n\n" + guardrails : ""}
+Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und entscheidest selbst welche Analysen du benötigst. Erstelle faktenbasierte, präzise Empfehlungen auf Deutsch. Beziehe dich ausschließlich auf bereitgestellte Daten.
+
+KRITISCHE REGELN zur Datentreue:
+1. Der aktuelle Kurs steht unter "AKTUELLER KURS:" und "Preis:" in den Kennzahlen — das Analysten-Kursziel ist ein Zukunftsziel, nie der aktuelle Kurs.
+2. Prozentzahlen in Nachrichtentexten (z.B. "51% Rally vom Tief") beziehen sich auf historische Kursbewegungen, NICHT auf den Abstand zu MA50/MA200 — diese Werte nie als technische Indikatoren zitieren.
+3. Umsatzwachstum (TTM, YoY) ist der gleitende Jahresvergleich — einzelne Quartale können abweichen; korrekte Formulierung: "Umsatz TTM −3,5% YoY".
+4. entry-Preis für Kursziele muss nahe dem AKTUELLEN KURS liegen (±15%), nicht nahe dem Analysten-Kursziel.${guardrails ? "\n\n" + guardrails : ""}
 
 DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confidenceCap}/10. Vergib keine höhere Conviction — die Datenbasis ist entsprechend bewertet.`;
 
