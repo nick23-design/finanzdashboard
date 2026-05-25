@@ -110,7 +110,9 @@ type CompleteAnalysisInput = z.infer<typeof CompleteAnalysisSchema>;
 // --- Peer context ---
 
 async function fetchPeerContext(symbol: string): Promise<string> {
-  const peers = PEER_MAP[symbol];
+  // Strip exchange suffix so "VOW3.DE" → "VOW3" matches the peer map
+  const baseSymbol = symbol.split(".")[0].toUpperCase();
+  const peers = PEER_MAP[symbol] ?? PEER_MAP[baseSymbol];
   if (!peers?.length) return "";
 
   const supabase = await createClient();

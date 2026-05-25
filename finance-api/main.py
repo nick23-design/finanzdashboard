@@ -331,15 +331,28 @@ def get_asset(symbol: str, request: Request):
 
         description: Optional[str] = info.get("longBusinessSummary") or None
 
+        # fast_info fallback — more reliable for European stocks where .info is sparse
+        fast_market_cap: Optional[int] = None
+        fast_currency: Optional[str] = None
+        try:
+            fi = ticker.fast_info
+            fast_market_cap = _safe_int(getattr(fi, "market_cap", None))
+            fast_currency = getattr(fi, "currency", None) or None
+        except Exception:
+            pass
+
+        market_cap = _safe_int(info.get("marketCap")) or fast_market_cap
+        currency = info.get("currency") or fast_currency or "USD"
+
         return AssetResponse(
             symbol=symbol,
             name=info.get("longName") or info.get("shortName") or symbol,
             price=last_price,
-            currency=info.get("currency", "USD"),
+            currency=currency,
             isin=isin,
             description=description,
             pe_ratio=_safe_float(info.get("trailingPE") or info.get("forwardPE")),
-            market_cap=_safe_int(info.get("marketCap")),
+            market_cap=market_cap,
             debt_to_equity=_safe_float(info.get("debtToEquity")),
             revenue_growth=_safe_float(info.get("revenueGrowth")),
             free_cashflow=_safe_int(info.get("freeCashflow")),
