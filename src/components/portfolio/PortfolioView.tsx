@@ -163,12 +163,13 @@ function SummaryCard({
 // ── Position Group ────────────────────────────────────────────────────────────
 
 function PositionCard({
-  group, period, startPrice, histLoading,
+  group, period, startPrice, histLoading, onDelete,
 }: {
   group: PortfolioGroup;
   period: Period;
   startPrice: number | null | undefined;
   histLoading: boolean;
+  onDelete: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -267,10 +268,17 @@ function PositionCard({
           <span className="text-[10px] w-8 text-right" style={{ color: "var(--muted)" }}>
             {weightPct.toFixed(1)}%
           </span>
-          {group.lots.length > 1 && (
+          {group.lots.length > 1 ? (
             <button className="text-[10px]" style={{ color: "var(--muted)" }}
               onClick={() => setExpanded(v => !v)}>
               {group.lots.length} Lots {expanded ? "▲" : "▼"}
+            </button>
+          ) : (
+            <button
+              onClick={() => onDelete(group.lots[0].id)}
+              className="text-[10px] px-2 py-0.5 rounded-lg"
+              style={{ color: "#ef4444", background: "rgba(239,68,68,0.08)" }}>
+              Löschen
             </button>
           )}
         </div>
@@ -286,7 +294,7 @@ function PositionCard({
               <div key={lot.id}
                 className="flex items-center justify-between text-xs rounded-xl px-3 py-2"
                 style={{ background: "var(--background)" }}>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 min-w-0">
                   <span className="font-semibold text-white">
                     {lot.shares} × ${fmt(lot.purchase_price)}
                   </span>
@@ -302,11 +310,19 @@ function PositionCard({
                     })}
                   </span>
                 </div>
-                {lot.pnl != null && (
-                  <span className="font-semibold" style={{ color: lotColor }}>
-                    {fmtSign(lot.pnl)}$
-                  </span>
-                )}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {lot.pnl != null && (
+                    <span className="font-semibold" style={{ color: lotColor }}>
+                      {fmtSign(lot.pnl)}$
+                    </span>
+                  )}
+                  <button
+                    onClick={() => onDelete(lot.id)}
+                    className="px-2 py-0.5 rounded-lg text-[10px]"
+                    style={{ color: "#ef4444", background: "rgba(239,68,68,0.08)" }}>
+                    Löschen
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -571,36 +587,14 @@ export function PortfolioView() {
 
       {/* Positions */}
       {data && data.groups.map(group => (
-        <div key={group.symbol}>
-          <PositionCard
-            group={group}
-            period={period}
-            startPrice={histMap[group.symbol]}
-            histLoading={histLoading}
-          />
-          {group.lots.length === 1 && (
-            <div className="flex justify-end mt-1 pr-1">
-              <button onClick={() => handleDelete(group.lots[0].id)}
-                className="text-xs px-2 py-0.5 rounded-lg"
-                style={{ color: "#ef4444", background: "rgba(239,68,68,0.08)" }}>
-                Löschen
-              </button>
-            </div>
-          )}
-          {group.lots.length > 1 && (
-            <div className="flex justify-end mt-1 pr-1 gap-2 flex-wrap">
-              {group.lots.map(lot => (
-                <button key={lot.id} onClick={() => handleDelete(lot.id)}
-                  className="text-[10px] px-2 py-0.5 rounded-lg"
-                  style={{ color: "#ef4444", background: "rgba(239,68,68,0.08)" }}>
-                  Lot {new Date(lot.purchase_date).toLocaleDateString("de-DE", {
-                    day: "2-digit", month: "2-digit", year: "2-digit",
-                  })} löschen
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <PositionCard
+          key={group.symbol}
+          group={group}
+          period={period}
+          startPrice={histMap[group.symbol]}
+          histLoading={histLoading}
+          onDelete={handleDelete}
+        />
       ))}
 
       {/* Empty state */}
