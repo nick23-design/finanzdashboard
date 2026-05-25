@@ -10,10 +10,6 @@ import { Search, X, Plus, Globe, Bell } from "lucide-react";
 import { HotPickCard } from "./HotPickCard";
 import { MorningBriefingCard } from "./MorningBriefingCard";
 import { MarketIndexBar } from "./MarketIndexBar";
-import { SectorTeaser } from "./SectorTeaser";
-import { MacroBar } from "./MacroBar";
-import { EarningsCalendarCard } from "./EarningsCalendarCard";
-import { ScreenerTeaser } from "@/components/screener/ScreenerTeaser";
 
 const REGION_LABEL: Record<StockEntry["region"], string> = {
   US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
@@ -196,18 +192,6 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
 
       {/* Marktindizes */}
       <MarketIndexBar />
-
-      {/* Makro-Indikatoren */}
-      <MacroBar />
-
-      {/* Sektor-Radar Teaser */}
-      <SectorTeaser />
-
-      {/* Earnings-Kalender */}
-      <EarningsCalendarCard />
-
-      {/* Screener Teaser */}
-      <ScreenerTeaser />
 
       {/* Morgen-Briefing */}
       <MorningBriefingCard />

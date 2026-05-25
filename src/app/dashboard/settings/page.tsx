@@ -48,6 +48,13 @@ export default async function SettingsPage() {
           Weitere Seiten
         </p>
         <Link
+          href="/dashboard/search"
+          className="flex items-center justify-between px-4 py-3 border-t"
+          style={{ borderColor: "var(--card-border)" }}>
+          <span className="text-sm text-white">NH Select</span>
+          <span style={{ color: "var(--muted)" }}>›</span>
+        </Link>
+        <Link
           href="/dashboard/team"
           className="flex items-center justify-between px-4 py-3 border-t"
           style={{ borderColor: "var(--card-border)" }}>

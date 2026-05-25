@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Star, Target, Newspaper, Briefcase, Settings2 } from "lucide-react";
+import { Star, TrendingUp, Newspaper, Briefcase, Settings2 } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/dashboard",            label: "Watchlist",  Icon: Star },
-  { href: "/dashboard/search",     label: "NH Select",  Icon: Target },
+  { href: "/dashboard/market",     label: "Markt",      Icon: TrendingUp },
   { href: "/dashboard/news",       label: "News",       Icon: Newspaper },
   { href: "/dashboard/portfolio",  label: "Portfolio",  Icon: Briefcase },
   { href: "/dashboard/settings",   label: "Mehr",       Icon: Settings2 },
