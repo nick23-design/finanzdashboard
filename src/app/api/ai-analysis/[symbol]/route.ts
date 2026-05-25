@@ -353,7 +353,7 @@ async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, p
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 600,
+    max_tokens: 1200,
     system: "Du bist ein wachstumsorientierter Aktienanalyst. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
     messages: [{ role: "user", content: prompt }],
   });
@@ -541,7 +541,7 @@ Abschließendes JSON-Format:
     for (let i = 0; i < 6; i++) {
       const response = await client.messages.create({
         model: "claude-sonnet-4-6",
-        max_tokens: 2500,
+        max_tokens: 4000,
         system: systemPrompt,
         tools: [veraTool],
         tool_choice: { type: "auto" } as Anthropic.Messages.ToolChoiceAuto,
@@ -920,11 +920,11 @@ async function runOrchestrator(
           bull_case: { type: "array", items: { type: "string" }, description: "3 Argumente für die Aktie" },
           bear_case: { type: "array", items: { type: "string" }, description: "2–3 Risiken" },
           growth_outlook: { type: "string" },
-          entry: { type: "number", description: "Idealer Einstiegskurs" },
-          target: { type: "number", description: "12-Monats-Kursziel" },
-          stop_loss: { type: "number", description: "Stop-Loss-Marke" },
-          entry_rationale: { type: "string" },
-          target_rationale: { type: "string" },
+          entry: { type: "number", description: "Idealer Einstiegskurs (nahe MA50 oder −3% vom aktuellen Kurs bei RSI>50)" },
+          target: { type: "number", description: "12-Monats-Kursziel (Analysten-Konsens bevorzugt, sonst +15–25%)" },
+          stop_loss: { type: "number", description: "Stop-Loss: −8 bis −12% unter entry. Pflichtfeld — nutze −10% von entry als Fallback wenn unklar." },
+          entry_rationale: { type: "string", description: "Kurze Begründung für den Einstiegskurs (z.B. 'Nahe MA50', 'Support-Level')" },
+          target_rationale: { type: "string", description: "Kurze Begründung für das Kursziel (z.B. 'Analysten-Konsens', 'KGV-Expansion')" },
         },
         required: ["recommendation", "conviction", "summary", "bull_case", "bear_case", "growth_outlook"],
       },
@@ -942,7 +942,9 @@ ${dataAvailability}
 KENNZAHLEN:
 ${formatMetrics(snapshot)}${analystData ? "\n\n" + formatAnalystData(analystData) : ""}
 
-Vorgehen: Starte mit Fundamental- und Sentiment-Analyse. Rufe Markt-Intelligenz ab wenn Daten vorhanden. Bei widersprüchlichen Signalen oder unzureichenden Ergebnissen: vertiefe die relevante Analyse mit spezifischem Fokus. Schließe mit complete_analysis ab.`,
+Vorgehen: Starte mit Fundamental- und Sentiment-Analyse. Rufe Markt-Intelligenz ab wenn Daten vorhanden. Bei widersprüchlichen Signalen oder unzureichenden Ergebnissen: vertiefe die relevante Analyse mit spezifischem Fokus. Schließe mit complete_analysis ab.
+
+KURSZIELE (immer angeben): entry = idealer Einstieg (nahe MA50 oder −3% vom Kurs), target = 12-Monats-Ziel (Analysten-Konsens bevorzugt, sonst +15–25%), stop_loss = PFLICHTFELD, immer −10% unter entry wenn keine bessere Grundlage vorhanden. entry_rationale und target_rationale sind kurze Begründungen (5–10 Wörter).`,
     },
   ];
 
@@ -1002,6 +1004,9 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
       const rawConviction = clampConviction(inp.conviction);
       const cappedConviction = Math.min(rawConviction, confidenceCap);
 
+      const entryVal = inp.entry ?? null;
+      const stopLossVal = inp.stop_loss ?? (entryVal != null ? Math.round(entryVal * 0.90 * 100) / 100 : null);
+
       const rawResult: SynthesisResult = {
         recommendation: inp.recommendation,
         conviction: cappedConviction,
@@ -1009,9 +1014,10 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
         bull_case: inp.bull_case ?? [],
         bear_case: inp.bear_case ?? [],
         growth_outlook: inp.growth_outlook,
-        price_levels: (inp.entry != null || inp.target != null || inp.stop_loss != null) ? {
-          entry: inp.entry ?? null, target: inp.target ?? null, stop_loss: inp.stop_loss ?? null,
-          entry_rationale: inp.entry_rationale ?? "", target_rationale: inp.target_rationale ?? "",
+        price_levels: (entryVal != null || inp.target != null || stopLossVal != null) ? {
+          entry: entryVal, target: inp.target ?? null, stop_loss: stopLossVal,
+          entry_rationale: inp.entry_rationale || "Nahe aktuellem Kursniveau",
+          target_rationale: inp.target_rationale || "Basierend auf Analystenkonsens",
         } : null,
       };
 
