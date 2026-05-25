@@ -607,6 +607,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
                 <AgentAvatar agent="felix" size="sm" showName working />
                 <AgentAvatar agent="nina" size="sm" showName working />
                 <AgentAvatar agent="marco" size="sm" showName working />
+                <AgentAvatar agent="vera" size="sm" showName working />
               </div>
               {/* Progress bar */}
               <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: "var(--card-border)" }}>
