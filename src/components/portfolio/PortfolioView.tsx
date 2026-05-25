@@ -456,15 +456,15 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
       {error && <p className="text-xs" style={{ color: "#ef4444" }}>{error}</p>}
 
       <div className="grid grid-cols-2 gap-3">
-        {/* Symbol with autocomplete */}
+        {/* Symbol / ISIN with autocomplete */}
         <div className="col-span-2" ref={dropdownRef}>
-          <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Ticker *</label>
+          <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Ticker oder ISIN *</label>
           <div className="relative">
             <input
               required
               className={field}
               style={fieldStyle}
-              placeholder="z.B. AAPL, SAP, MSFT…"
+              placeholder="z.B. AAPL, SAP, DE000SAP2222…"
               autoComplete="off"
               value={form.symbol}
               onChange={e => handleSymbolChange(e.target.value)}
@@ -517,22 +517,14 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
         <div>
           <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Einstiegskurs *</label>
           <div className="flex gap-2">
-            <div className="flex rounded-xl overflow-hidden border text-xs font-semibold"
-              style={{ borderColor: "var(--card-border)" }}>
-              {["USD", "EUR", "GBP", "CHF"].map(c => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => { setCurrency(c); setCurrencyLocked(true); }}
-                  className="px-2 py-2 transition-colors"
-                  style={{
-                    background: currency === c ? "var(--primary)" : "var(--background)",
-                    color: currency === c ? "#000" : "var(--muted)",
-                  }}>
-                  {c}
-                </button>
-              ))}
-            </div>
+            <select
+              value={currency}
+              onChange={e => { setCurrency(e.target.value); setCurrencyLocked(true); }}
+              className="rounded-xl px-3 py-2 text-sm font-semibold border outline-none"
+              style={{ background: "var(--background)", borderColor: "var(--card-border)", color: "var(--foreground)" }}>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+            </select>
             <input required type="number" step="any" min="0" className={`${field} flex-1`} style={fieldStyle}
               placeholder="150.00"
               value={form.purchase_price}
