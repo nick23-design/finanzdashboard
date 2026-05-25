@@ -20,7 +20,84 @@ import type { SignalType } from "@/types/finance";
 import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
 import { formatCountdown, formatRelativeTime } from "@/lib/time";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
-import { Bell } from "lucide-react";
+import { Bell, TrendingUp } from "lucide-react";
+import type { PortfolioGroup } from "@/app/api/portfolio/route";
+
+// ── Portfolio Position ────────────────────────────────────────────────────────
+
+function PortfolioPositionSection({ symbol }: { symbol: string }) {
+  const [group, setGroup] = useState<PortfolioGroup | null>(null);
+
+  useEffect(() => {
+    fetch("/api/portfolio")
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { groups: PortfolioGroup[] } | null) => {
+        if (!data) return;
+        setGroup(data.groups.find(g => g.symbol === symbol) ?? null);
+      })
+      .catch(() => {});
+  }, [symbol]);
+
+  if (!group) return null;
+
+  const pnlColor = group.pnl == null ? "var(--muted)" : group.pnl >= 0 ? "#22c55e" : "#ef4444";
+  const dayColor = group.day_change_pct == null ? "var(--muted)" : group.day_change_pct >= 0 ? "#22c55e" : "#ef4444";
+
+  return (
+    <div className="rounded-2xl border p-4"
+      style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <TrendingUp size={14} style={{ color: "var(--primary)" }} />
+          <h3 className="font-semibold text-white text-sm">Meine Position</h3>
+        </div>
+        <Link href="/dashboard/portfolio"
+          className="text-xs"
+          style={{ color: "var(--muted)" }}>
+          Portfolio →
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-4 gap-2 text-xs">
+        <div>
+          <p style={{ color: "var(--muted)" }}>Aktien</p>
+          <p className="font-semibold text-white mt-0.5">{group.total_shares}</p>
+        </div>
+        <div>
+          <p style={{ color: "var(--muted)" }}>Ø Kauf</p>
+          <p className="font-semibold text-white mt-0.5">${group.avg_purchase_price.toFixed(2)}</p>
+        </div>
+        <div>
+          <p style={{ color: "var(--muted)" }}>Wert</p>
+          <p className="font-semibold text-white mt-0.5">
+            {group.current_value != null ? `$${group.current_value.toFixed(2)}` : "—"}
+          </p>
+        </div>
+        <div>
+          <p style={{ color: "var(--muted)" }}>Heute</p>
+          <p className="font-semibold mt-0.5" style={{ color: dayColor }}>
+            {group.day_change_pct != null ? `${group.day_change_pct >= 0 ? "+" : ""}${group.day_change_pct.toFixed(1)}%` : "—"}
+          </p>
+        </div>
+      </div>
+
+      {group.pnl != null && (
+        <div className="mt-3 pt-3 border-t flex items-center justify-between"
+          style={{ borderColor: "var(--card-border)" }}>
+          <span className="text-xs" style={{ color: "var(--muted)" }}>Gesamt P&L</span>
+          <span className="text-sm font-bold" style={{ color: pnlColor }}>
+            {group.pnl >= 0 ? "+" : ""}{group.pnl.toFixed(2)}$
+            {group.pnl_pct != null && (
+              <span className="text-xs font-normal ml-1">
+                ({group.pnl_pct >= 0 ? "+" : ""}{group.pnl_pct.toFixed(1)}%)
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Quick Alert ───────────────────────────────────────────────────────────────
 
@@ -391,6 +468,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         name={(asset as unknown as { name?: string })?.name ?? symbol}
         currentPrice={asset?.price ?? null}
       />
+
+      {/* Portfolio Position */}
+      <PortfolioPositionSection symbol={symbol} />
 
       {/* Score Card */}
       {score && (
