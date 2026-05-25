@@ -14,8 +14,8 @@ import { z } from "zod";
 const FINANCE_API_URL = process.env.FINANCE_API_URL || "http://localhost:8000";
 
 const addSchema = z.object({
-  symbol: z.string().min(1).max(10).transform(s => s.toUpperCase().trim()),
-  name: z.string().max(100).default(""),
+  symbol: z.string().min(1).max(30).transform(s => s.toUpperCase().trim()),
+  name: z.string().max(200).default(""),
   shares: z.number().positive(),
   purchase_price: z.number().positive(),
   purchase_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
