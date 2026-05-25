@@ -144,9 +144,22 @@ function ScoreTrendChart({ entries }: { entries: HistoryEntry[] }) {
 
 // ── Vollansicht einer einzelnen Analyse ──────────────────────────────────────
 
+interface ProtocolEntry {
+  agent: string;
+  status: "ok" | "warning" | "skipped";
+  detail: string;
+}
+
+const PROTOCOL_STATUS: Record<ProtocolEntry["status"], { icon: string; color: string }> = {
+  ok:      { icon: "✓", color: "#22c55e" },
+  warning: { icon: "⚠", color: "#f59e0b" },
+  skipped: { icon: "⊘", color: "#6b7280" },
+};
+
 function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
   const [data, setData] = useState<AIAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
+  const [protocolOpen, setProtocolOpen] = useState(false);
 
   useEffect(() => {
     fetch(`/api/ai-analysis/${symbol}/history/${id}`)
@@ -174,6 +187,7 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
   const extra     = data.extra_data as Record<string, unknown> | null;
   const priceLevels = extra?.price_levels as { entry: number | null; target: number | null; stop_loss: number | null; entry_rationale?: string; target_rationale?: string } | null;
   const marketIntel = extra?.market_intel as { insider_signal: string; institutional_trend: string; trends_momentum: string; key_observations: string[] } | null;
+  const protocol = (extra?.protocol as ProtocolEntry[] | undefined) ?? [];
 
   const fmt = (n: number | null) => n != null ? `$${n.toFixed(2)}` : "—";
   const sentColor = SENTIMENT_COLOR[data.news_sentiment] ?? "var(--muted)";
@@ -288,6 +302,41 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
               <li key={i}>· {obs}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Analyse-Protokoll */}
+      {protocol.length > 0 && (
+        <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--card-border)" }}>
+          <button
+            onClick={() => setProtocolOpen(v => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 text-left"
+            style={{ background: "rgba(100,116,139,0.06)" }}>
+            <span className="font-semibold" style={{ color: "var(--muted)" }}>
+              Analyse-Protokoll
+              {protocol.some(e => e.status === "warning") && (
+                <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                  style={{ background: "#f59e0b22", color: "#f59e0b" }}>
+                  Korrekturen
+                </span>
+              )}
+            </span>
+            <span style={{ color: "var(--muted)" }}>{protocolOpen ? "▲" : "▼"}</span>
+          </button>
+          {protocolOpen && (
+            <ul className="px-3 py-2 space-y-1.5">
+              {protocol.map((e, i) => {
+                const s = PROTOCOL_STATUS[e.status] ?? PROTOCOL_STATUS.skipped;
+                return (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="font-bold mt-0.5 shrink-0" style={{ color: s.color }}>{s.icon}</span>
+                    <span className="font-semibold shrink-0 w-12 text-white">{e.agent}</span>
+                    <span style={{ color: "var(--muted)" }}>{e.detail}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
     </div>
