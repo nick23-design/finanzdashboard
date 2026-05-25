@@ -34,6 +34,8 @@ export function NewsFeedView() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
   const [filter, setFilter] = useState<"alle" | "hoch" | "mittel" | "niedrig">("alle");
+  const [symbolFilter, setSymbolFilter] = useState<string>("alle");
+  const [sortBy, setSortBy] = useState<"importance" | "newest">("importance");
   const [podcasts, setPodcasts] = useState<PodcastSource[]>([]);
   const [podcastsOpen, setPodcastsOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -82,7 +84,22 @@ export function NewsFeedView() {
       })()
     : null;
 
-  const filtered = filter === "alle" ? news : news.filter(n => n.importance === filter);
+  const symbols = ["alle", ...Array.from(new Set(news.map(n => n.symbol))).sort()];
+
+  const filtered = (() => {
+    let list = news;
+    if (filter !== "alle") list = list.filter(n => n.importance === filter);
+    if (symbolFilter !== "alle") list = list.filter(n => n.symbol === symbolFilter);
+    if (sortBy === "newest") {
+      list = [...list].sort((a, b) => {
+        if (!a.published && !b.published) return 0;
+        if (!a.published) return 1;
+        if (!b.published) return -1;
+        return new Date(b.published).getTime() - new Date(a.published).getTime();
+      });
+    }
+    return list;
+  })();
 
   if (loading) {
     return (
@@ -178,31 +195,66 @@ export function NewsFeedView() {
         </div>
       )}
 
-      {/* Filter */}
+      {/* Filter + Sort */}
       {news.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {(["alle", "hoch", "mittel", "niedrig"] as const).map(f => (
+        <div className="space-y-2">
+          {/* Row 1: Sortierung + Wichtigkeit */}
+          <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
+            {/* Sort toggle */}
             <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full font-medium transition-opacity"
+              onClick={() => setSortBy(s => s === "importance" ? "newest" : "importance")}
+              className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full font-medium border transition-all"
               style={{
-                background: filter === f
-                  ? f === "alle" ? "var(--primary)" : IMPORTANCE_STYLE[f]?.bg
-                  : "var(--card-border)",
-                color: filter === f
-                  ? f === "alle" ? "#000" : IMPORTANCE_STYLE[f]?.color
-                  : "var(--muted)",
-                opacity: filter === f ? 1 : 0.7,
+                background: "var(--card)",
+                borderColor: sortBy === "newest" ? "var(--primary)" : "var(--card-border)",
+                color: sortBy === "newest" ? "var(--primary)" : "var(--muted)",
               }}>
-              {f === "alle" ? "Alle" : IMPORTANCE_STYLE[f].label}
-              {f !== "alle" && (
-                <span className="ml-1">
-                  ({news.filter(n => n.importance === f).length})
-                </span>
-              )}
+              {sortBy === "newest" ? "⏱ Neueste" : "⏱ Neueste"}
             </button>
-          ))}
+
+            <div className="w-px flex-shrink-0 self-stretch" style={{ background: "var(--card-border)" }} />
+
+            {(["alle", "hoch", "mittel", "niedrig"] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full font-medium"
+                style={{
+                  background: filter === f
+                    ? f === "alle" ? "var(--primary)" : IMPORTANCE_STYLE[f]?.bg
+                    : "var(--card-border)",
+                  color: filter === f
+                    ? f === "alle" ? "#000" : IMPORTANCE_STYLE[f]?.color
+                    : "var(--muted)",
+                }}>
+                {f === "alle" ? "Alle" : IMPORTANCE_STYLE[f].label}
+                {f !== "alle" && (
+                  <span className="ml-1 opacity-70">
+                    ({news.filter(n => n.importance === f).length})
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Row 2: Symbol-Filter */}
+          {symbols.length > 2 && (
+            <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
+              {symbols.map(sym => (
+                <button
+                  key={sym}
+                  onClick={() => setSymbolFilter(sym)}
+                  className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full font-medium"
+                  style={{
+                    background: symbolFilter === sym ? "rgba(99,102,241,0.2)" : "var(--card-border)",
+                    color: symbolFilter === sym ? "#818cf8" : "var(--muted)",
+                    border: symbolFilter === sym ? "1px solid rgba(99,102,241,0.4)" : "1px solid transparent",
+                  }}>
+                  {sym === "alle" ? "Alle Aktien" : sym}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
