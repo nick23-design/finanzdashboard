@@ -375,7 +375,7 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
           {items.map(item => (
             <WatchlistCard key={item.id} item={item} onRemove={handleRemove} />
           ))}

@@ -23,7 +23,7 @@ interface QuickData {
 
 function Sparkline({ prices, isUp }: { prices: number[]; isUp: boolean }) {
   if (prices.length < 2) return null;
-  const w = 72, h = 28;
+  const w = 52, h = 22;
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   const range = max - min || 1;
@@ -35,15 +35,31 @@ function Sparkline({ prices, isUp }: { prices: number[]; isUp: boolean }) {
   const color = isUp ? "#22c55e" : "#ef4444";
   return (
     <svg width={w} height={h} className="flex-shrink-0 opacity-80">
-      <polyline
-        points={pts.join(" ")}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <polyline points={pts.join(" ")} fill="none" stroke={color}
+        strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+function CompanyLogo({ symbol }: { symbol: string }) {
+  const [error, setError] = useState(false);
+  if (error) {
+    return (
+      <span
+        className="w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold flex-shrink-0"
+        style={{ background: "var(--card-border)", color: "var(--primary)" }}>
+        {symbol.charAt(0)}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={`https://financialmodelingprep.com/image-stock/${symbol}.png`}
+      onError={() => setError(true)}
+      className="w-6 h-6 rounded-md object-contain flex-shrink-0"
+      style={{ background: "var(--card-border)" }}
+      alt=""
+    />
   );
 }
 
@@ -112,81 +128,77 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
         borderLeftWidth: "3px",
         borderLeftColor: accentColor,
       }}>
-      <div className="p-4 space-y-3">
-        {/* Clickable area → asset detail */}
-        <Link href={`/dashboard/asset/${item.symbol}`} className="block space-y-3">
-          {/* Header row */}
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <span className="font-bold text-white text-base">{item.symbol}</span>
-              {item.name && item.name !== item.symbol && (
-                <p className="text-xs mt-0.5 truncate" style={{ color: "var(--muted)" }}>
-                  {item.name}
-                </p>
-              )}
-            </div>
-            <div className="flex-shrink-0">
-              {loading ? (
-                <Skeleton className="w-20" height="h-6" />
-              ) : data ? (
-                <ScoreBadge signal={data.signal} score={data.totalScore} size="sm" />
-              ) : (
-                <span className="text-xs" style={{ color: "var(--muted)" }}>—</span>
-              )}
-            </div>
-          </div>
+      <div className="p-3 space-y-2">
+        <Link href={`/dashboard/asset/${item.symbol}`} className="block space-y-2">
 
-          {/* Price + Sparkline row */}
-          <div className="flex items-center justify-between gap-3">
-            {loading ? (
-              <Skeleton className="w-24" height="h-6" />
-            ) : (
-              <div className="flex items-center gap-2 flex-wrap min-w-0">
-                <span className="text-lg font-semibold text-white">
-                  {data?.price != null
-                    ? `${data.price.toFixed(2)} ${data.currency ?? ""}`
-                    : "—"}
-                </span>
-                {data?.priceChangePct != null && (
-                  <span
-                    className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                    style={{
-                      color: isUp ? "#22c55e" : "#ef4444",
-                      background: isUp ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-                    }}>
-                    {isUp ? "+" : ""}
-                    {data.priceChangePct.toFixed(2)}%
-                  </span>
-                )}
-              </div>
-            )}
+          {/* Top: logo + symbol + sparkline */}
+          <div className="flex items-start justify-between gap-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <CompanyLogo symbol={item.symbol} />
+              <span className="font-bold text-white text-sm truncate">{item.symbol}</span>
+            </div>
             {!loading && data && data.sparkline.length >= 2 && (
               <Sparkline prices={data.sparkline} isUp={isUp} />
             )}
           </div>
+
+          {/* Company name */}
+          {item.name && item.name !== item.symbol && (
+            <p className="text-[10px] truncate" style={{ color: "var(--muted)" }}>
+              {item.name}
+            </p>
+          )}
+
+          {/* Price */}
+          {loading ? (
+            <Skeleton className="w-16" height="h-5" />
+          ) : (
+            <div>
+              <p className="text-sm font-semibold text-white leading-tight">
+                {data?.price != null ? data.price.toFixed(2) : "—"}
+                <span className="text-[10px] font-normal ml-1" style={{ color: "var(--muted)" }}>
+                  {data?.currency ?? ""}
+                </span>
+              </p>
+              {data?.priceChangePct != null && (
+                <span
+                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                  style={{
+                    color: isUp ? "#22c55e" : "#ef4444",
+                    background: isUp ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                  }}>
+                  {isUp ? "+" : ""}{data.priceChangePct.toFixed(2)}%
+                </span>
+              )}
+            </div>
+          )}
         </Link>
 
-        {/* Actions */}
-        <div className="flex justify-end">
+        {/* Score badge + delete */}
+        <div className="flex items-center justify-between pt-0.5">
+          {loading ? (
+            <Skeleton className="w-14" height="h-5" />
+          ) : data ? (
+            <ScoreBadge signal={data.signal} score={data.totalScore} size="sm" />
+          ) : (
+            <span />
+          )}
           {confirmDelete ? (
             <div className="flex gap-1">
-              <button
-                onClick={() => onRemove(item.id)}
-                className="rounded-xl px-3 py-1.5 text-sm font-medium text-white"
+              <button onClick={() => onRemove(item.id)}
+                className="rounded-lg px-2 py-0.5 text-[10px] font-medium text-white"
                 style={{ background: "var(--danger)" }}>
-                Löschen
+                Ja
               </button>
-              <button
-                onClick={() => setConfirmDelete(false)}
-                className="rounded-xl px-3 py-1.5 text-sm"
+              <button onClick={() => setConfirmDelete(false)}
+                className="rounded-lg px-2 py-0.5 text-[10px]"
                 style={{ color: "var(--muted)" }}>
                 Nein
               </button>
             </div>
           ) : (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="rounded-xl px-3 py-1.5 text-sm"
+            <button onClick={() => setConfirmDelete(true)}
+              className="text-[11px] px-1.5 py-0.5 rounded"
               style={{ color: "var(--muted)" }}>
               ✕
             </button>
