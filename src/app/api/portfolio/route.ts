@@ -35,6 +35,7 @@ export interface PortfolioLot {
 export interface PortfolioGroup {
   symbol: string;
   name: string;
+  currency: string | null;
   lots: PortfolioLot[];
   total_shares: number;
   avg_purchase_price: number;
@@ -83,7 +84,7 @@ export async function GET(_request: NextRequest) {
 
   // Fetch current prices + daily change for each unique symbol
   const symbols = [...new Set(positions.map(p => p.symbol))];
-  const priceMap: Record<string, { price: number | null; change_pct: number | null }> = {};
+  const priceMap: Record<string, { price: number | null; change_pct: number | null; currency: string | null }> = {};
 
   await Promise.all(
     symbols.map(async (sym) => {
@@ -91,12 +92,12 @@ export async function GET(_request: NextRequest) {
         const res = await fetch(`${FINANCE_API_URL}/assets/${sym}`, { next: { revalidate: 0 } });
         if (res.ok) {
           const d = await res.json();
-          priceMap[sym] = { price: d.price ?? null, change_pct: d.price_change_pct ?? null };
+          priceMap[sym] = { price: d.price ?? null, change_pct: d.price_change_pct ?? null, currency: d.currency ?? null };
         } else {
-          priceMap[sym] = { price: null, change_pct: null };
+          priceMap[sym] = { price: null, change_pct: null, currency: null };
         }
       } catch {
-        priceMap[sym] = { price: null, change_pct: null };
+        priceMap[sym] = { price: null, change_pct: null, currency: null };
       }
     })
   );
@@ -116,7 +117,7 @@ export async function GET(_request: NextRequest) {
   }, 0);
 
   const groups: PortfolioGroup[] = Object.entries(groupMap).map(([symbol, { positions: lots, name }]) => {
-    const { price: currentPrice, change_pct: dayChangePct } = priceMap[symbol];
+    const { price: currentPrice, change_pct: dayChangePct, currency } = priceMap[symbol];
 
     const totalShares = lots.reduce((s, p) => s + Number(p.shares), 0);
     const purchaseValue = lots.reduce((s, p) => s + Number(p.purchase_price) * Number(p.shares), 0);
@@ -146,7 +147,7 @@ export async function GET(_request: NextRequest) {
     });
 
     return {
-      symbol, name, lots: lotDetails,
+      symbol, name, currency: currency ?? null, lots: lotDetails,
       total_shares: totalShares,
       avg_purchase_price: avgPurchasePrice,
       purchase_value: purchaseValue,

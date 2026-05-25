@@ -8,6 +8,12 @@ import { CorrelationMatrix } from "./CorrelationMatrix";
 
 function fmt(n: number, dec = 2) { return n.toFixed(dec); }
 function fmtSign(n: number, dec = 2) { return (n >= 0 ? "+" : "") + n.toFixed(dec); }
+function currSign(currency?: string | null) {
+  if (currency === "EUR") return "€";
+  if (currency === "GBP") return "£";
+  if (currency === "CHF") return "CHF ";
+  return "$";
+}
 
 // ── Period ────────────────────────────────────────────────────────────────────
 
@@ -70,7 +76,6 @@ function SummaryCard({
   const pnlColor = displayPnl == null ? "var(--muted)" : displayPnl >= 0 ? "#22c55e" : "#ef4444";
   const dayColor = s.day_pnl == null ? "var(--muted)" : s.day_pnl >= 0 ? "#22c55e" : "#ef4444";
 
-  // normalize best/worst to same shape
   const bestDisplay = isAllTime
     ? (s.best ? { symbol: s.best.symbol, pct: s.best.pnl_pct } : null)
     : (ps?.best ?? null);
@@ -78,7 +83,6 @@ function SummaryCard({
     ? (s.worst ? { symbol: s.worst.symbol, pct: s.worst.pnl_pct } : null)
     : (ps?.worst ?? null);
 
-  // day return % for portfolio
   const dayPct = s.day_pnl != null && s.total_current > 0
     ? (s.day_pnl / Math.max(s.total_current - s.day_pnl, 1)) * 100
     : null;
@@ -87,13 +91,12 @@ function SummaryCard({
     <div className="rounded-2xl border p-4 space-y-3"
       style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
 
-      {/* Gesamt */}
       <div className="flex items-end justify-between">
         <div>
           <p className="text-xs" style={{ color: "var(--muted)" }}>Gesamtwert</p>
-          <p className="text-2xl font-bold text-white">${fmt(s.total_current)}</p>
+          <p className="text-2xl font-bold text-white">{fmt(s.total_current)}</p>
           <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-            Investiert: ${fmt(s.total_invested)}
+            Investiert: {fmt(s.total_invested)}
           </p>
         </div>
         <div className="text-right min-w-[80px]">
@@ -104,7 +107,7 @@ function SummaryCard({
             <>
               {displayPnl != null && (
                 <p className="text-lg font-bold" style={{ color: pnlColor }}>
-                  {fmtSign(displayPnl)}$
+                  {fmtSign(displayPnl)}
                 </p>
               )}
               {displayPct != null && (
@@ -122,12 +125,11 @@ function SummaryCard({
         </div>
       </div>
 
-      {/* Heute + Best + Worst */}
       <div className="grid grid-cols-3 gap-2">
         <div className="rounded-xl p-2.5" style={{ background: "rgba(100,116,139,0.1)" }}>
           <p className="text-[10px]" style={{ color: "var(--muted)" }}>Heute</p>
           <p className="text-sm font-bold mt-0.5" style={{ color: dayColor }}>
-            {s.day_pnl != null ? fmtSign(s.day_pnl) + "$" : "—"}
+            {s.day_pnl != null ? fmtSign(s.day_pnl) : "—"}
           </p>
           {dayPct != null && (
             <p className="text-[10px] font-semibold" style={{ color: dayColor }}>
@@ -174,6 +176,7 @@ function PositionCard({
   onDelete: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const cs = currSign(group.currency);
 
   const isAllTime = period === "all";
   const label = PERIOD_LABEL[period];
@@ -216,7 +219,7 @@ function PositionCard({
               <>
                 {displayPnl != null && (
                   <p className="text-sm font-bold" style={{ color: pnlColor }}>
-                    {fmtSign(displayPnl)}$
+                    {fmtSign(displayPnl)}{cs}
                   </p>
                 )}
                 {displayPct != null && (
@@ -237,7 +240,6 @@ function PositionCard({
           </div>
         </div>
 
-        {/* Metrics */}
         <div className="grid grid-cols-4 gap-1.5 text-xs mb-3">
           <div>
             <p style={{ color: "var(--muted)" }}>Aktien</p>
@@ -245,12 +247,12 @@ function PositionCard({
           </div>
           <div>
             <p style={{ color: "var(--muted)" }}>Ø Kauf</p>
-            <p className="font-semibold text-white">${fmt(group.avg_purchase_price)}</p>
+            <p className="font-semibold text-white">{cs}{fmt(group.avg_purchase_price)}</p>
           </div>
           <div>
             <p style={{ color: "var(--muted)" }}>Aktuell</p>
             <p className="font-semibold text-white">
-              {group.current_price != null ? `$${fmt(group.current_price)}` : "—"}
+              {group.current_price != null ? `${cs}${fmt(group.current_price)}` : "—"}
             </p>
           </div>
           <div>
@@ -261,7 +263,6 @@ function PositionCard({
           </div>
         </div>
 
-        {/* Weight bar */}
         <div className="flex items-center gap-2">
           <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: "var(--card-border)" }}>
             <div className="h-full rounded-full"
@@ -286,7 +287,6 @@ function PositionCard({
         </div>
       </div>
 
-      {/* Lots detail */}
       {expanded && group.lots.length > 1 && (
         <div className="border-t px-4 pb-3 pt-2 space-y-2"
           style={{ borderColor: "var(--card-border)" }}>
@@ -298,7 +298,7 @@ function PositionCard({
                 style={{ background: "var(--background)" }}>
                 <div className="flex items-center gap-3 min-w-0">
                   <span className="font-semibold text-white">
-                    {lot.shares} × ${fmt(lot.purchase_price)}
+                    {lot.shares} × {cs}{fmt(lot.purchase_price)}
                   </span>
                   {lot.broker && (
                     <span className="px-1.5 py-0.5 rounded text-[10px]"
@@ -315,7 +315,7 @@ function PositionCard({
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {lot.pnl != null && (
                     <span className="font-semibold" style={{ color: lotColor }}>
-                      {fmtSign(lot.pnl)}$
+                      {fmtSign(lot.pnl)}{cs}
                     </span>
                   )}
                   <button
@@ -336,6 +336,12 @@ function PositionCard({
 
 // ── Add Form ──────────────────────────────────────────────────────────────────
 
+interface SearchSuggestion {
+  symbol: string;
+  name: string;
+  exchange: string | null;
+}
+
 interface AddFormState {
   symbol: string; name: string; shares: string;
   purchase_price: string; purchase_date: string; broker: string;
@@ -344,20 +350,60 @@ interface AddFormState {
 function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currency, setCurrency] = useState<string>("USD");
+  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
   const [form, setForm] = useState<AddFormState>({
     symbol: "", name: "", shares: "", purchase_price: "",
     purchase_date: new Date().toISOString().slice(0, 10), broker: "",
   });
 
-  async function lookupName(symbol: string) {
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  async function lookupAsset(symbol: string) {
     if (!symbol) return;
     try {
       const res = await fetch(`/api/assets/${symbol.toUpperCase()}`);
       if (res.ok) {
         const d = await res.json();
         if (d.name) setForm(f => ({ ...f, name: d.name }));
+        if (d.currency) setCurrency(d.currency);
       }
     } catch {}
+  }
+
+  function handleSymbolChange(value: string) {
+    setForm(f => ({ ...f, symbol: value }));
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!value.trim()) { setSuggestions([]); setShowSuggestions(false); return; }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(value)}`);
+        if (res.ok) {
+          const data: SearchSuggestion[] = await res.json();
+          setSuggestions(data.slice(0, 6));
+          setShowSuggestions(data.length > 0);
+        }
+      } catch {}
+    }, 250);
+  }
+
+  function selectSuggestion(s: SearchSuggestion) {
+    setForm(f => ({ ...f, symbol: s.symbol, name: s.name }));
+    setSuggestions([]);
+    setShowSuggestions(false);
+    lookupAsset(s.symbol);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -389,6 +435,7 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
     }
   }
 
+  const cs = currSign(currency);
   const field = "w-full rounded-xl px-3 py-2 text-sm text-white border outline-none";
   const fieldStyle = { background: "var(--background)", borderColor: "var(--card-border)" };
 
@@ -396,39 +443,98 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
     <form onSubmit={handleSubmit}
       className="rounded-2xl border p-4 space-y-3"
       style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-      <h3 className="font-semibold text-white">Neue Position</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-white">Neue Position</h3>
+        <button type="button" onClick={onCancel}
+          className="text-xs px-2 py-1 rounded-lg"
+          style={{ color: "var(--muted)", background: "var(--card-border)" }}>
+          ✕
+        </button>
+      </div>
       {error && <p className="text-xs" style={{ color: "#ef4444" }}>{error}</p>}
 
       <div className="grid grid-cols-2 gap-3">
-        <div>
+        {/* Symbol with autocomplete */}
+        <div className="col-span-2" ref={dropdownRef}>
           <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Ticker *</label>
-          <input required className={field} style={fieldStyle} placeholder="AAPL"
-            value={form.symbol} onChange={e => setForm(f => ({ ...f, symbol: e.target.value }))}
-            onBlur={e => lookupName(e.target.value)} />
+          <div className="relative">
+            <input
+              required
+              className={field}
+              style={fieldStyle}
+              placeholder="z.B. AAPL, SAP, MSFT…"
+              autoComplete="off"
+              value={form.symbol}
+              onChange={e => handleSymbolChange(e.target.value)}
+              onBlur={e => {
+                setTimeout(() => setShowSuggestions(false), 150);
+                lookupAsset(e.target.value);
+              }}
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <div
+                className="absolute top-full left-0 right-0 z-50 rounded-xl overflow-hidden shadow-xl mt-1"
+                style={{ background: "var(--card)", border: "1px solid var(--card-border)" }}>
+                {suggestions.map(s => (
+                  <button
+                    key={s.symbol}
+                    type="button"
+                    onMouseDown={() => selectSuggestion(s)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:opacity-80 transition-opacity"
+                    style={{ background: "transparent", borderBottom: "1px solid var(--card-border)" }}>
+                    <div className="min-w-0">
+                      <span className="text-sm font-bold text-white">{s.symbol}</span>
+                      <span className="text-xs ml-2 truncate" style={{ color: "var(--muted)" }}>{s.name}</span>
+                    </div>
+                    {s.exchange && (
+                      <span className="text-[10px] ml-2 shrink-0 px-1.5 py-0.5 rounded"
+                        style={{ background: "var(--card-border)", color: "var(--muted)" }}>
+                        {s.exchange}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-        <div>
+
+        <div className="col-span-2">
           <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Name</label>
           <input className={field} style={fieldStyle} placeholder="Apple Inc."
             value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
         </div>
+
         <div>
           <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Anzahl Aktien *</label>
           <input required type="number" step="any" min="0" className={field} style={fieldStyle}
             placeholder="10" value={form.shares}
             onChange={e => setForm(f => ({ ...f, shares: e.target.value }))} />
         </div>
+
         <div>
-          <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Einstiegskurs ($) *</label>
+          <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>
+            Einstiegskurs ({cs}) *
+            {currency !== "USD" && (
+              <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8" }}>
+                {currency} erkannt
+              </span>
+            )}
+          </label>
           <input required type="number" step="any" min="0" className={field} style={fieldStyle}
-            placeholder="150.00" value={form.purchase_price}
+            placeholder={currency === "EUR" ? "150,00" : "150.00"}
+            value={form.purchase_price}
             onChange={e => setForm(f => ({ ...f, purchase_price: e.target.value }))} />
         </div>
+
         <div>
           <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Kaufdatum *</label>
           <input required type="date" className={field} style={fieldStyle}
             value={form.purchase_date}
             onChange={e => setForm(f => ({ ...f, purchase_date: e.target.value }))} />
         </div>
+
         <div>
           <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Broker (optional)</label>
           <input className={field} style={fieldStyle} placeholder="z.B. Trade Republic"
@@ -436,18 +542,11 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
         </div>
       </div>
 
-      <div className="flex gap-2">
-        <button type="submit" disabled={submitting}
-          className="flex-1 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
-          style={{ background: "var(--primary)", color: "#000" }}>
-          {submitting ? "Speichern…" : "Speichern"}
-        </button>
-        <button type="button" onClick={onCancel}
-          className="px-4 py-2.5 rounded-xl text-sm font-semibold"
-          style={{ background: "var(--card-border)", color: "var(--muted)" }}>
-          Abbrechen
-        </button>
-      </div>
+      <button type="submit" disabled={submitting}
+        className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
+        style={{ background: "var(--primary)", color: "#000" }}>
+        {submitting ? "Speichern…" : "Position speichern"}
+      </button>
     </form>
   );
 }
@@ -462,6 +561,7 @@ export function PortfolioView() {
   const [histMap, setHistMap] = useState<Record<string, number | null>>({});
   const [histLoading, setHistLoading] = useState(false);
   const histAbort = useRef<AbortController | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
 
   async function load() {
     setLoading(true);
@@ -480,7 +580,12 @@ export function PortfolioView() {
 
   useEffect(() => { load(); }, []);
 
-  // Fetch period history for each symbol when period or portfolio data changes
+  useEffect(() => {
+    if (showForm && formRef.current) {
+      formRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [showForm]);
+
   useEffect(() => {
     if (period === "all" || !data?.groups.length) {
       setHistMap({});
@@ -488,7 +593,6 @@ export function PortfolioView() {
       return;
     }
 
-    // Cancel any in-flight request
     histAbort.current?.abort();
     const ctrl = new AbortController();
     histAbort.current = ctrl;
@@ -519,7 +623,6 @@ export function PortfolioView() {
     });
   }, [period, data]);
 
-  // Compute period aggregates
   let ps: PeriodResult | null = null;
   if (period !== "all" && data) {
     const valid = data.groups.filter(g => histMap[g.symbol] != null && g.current_price != null);
@@ -563,23 +666,29 @@ export function PortfolioView() {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-white">Portfolio</h2>
         {!isEmpty && (
-          <button onClick={() => setShowForm(v => !v)}
+          <button
+            onClick={() => setShowForm(v => !v)}
             className="text-xs px-3 py-1.5 rounded-xl font-semibold"
-            style={{ background: "var(--primary)", color: "#000" }}>
-            + Position
+            style={{ background: showForm ? "var(--card-border)" : "var(--primary)", color: showForm ? "var(--muted)" : "#000" }}>
+            {showForm ? "Abbrechen" : "+ Position"}
           </button>
         )}
       </div>
 
-      {/* Period picker */}
-      {!isEmpty && (
-        <PeriodPicker period={period} onChange={p => setPeriod(p)} />
+      {/* Form opens at the top */}
+      {showForm && (
+        <div ref={formRef}>
+          <AddForm
+            onSaved={() => { setShowForm(false); load(); }}
+            onCancel={() => setShowForm(false)}
+          />
+        </div>
       )}
 
-      {/* Summary */}
+      {!isEmpty && <PeriodPicker period={period} onChange={p => setPeriod(p)} />}
+
       {data && !isEmpty && <SummaryCard s={data} period={period} ps={ps} />}
 
-      {/* Chart */}
       {data && !isEmpty && (
         <div className="rounded-2xl border overflow-hidden"
           style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
@@ -590,20 +699,10 @@ export function PortfolioView() {
         </div>
       )}
 
-      {/* Correlation Matrix */}
       {data && data.groups.length >= 2 && (
         <CorrelationMatrix groups={data.groups} />
       )}
 
-      {/* Add Form */}
-      {showForm && (
-        <AddForm
-          onSaved={() => { setShowForm(false); load(); }}
-          onCancel={() => setShowForm(false)}
-        />
-      )}
-
-      {/* Positions */}
       {data && data.groups.map(group => (
         <PositionCard
           key={group.symbol}
@@ -615,7 +714,6 @@ export function PortfolioView() {
         />
       ))}
 
-      {/* Empty state */}
       {isEmpty && !showForm && (
         <div className="rounded-2xl border p-8 text-center space-y-3"
           style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
@@ -633,10 +731,12 @@ export function PortfolioView() {
       )}
 
       {isEmpty && showForm && (
-        <AddForm
-          onSaved={() => { setShowForm(false); load(); }}
-          onCancel={() => setShowForm(false)}
-        />
+        <div ref={formRef}>
+          <AddForm
+            onSaved={() => { setShowForm(false); load(); }}
+            onCancel={() => setShowForm(false)}
+          />
+        </div>
       )}
     </div>
   );
