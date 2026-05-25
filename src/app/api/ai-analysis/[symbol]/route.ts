@@ -485,6 +485,7 @@ async function runFactCheckAgent(
   synthesis: SynthesisResult,
   analystData: AnalystData | null,
   googleNews: NewsItemWithDesc[],
+  snapshot: AssetSnapshot,
 ): Promise<{ result: SynthesisResult; entry: ProtocolEntry; findings: StructuredFinding[] }> {
   const client = getClient();
 
@@ -517,14 +518,30 @@ Bull-Case: ${synthesis.bull_case.join(" | ")}
 Bear-Case: ${synthesis.bear_case.join(" | ")}
 Wachstumsausblick: ${synthesis.growth_outlook}`;
 
-  const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren. Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit validem JSON.`;
+  const authFacts = [
+    `Aktueller Kurs: ${snapshot.price?.toFixed(2) ?? "N/A"} ${snapshot.currency ?? "USD"} (live von Finance API — autoritativ)`,
+    snapshot.moving_average_50 != null ? `50-Tage-MA: ${snapshot.moving_average_50.toFixed(2)}` : null,
+    snapshot.moving_average_200 != null ? `200-Tage-MA: ${snapshot.moving_average_200.toFixed(2)}` : null,
+    snapshot.pe_ratio != null ? `KGV: ${snapshot.pe_ratio.toFixed(1)}` : null,
+    snapshot.revenue_growth != null ? `Umsatzwachstum (TTM, YoY): ${(snapshot.revenue_growth * 100).toFixed(1)}%` : null,
+  ].filter(Boolean).join("\n");
+
+  const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren. Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit validem JSON.
+
+WICHTIGE REGELN:
+1. AUTORITATIVE FAKTEN (live von Finance API) dürfen NIEMALS durch Preisangaben aus Nachrichtenartikeln überschrieben werden. Artikel berichten historische Kursstände — der aktuelle Kurs steht im Abschnitt AUTORITATIVE MARKTDATEN.
+2. Prozentzahlen in Artikeln (z.B. "Rally vom März-Tief") sind relative historische Bewegungen, keine aktuellen MA-Abstände — nur korrigieren wenn die Analyse explizit einen falschen MA-Abstand berechnet.
+3. Umsatzwachstum (TTM, YoY) ist korrekt wenn es dem gelieferten Wert entspricht — nicht als Fehler werten weil einzelne Quartale besser liefen.`;
 
   const userContent = `Prüfe diese KI-Analyse für ${symbol} auf Faktengenauigkeit.
 
-VERFÜGBARE FAKTEN:
+AUTORITATIVE MARKTDATEN (Finance API, live — Vorrang vor Nachrichtenartikeln):
+${authFacts}
+
+ANALYSTEN-KONSENS (Zukunftsprognosen):
 ${analystSection}
 
-AKTUELLE NACHRICHTEN (mit URLs und Auszügen):
+AKTUELLE NACHRICHTEN (mit URLs und Auszügen — historische Preisangaben darin sind nicht der aktuelle Kurs):
 ${newsSection}
 
 ZU PRÜFENDE ANALYSE:
@@ -1044,7 +1061,7 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
         detail: `Synthese: ${rawResult.recommendation} · Conviction ${cappedConviction}/10 · Adaptive Thinking aktiv${capNote}`,
       });
 
-      const { result: verified, entry: veraEntry, findings } = await runFactCheckAgent(symbol, rawResult, analystData, googleNews);
+      const { result: verified, entry: veraEntry, findings } = await runFactCheckAgent(symbol, rawResult, analystData, googleNews, snapshot);
       protocol.push(veraEntry);
 
       return {
@@ -1114,7 +1131,7 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
   const capNoteFb = rawSynthesisFb.conviction > confidenceCap ? ` · Conviction ${rawSynthesisFb.conviction}→${cappedFb.conviction} (Diana-Cap)` : "";
   protocol.push({ agent: "Opus", status: "ok", detail: `Synthese (Fallback): ${cappedFb.recommendation} · Conviction ${cappedFb.conviction}/10${capNoteFb}` });
   const rawSynthesis = cappedFb;
-  const { result: synthesis, entry: veraEntry, findings } = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews);
+  const { result: synthesis, entry: veraEntry, findings } = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews, snapshot);
   protocol.push(veraEntry);
   return { ...synthesis, price_levels: synthesis.price_levels ?? null, fundamental: fb_f, sentiment: fb_s, market_intel: fb_m, protocol, findings };
 }
