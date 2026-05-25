@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { PortfolioSummary, PortfolioGroup } from "@/app/api/portfolio/route";
+import { PortfolioChart } from "./PortfolioChart";
 
 function fmt(n: number, dec = 2) { return n.toFixed(dec); }
 function fmtSign(n: number, dec = 2) { return (n >= 0 ? "+" : "") + n.toFixed(dec); }
@@ -576,6 +577,17 @@ export function PortfolioView() {
 
       {/* Summary */}
       {data && !isEmpty && <SummaryCard s={data} period={period} ps={ps} />}
+
+      {/* Chart */}
+      {data && !isEmpty && (
+        <div className="rounded-2xl border overflow-hidden"
+          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+          <p className="text-xs font-semibold px-4 pt-3 pb-1" style={{ color: "var(--muted)" }}>
+            Portfoliowert
+          </p>
+          <PortfolioChart groups={data.groups} totalInvested={data.total_invested} period={period} />
+        </div>
+      )}
 
       {/* Add Form */}
       {showForm && (

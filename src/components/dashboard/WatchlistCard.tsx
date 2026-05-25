@@ -10,7 +10,15 @@ import type { SignalType } from "@/types/finance";
 interface WatchlistCardProps {
   item: WatchlistItem;
   onRemove: (id: string) => void;
+  onDataLoaded?: (symbol: string, score: number, changePct: number | null) => void;
 }
+
+const SIGNAL_BG: Record<string, string> = {
+  "Kaufen":           "rgba(34,197,94,0.07)",
+  "Leicht kaufen":    "rgba(34,197,94,0.04)",
+  "Leicht verkaufen": "rgba(239,68,68,0.04)",
+  "Verkaufen":        "rgba(239,68,68,0.07)",
+};
 
 interface QuickData {
   price: number | null;
@@ -64,7 +72,7 @@ function CompanyLogo({ symbol }: { symbol: string }) {
   );
 }
 
-export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
+export function WatchlistCard({ item, onRemove, onDataLoaded }: WatchlistCardProps) {
   const [data, setData] = useState<QuickData | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -98,15 +106,18 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
             ? ((currentPrice - prevClose) / prevClose) * 100
             : (asset?.price_change_pct ?? null);
 
+        const totalScore = score?.total_score ?? 50;
+        const signal = score?.signal ?? "Neutral";
         setData({
           price: currentPrice,
           currency: asset?.currency ?? null,
-          signal: score?.signal ?? "Neutral",
-          totalScore: score?.total_score ?? 50,
+          signal,
+          totalScore,
           priceChangePct,
           sparkline,
           name: asset?.name ?? item.name ?? null,
         });
+        onDataLoaded?.(item.symbol, totalScore, priceChangePct);
       } catch {
         if (!cancelled) setData(null);
       } finally {
@@ -120,12 +131,13 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
 
   const isUp = (data?.priceChangePct ?? 0) >= 0;
   const accentColor = !loading && data ? (isUp ? "#22c55e" : "#ef4444") : "transparent";
+  const cardBg = !loading && data ? (SIGNAL_BG[data.signal] ?? "var(--card)") : "var(--card)";
 
   return (
     <div
       className="rounded-2xl overflow-hidden"
       style={{
-        background: "var(--card)",
+        background: cardBg,
         border: "1px solid var(--card-border)",
         borderLeftWidth: "3px",
         borderLeftColor: accentColor,

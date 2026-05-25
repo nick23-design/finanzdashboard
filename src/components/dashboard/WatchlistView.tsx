@@ -40,6 +40,13 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [addedSymbol, setAddedSymbol] = useState<string | null>(null);
   const [triggeredCount, setTriggeredCount] = useState(0);
+  type SortBy = "default" | "az" | "perf" | "score";
+  const [sortBy, setSortBy] = useState<SortBy>("default");
+  const [dataMap, setDataMap] = useState<Record<string, { score: number; changePct: number | null }>>({});
+
+  function handleDataLoaded(symbol: string, score: number, changePct: number | null) {
+    setDataMap(prev => ({ ...prev, [symbol]: { score, changePct } }));
+  }
 
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -143,6 +150,21 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
   const alreadyInList = (symbol: string) => items.some(i => i.symbol === symbol);
   const hasDropdown = showSuggestions && (suggestions.length > 0 || liveResults.length > 0 || liveLoading);
 
+  const sortedItems = [...items].sort((a, b) => {
+    if (sortBy === "az") return a.symbol.localeCompare(b.symbol);
+    if (sortBy === "perf") {
+      const pa = dataMap[a.symbol]?.changePct ?? -Infinity;
+      const pb = dataMap[b.symbol]?.changePct ?? -Infinity;
+      return pb - pa;
+    }
+    if (sortBy === "score") {
+      const sa = dataMap[a.symbol]?.score ?? 0;
+      const sb = dataMap[b.symbol]?.score ?? 0;
+      return sb - sa;
+    }
+    return 0;
+  });
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -167,6 +189,27 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
           </span>
         </div>
       </div>
+
+      {/* Sort chips */}
+      {items.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px]" style={{ color: "var(--muted)" }}>Sortierung:</span>
+          {(["default", "az", "perf", "score"] as const).map((opt) => {
+            const label = { default: "Standard", az: "A–Z", perf: "Performance", score: "Score" }[opt];
+            return (
+              <button key={opt} onClick={() => setSortBy(opt)}
+                className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                style={{
+                  background: sortBy === opt ? "var(--primary)" : "var(--card)",
+                  color: sortBy === opt ? "#000" : "var(--muted)",
+                  border: `1px solid ${sortBy === opt ? "transparent" : "var(--card-border)"}`,
+                }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Marktindizes */}
       <MarketIndexBar />
@@ -376,8 +419,8 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
-          {items.map(item => (
-            <WatchlistCard key={item.id} item={item} onRemove={handleRemove} />
+          {sortedItems.map(item => (
+            <WatchlistCard key={item.id} item={item} onRemove={handleRemove} onDataLoaded={handleDataLoaded} />
           ))}
         </div>
       )}
