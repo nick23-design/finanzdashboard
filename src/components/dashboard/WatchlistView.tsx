@@ -6,7 +6,7 @@ import { WatchlistCard } from "./WatchlistCard";
 import { CardSkeleton } from "@/components/ui/Skeleton";
 import { searchStocks, STOCKS, type StockEntry } from "@/lib/stocks-list";
 import Link from "next/link";
-import { Search, X, Plus, Globe } from "lucide-react";
+import { Search, X, Plus, Globe, Bell } from "lucide-react";
 import { HotPickCard } from "./HotPickCard";
 import { MorningBriefingCard } from "./MorningBriefingCard";
 import { MarketIndexBar } from "./MarketIndexBar";
@@ -138,11 +138,20 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold text-white">Watchlist</h2>
-        <span
-          className="text-xs px-2 py-1 rounded-full font-medium"
-          style={{ background: "var(--card-border)", color: "var(--muted)" }}>
-          {items.length} Aktie{items.length !== 1 ? "n" : ""}
-        </span>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/dashboard/alerts"
+            className="flex items-center justify-center w-8 h-8 rounded-full transition-colors"
+            style={{ background: "var(--card-border)", color: "var(--muted)" }}
+            title="Alarm-Übersicht">
+            <Bell size={15} />
+          </Link>
+          <span
+            className="text-xs px-2 py-1 rounded-full font-medium"
+            style={{ background: "var(--card-border)", color: "var(--muted)" }}>
+            {items.length} Aktie{items.length !== 1 ? "n" : ""}
+          </span>
+        </div>
       </div>
 
       {/* Marktindizes */}
