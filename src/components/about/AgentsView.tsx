@@ -234,7 +234,7 @@ const AGENTS: AgentDoc[] = [
     pipeline: "Schritt 5 von 5 — Fact-Check nach Opus-Synthese",
     inputs: [
       "Draft-Analyse von Opus (Empfehlung, Summary, Bull/Bear-Case, Wachstumsausblick)",
-      "Autoritative Marktdaten (live von Finance API): Kurs, MA50, MA200, KGV, Umsatzwachstum — haben Vorrang vor Artikelangaben",
+      "Autoritative Marktdaten (live von Finance API): Kurs, MA50, MA200, KGV, FCF, Debt/Equity, Marktkapitalisierung, Umsatzwachstum — haben Vorrang vor Artikelangaben und gelten als per Definition belegt",
       "Analysten-Konsens (Kursziele, Buy/Hold/Sell-Verteilung)",
       "Bis zu 10 News mit Jina-Excerpts — jeder Artikel mit Altersangabe '(vor X Tagen)'",
       "URL-Whitelist für fetch_article Tool (nur URLs aus den bereits abgerufenen News)",

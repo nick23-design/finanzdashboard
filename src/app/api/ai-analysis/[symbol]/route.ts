@@ -529,18 +529,28 @@ Bull-Case: ${synthesis.bull_case.join(" | ")}
 Bear-Case: ${synthesis.bear_case.join(" | ")}
 Wachstumsausblick: ${synthesis.growth_outlook}`;
 
+  const fmtBigAuth = (n: number | null) => {
+    if (n == null) return null;
+    if (Math.abs(n) >= 1e12) return `${(n / 1e12).toFixed(2)} T`;
+    if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(2)} Mrd.`;
+    return `${(n / 1e6).toFixed(2)} Mio.`;
+  };
+
   const authFacts = [
     `Aktueller Kurs: ${snapshot.price?.toFixed(2) ?? "N/A"} ${snapshot.currency ?? "USD"} (live von Finance API — autoritativ)`,
     snapshot.moving_average_50 != null ? `50-Tage-MA: ${snapshot.moving_average_50.toFixed(2)}` : null,
     snapshot.moving_average_200 != null ? `200-Tage-MA: ${snapshot.moving_average_200.toFixed(2)}` : null,
     snapshot.pe_ratio != null ? `KGV: ${snapshot.pe_ratio.toFixed(1)}` : null,
     snapshot.revenue_growth != null ? `Umsatzwachstum (TTM, YoY): ${(snapshot.revenue_growth * 100).toFixed(1)}%` : null,
+    snapshot.free_cashflow != null ? `Free Cashflow: ${fmtBigAuth(snapshot.free_cashflow)} ${snapshot.currency ?? "USD"}` : null,
+    snapshot.debt_to_equity != null ? `Debt/Equity: ${snapshot.debt_to_equity.toFixed(2)}` : null,
+    snapshot.market_cap != null ? `Marktkapitalisierung: ${fmtBigAuth(snapshot.market_cap)} ${snapshot.currency ?? "USD"}` : null,
   ].filter(Boolean).join("\n");
 
   const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren. Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit validem JSON.
 
 REGELN — Autoritative Daten & Artikel-Freshness:
-1. AUTORITATIVE MARKTDATEN (Finance API, live) haben immer Vorrang — Kurs, MA50, MA200, KGV und Umsatzwachstum aus diesem Abschnitt dürfen NICHT durch Artikelangaben überschrieben werden. Nachrichtenartikel berichten Kursstände zum Zeitpunkt ihrer Veröffentlichung, nicht den aktuellen Kurs.
+1. AUTORITATIVE MARKTDATEN (Finance API, live) haben immer Vorrang — alle Werte in diesem Abschnitt (Kurs, MAs, KGV, FCF, D/E, Marktkapitalisierung, Umsatzwachstum) dürfen NICHT durch Artikelangaben überschrieben oder als "unbelegt" markiert werden. Sie stammen direkt von der Finance API und sind per Definition belegt.
 2. Altersbasierte Vertrauensregeln — eine Korrektur ist nur zulässig wenn der Beleg-Artikel aktuell genug ist:
    - Kurse, Marktpreise, aktuelle Kennzahlen: nur Artikel < 2 Tage (älter = veraltet, keine Korrektur)
    - Quartalsergebnisse, Guidance, Prognosen: nur Artikel < 14 Tage
