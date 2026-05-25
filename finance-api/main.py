@@ -33,7 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
+TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,30}$")
 
 
 class AssetResponse(BaseModel):
