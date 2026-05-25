@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { AIAnalysisResult, PriceLevels, ProtocolEntry } from "@/app/api/ai-analysis/[symbol]/route";
+import type { AIAnalysisResult, DianaQualityReport, PriceLevels, ProtocolEntry } from "@/app/api/ai-analysis/[symbol]/route";
 import { AgentAvatarGroup } from "@/components/ui/AgentAvatar";
 
 interface Props {
@@ -96,6 +96,28 @@ function ConvictionBar({ value }: { value: number }) {
   );
 }
 
+function DataQualityBar({ dq }: { dq: DianaQualityReport }) {
+  const pct = dq.completeness_score;
+  const color = pct >= 70 ? "#22c55e" : pct >= 45 ? "#f59e0b" : "#ef4444";
+  const label = pct >= 70 ? "Gut" : pct >= 45 ? "Lückenhaft" : "Schwach";
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span style={{ color: "var(--muted)" }}>Datenbasis</span>
+      <div className="flex-1 rounded-full h-1.5 overflow-hidden" style={{ background: "var(--card-border)" }}>
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+      </div>
+      <span className="font-semibold" style={{ color }}>{pct}/100</span>
+      <span className="text-[10px]" style={{ color: "var(--muted)" }}>{label}</span>
+      {dq.analysis_confidence_cap < 10 && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full"
+          style={{ background: color + "22", color }}>
+          Cap {dq.analysis_confidence_cap}/10
+        </span>
+      )}
+    </div>
+  );
+}
+
 const PROTOCOL_STATUS: Record<ProtocolEntry["status"], { icon: string; color: string }> = {
   ok:      { icon: "✓", color: "#22c55e" },
   warning: { icon: "⚠", color: "#f59e0b" },
@@ -184,6 +206,7 @@ export function AIAnalysisCard({ analysis }: Props) {
           </span>
         </div>
         <ConvictionBar value={analysis.conviction} />
+        {analysis.data_quality && <DataQualityBar dq={analysis.data_quality} />}
       </div>
 
       {/* Price Levels */}
@@ -288,7 +311,7 @@ export function AIAnalysisCard({ analysis }: Props) {
       {/* Footer – KI-Team */}
       <div className="pt-2 border-t" style={{ borderColor: "var(--card-border)" }}>
         <AgentAvatarGroup
-          agents={["opus", "felix", "nina", "marco", "vera"]}
+          agents={["diana", "opus", "felix", "nina", "marco", "vera"]}
           size="xs"
           label={`Analysiert von Opus & Team · ${dateStr}${analysis.from_cache ? " · Gecacht" : ""}`}
         />

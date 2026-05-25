@@ -206,6 +206,14 @@ export interface ProtocolEntry {
   detail: string;
 }
 
+export interface DianaQualityReport {
+  completeness_score: number;
+  stale_fields: string[];
+  missing_fields: string[];
+  warnings: string[];
+  analysis_confidence_cap: number;
+}
+
 interface MarketIntelAnalysis {
   insider_signal: "bullish" | "neutral" | "bearish";
   institutional_trend: "accumulating" | "stable" | "reducing";
@@ -219,6 +227,7 @@ export interface AIAnalysisResult extends SynthesisResult {
   sentiment: SentimentAnalysis;
   market_intel: MarketIntelAnalysis | null;
   price_levels: PriceLevels | null;
+  data_quality: DianaQualityReport | null;
   analyzed_at: string;
   from_cache: boolean;
   protocol: ProtocolEntry[];
@@ -774,6 +783,71 @@ async function saveFactCheckFindings(
   } catch { /* Non-critical */ }
 }
 
+// --- Diana · Datenqualitäts-Modul ---
+
+function runDianaCheck(
+  snapshot: AssetSnapshot,
+  googleNews: NewsItemWithDesc[],
+  edgarFacts: EdgarFacts | null,
+  analystData: AnalystData | null,
+  peerContext: string,
+): DianaQualityReport {
+  let score = 100;
+  const missing: string[] = [];
+  const stale: string[] = [];
+  const warnings: string[] = [];
+
+  if (snapshot.price == null) { score -= 30; missing.push("Aktueller Kurs"); }
+
+  if (snapshot.fetched_at) {
+    const ageHours = (Date.now() - new Date(snapshot.fetched_at).getTime()) / 3600000;
+    if (ageHours > 48) { score -= 10; stale.push(`Kursdaten (${Math.round(ageHours)}h alt)`); }
+  }
+
+  const fundamentalFields: [string, keyof AssetSnapshot, number][] = [
+    ["KGV", "pe_ratio", 5],
+    ["Marktkapitalisierung", "market_cap", 5],
+    ["Umsatzwachstum", "revenue_growth", 5],
+    ["Free Cashflow", "free_cashflow", 5],
+    ["Debt/Equity", "debt_to_equity", 3],
+    ["RSI", "rsi", 3],
+    ["MA50", "moving_average_50", 2],
+    ["MA200", "moving_average_200", 2],
+  ];
+  for (const [label, key, pts] of fundamentalFields) {
+    if (snapshot[key] == null) { score -= pts; missing.push(label); }
+  }
+
+  if (!edgarFacts || edgarFacts.revenue.length === 0) {
+    score -= 15; missing.push("EDGAR-Quartalsdaten");
+  } else if (edgarFacts.revenue.length < 4) {
+    score -= 5; warnings.push(`Nur ${edgarFacts.revenue.length} EDGAR-Quartale`);
+  }
+
+  if (googleNews.length === 0) {
+    score -= 10; missing.push("Aktuelle News");
+  } else {
+    const withExcerpts = googleNews.filter(n => n.description).length;
+    if (withExcerpts < 2) {
+      score -= 5; warnings.push(`Nur ${withExcerpts}/${googleNews.length} News mit Auszug`);
+    }
+  }
+
+  const hasAnalystData = analystData && (
+    analystData.mean_target != null ||
+    analystData.strong_buy + analystData.buy + analystData.hold + analystData.sell + analystData.strong_sell > 0
+  );
+  if (!hasAnalystData) { score -= 10; missing.push("Analysten-Konsens"); }
+
+  if (!peerContext) { score -= 5; warnings.push("Keine Peer-Vergleichsdaten"); }
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  const cap = score >= 85 ? 10 : score >= 70 ? 8 : score >= 55 ? 7 : score >= 40 ? 6 : score >= 25 ? 5 : 4;
+
+  return { completeness_score: score, missing_fields: missing, stale_fields: stale, warnings, analysis_confidence_cap: cap };
+}
+
 // --- Orchestrator ---
 
 async function runOrchestrator(
@@ -785,6 +859,7 @@ async function runOrchestrator(
   trends: TrendPoint[],
   institutional: InstitutionalData | null,
   analystData: AnalystData | null,
+  confidenceCap: number,
   peerContext?: string,
 ): Promise<OrchestratorResult> {
   const client = getClient();
@@ -876,7 +951,9 @@ Vorgehen: Starte mit Fundamental- und Sentiment-Analyse. Rufe Markt-Intelligenz 
 - Nina (analyze_sentiment): Sentiment-Analystin
 - Marco (analyze_market_intelligence): Markt-Intelligence-Spezialist
 
-Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und entscheidest selbst welche Analysen du benötigst. Erstelle faktenbasierte, präzise Empfehlungen auf Deutsch. Beziehe dich ausschließlich auf bereitgestellte Daten.${guardrails ? "\n\n" + guardrails : ""}`;
+Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und entscheidest selbst welche Analysen du benötigst. Erstelle faktenbasierte, präzise Empfehlungen auf Deutsch. Beziehe dich ausschließlich auf bereitgestellte Daten.${guardrails ? "\n\n" + guardrails : ""}
+
+DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confidenceCap}/10. Vergib keine höhere Conviction — die Datenbasis ist entsprechend bewertet.`;
 
   for (let i = 0; i < 10; i++) {
     const response = await client.messages.create({
@@ -922,9 +999,12 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
         protocol.push({ agent: "Opus", status: "warning", detail: "complete_analysis Schema-Validierung fehlgeschlagen — Fallback-Werte genutzt" });
       }
 
+      const rawConviction = clampConviction(inp.conviction);
+      const cappedConviction = Math.min(rawConviction, confidenceCap);
+
       const rawResult: SynthesisResult = {
         recommendation: inp.recommendation,
-        conviction: clampConviction(inp.conviction),
+        conviction: cappedConviction,
         summary: inp.summary,
         bull_case: inp.bull_case ?? [],
         bear_case: inp.bear_case ?? [],
@@ -935,10 +1015,11 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
         } : null,
       };
 
+      const capNote = rawConviction > confidenceCap ? ` · Conviction ${rawConviction}→${cappedConviction} (Diana-Cap)` : "";
       protocol.push({
         agent: "Opus",
         status: "ok",
-        detail: `Synthese: ${rawResult.recommendation} · Conviction ${rawResult.conviction}/10 · Adaptive Thinking aktiv`,
+        detail: `Synthese: ${rawResult.recommendation} · Conviction ${cappedConviction}/10 · Adaptive Thinking aktiv${capNote}`,
       });
 
       const { result: verified, entry: veraEntry, findings } = await runFactCheckAgent(symbol, rawResult, analystData, googleNews);
@@ -1006,8 +1087,11 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
     const noData = fb_m.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar";
     protocol.push({ agent: "Marco", status: noData ? "skipped" : "ok", detail: noData ? "Keine Daten verfügbar" : `Insider: ${fb_m.insider_signal} (Fallback)` });
   }
-  const rawSynthesis = await runSynthesisAgent(symbol, snapshot, fb_f, fb_s, fb_m, analystData);
-  protocol.push({ agent: "Opus", status: "ok", detail: `Synthese (Fallback): ${rawSynthesis.recommendation} · Conviction ${rawSynthesis.conviction}/10` });
+  const rawSynthesisFb = await runSynthesisAgent(symbol, snapshot, fb_f, fb_s, fb_m, analystData);
+  const cappedFb = { ...rawSynthesisFb, conviction: Math.min(rawSynthesisFb.conviction, confidenceCap) };
+  const capNoteFb = rawSynthesisFb.conviction > confidenceCap ? ` · Conviction ${rawSynthesisFb.conviction}→${cappedFb.conviction} (Diana-Cap)` : "";
+  protocol.push({ agent: "Opus", status: "ok", detail: `Synthese (Fallback): ${cappedFb.recommendation} · Conviction ${cappedFb.conviction}/10${capNoteFb}` });
+  const rawSynthesis = cappedFb;
   const { result: synthesis, entry: veraEntry, findings } = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews);
   protocol.push(veraEntry);
   return { ...synthesis, price_levels: synthesis.price_levels ?? null, fundamental: fb_f, sentiment: fb_s, market_intel: fb_m, protocol, findings };
@@ -1052,6 +1136,7 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
       },
       market_intel: (data.extra_data as Record<string, unknown>)?.market_intel as MarketIntelAnalysis | null ?? null,
       price_levels: (data.extra_data as Record<string, unknown>)?.price_levels as PriceLevels | null ?? null,
+      data_quality: (data.extra_data as Record<string, unknown>)?.data_quality as DianaQualityReport | null ?? null,
       protocol: (data.extra_data as Record<string, unknown>)?.protocol as ProtocolEntry[] ?? [],
       analyzed_at: data.analyzed_at,
       from_cache: true,
@@ -1105,6 +1190,7 @@ async function saveAnalysis(result: AIAnalysisResult): Promise<string | null> {
       extra_data: ({
         ...(result.market_intel ? { market_intel: result.market_intel } : {}),
         ...(result.price_levels ? { price_levels: result.price_levels } : {}),
+        ...(result.data_quality ? { data_quality: result.data_quality } : {}),
         protocol: result.protocol,
       }) as unknown as import("@/types/database").Json,
     };
@@ -1188,8 +1274,23 @@ export async function POST(
     const googleNewsEnriched = await enrichWithDescriptions(googleNews).catch(() => googleNews);
 
     const peerContext = await fetchPeerContext(symbol).catch(() => "");
+
+    // Diana — Datenqualitäts-Check (regelbasiert, kein LLM)
+    const diana = runDianaCheck(snapshot, googleNewsEnriched, edgarFacts, analystData, peerContext);
+    const dianaEntry: ProtocolEntry = {
+      agent: "Diana",
+      status: diana.completeness_score >= 70 ? "ok" : "warning",
+      detail: [
+        `Datenbasis ${diana.completeness_score}/100`,
+        `Cap ${diana.analysis_confidence_cap}/10`,
+        ...(diana.missing_fields.length ? [`Fehlend: ${diana.missing_fields.slice(0, 4).join(", ")}`] : []),
+        ...(diana.stale_fields.length ? [`Veraltet: ${diana.stale_fields.join(", ")}`] : []),
+        ...(diana.warnings.length ? diana.warnings.slice(0, 2) : []),
+      ].join(" · "),
+    };
+
     const orchestrated = await runOrchestrator(
-      symbol, snapshot, googleNewsEnriched, edgarFacts, insiderTrades, trends, institutional, analystData, peerContext,
+      symbol, snapshot, googleNewsEnriched, edgarFacts, insiderTrades, trends, institutional, analystData, diana.analysis_confidence_cap, peerContext,
     );
 
     const result: AIAnalysisResult = {
@@ -1204,7 +1305,8 @@ export async function POST(
       sentiment: orchestrated.sentiment,
       market_intel: orchestrated.market_intel,
       price_levels: orchestrated.price_levels,
-      protocol: orchestrated.protocol,
+      data_quality: diana,
+      protocol: [dianaEntry, ...orchestrated.protocol],
       analyzed_at: new Date().toISOString(),
       from_cache: false,
     };
