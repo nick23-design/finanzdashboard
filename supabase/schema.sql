@@ -17,10 +17,12 @@ create table if not exists public.profiles (
 
 alter table public.profiles enable row level security;
 
+drop policy if exists "Users can read own profile" on public.profiles;
 create policy "Users can read own profile"
   on public.profiles for select
   using (auth.uid() = id);
 
+drop policy if exists "Users can update own profile" on public.profiles;
 create policy "Users can update own profile"
   on public.profiles for update
   using (auth.uid() = id);
@@ -53,14 +55,17 @@ create table if not exists public.watchlist_items (
 
 alter table public.watchlist_items enable row level security;
 
+drop policy if exists "Users can read own watchlist" on public.watchlist_items;
 create policy "Users can read own watchlist"
   on public.watchlist_items for select
   using (auth.uid() = user_id);
 
+drop policy if exists "Users can insert own watchlist items" on public.watchlist_items;
 create policy "Users can insert own watchlist items"
   on public.watchlist_items for insert
   with check (auth.uid() = user_id);
 
+drop policy if exists "Users can delete own watchlist items" on public.watchlist_items;
 create policy "Users can delete own watchlist items"
   on public.watchlist_items for delete
   using (auth.uid() = user_id);
@@ -91,11 +96,13 @@ create table if not exists public.asset_snapshots (
 
 alter table public.asset_snapshots enable row level security;
 
+drop policy if exists "Authenticated users can read snapshots" on public.asset_snapshots;
 create policy "Authenticated users can read snapshots"
   on public.asset_snapshots for select
   to authenticated
   using (true);
 
+drop policy if exists "Authenticated users can insert snapshots" on public.asset_snapshots;
 create policy "Authenticated users can insert snapshots"
   on public.asset_snapshots for insert
   to authenticated
@@ -126,11 +133,13 @@ create table if not exists public.analysis_scores (
 
 alter table public.analysis_scores enable row level security;
 
+drop policy if exists "Authenticated users can read scores" on public.analysis_scores;
 create policy "Authenticated users can read scores"
   on public.analysis_scores for select
   to authenticated
   using (true);
 
+drop policy if exists "Authenticated users can insert scores" on public.analysis_scores;
 create policy "Authenticated users can insert scores"
   on public.analysis_scores for insert
   to authenticated
@@ -167,6 +176,7 @@ create index if not exists ai_analyses_symbol_analyzed_at
 
 alter table public.ai_analyses enable row level security;
 
+drop policy if exists "Allow authenticated" on public.ai_analyses;
 create policy "Allow authenticated"
   on public.ai_analyses for all
   to authenticated
@@ -199,6 +209,7 @@ create index if not exists fact_check_findings_issue_type
 
 alter table public.fact_check_findings enable row level security;
 
+drop policy if exists "Allow authenticated" on public.fact_check_findings;
 create policy "Allow authenticated"
   on public.fact_check_findings for all
   to authenticated
@@ -231,6 +242,7 @@ create index if not exists analysis_outcomes_symbol
 
 alter table public.analysis_outcomes enable row level security;
 
+drop policy if exists "Allow authenticated" on public.analysis_outcomes;
 create policy "Allow authenticated"
   on public.analysis_outcomes for all
   to authenticated
@@ -256,6 +268,7 @@ create index if not exists portfolio_positions_user_id_idx
 
 alter table public.portfolio_positions enable row level security;
 
+drop policy if exists "Users can manage own portfolio" on public.portfolio_positions;
 create policy "Users can manage own portfolio"
   on public.portfolio_positions for all
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -282,6 +295,7 @@ create index if not exists price_alerts_triggered_idx
 
 alter table public.price_alerts enable row level security;
 
+drop policy if exists "Users can manage own alerts" on public.price_alerts;
 create policy "Users can manage own alerts"
   on public.price_alerts for all
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -303,6 +317,7 @@ create index if not exists push_subscriptions_user_id_idx
 
 alter table public.push_subscriptions enable row level security;
 
+drop policy if exists "Users can manage own push subscriptions" on public.push_subscriptions;
 create policy "Users can manage own push subscriptions"
   on public.push_subscriptions for all
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -325,10 +340,12 @@ create index if not exists morning_briefings_user_generated_idx
 
 alter table public.morning_briefings enable row level security;
 
+drop policy if exists "Users can read own briefings" on public.morning_briefings;
 create policy "Users can read own briefings"
   on public.morning_briefings for select
   using (auth.uid() = user_id);
 
+drop policy if exists "Service role can insert briefings" on public.morning_briefings;
 create policy "Service role can insert briefings"
   on public.morning_briefings for insert
   with check (true);
@@ -353,10 +370,12 @@ create index if not exists hot_picks_user_created_idx
 
 alter table public.hot_picks enable row level security;
 
+drop policy if exists "Users can read own hot picks" on public.hot_picks;
 create policy "Users can read own hot picks"
   on public.hot_picks for select
   using (auth.uid() = user_id);
 
+drop policy if exists "Authenticated users can insert hot picks" on public.hot_picks;
 create policy "Authenticated users can insert hot picks"
   on public.hot_picks for insert
   to authenticated
@@ -383,11 +402,13 @@ create index if not exists agent_daily_picks_created_idx
 
 alter table public.agent_daily_picks enable row level security;
 
+drop policy if exists "Authenticated users can read agent picks" on public.agent_daily_picks;
 create policy "Authenticated users can read agent picks"
   on public.agent_daily_picks for select
   to authenticated
   using (true);
 
+drop policy if exists "Service role can insert agent picks" on public.agent_daily_picks;
 create policy "Service role can insert agent picks"
   on public.agent_daily_picks for insert
   with check (true);
@@ -414,10 +435,12 @@ create index if not exists nh_select_daily_symbol_idx
 
 alter table public.nh_select_daily enable row level security;
 
+drop policy if exists "Public read access" on public.nh_select_daily;
 create policy "Public read access"
   on public.nh_select_daily for select
   using (true);
 
+drop policy if exists "Service role can insert" on public.nh_select_daily;
 create policy "Service role can insert"
   on public.nh_select_daily for insert
   with check (true);
@@ -443,6 +466,7 @@ create index if not exists radar_signals_symbol_idx
 
 alter table public.radar_signals enable row level security;
 
+drop policy if exists "Service role full access" on public.radar_signals;
 create policy "Service role full access"
   on public.radar_signals for all
   with check (true);
