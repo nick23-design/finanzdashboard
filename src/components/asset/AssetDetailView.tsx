@@ -337,10 +337,8 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         setLoading(true);
         setError(null);
 
-        const [assetRes, scoreRes] = await Promise.all([
-          fetch(`/api/assets/${symbol}`),
-          fetch(`/api/analyze/${symbol}`, { method: "POST" }),
-        ]);
+        // Assets first — saves snapshot to Supabase cache
+        const assetRes = await fetch(`/api/assets/${symbol}`);
 
         fetchEarningsCalendar(symbol).then(e => { if (e) setEarnings(e); }).catch(() => null);
 
@@ -352,16 +350,19 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         }
 
         const assetData = await assetRes.json();
-        const scoreData = scoreRes.ok ? await scoreRes.json() : null;
-
         setAsset(assetData);
+        setLoading(false);
+
+        // Score after — snapshot is now cached, avoids hitting sleeping Render
+        const scoreRes = await fetch(`/api/analyze/${symbol}`, { method: "POST" });
+        if (cancelled) return;
+        const scoreData = scoreRes.ok ? await scoreRes.json() : null;
         setScore(scoreData);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Unbekannter Fehler");
+          setLoading(false);
         }
-      } finally {
-        if (!cancelled) setLoading(false);
       }
     }
 
