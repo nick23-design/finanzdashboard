@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { PriceAlert } from "@/types/database";
 
@@ -197,6 +198,7 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
 }
 
 export function AlertsView() {
+  const router = useRouter();
   const [alerts, setAlerts] = useState<PriceAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -237,7 +239,15 @@ export function AlertsView() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-white">Kurs-Alarme</h2>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => router.back()}
+            className="text-sm"
+            style={{ color: "var(--muted)" }}>
+            ← Zurück
+          </button>
+          <h2 className="text-xl font-bold text-white">Kurs-Alarme</h2>
+        </div>
         {!showForm && (
           <button onClick={() => setShowForm(true)}
             className="text-xs px-3 py-1.5 rounded-xl font-semibold"

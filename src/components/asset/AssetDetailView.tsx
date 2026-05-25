@@ -313,11 +313,20 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
 
   return (
     <div className="space-y-4">
-      {/* Back */}
-      <Link href={backHref} className="text-sm flex items-center gap-1"
-        style={{ color: "var(--muted)" }}>
-        {backLabel}
-      </Link>
+      {/* Back + Alerts */}
+      <div className="flex items-center justify-between">
+        <Link href={backHref} className="text-sm flex items-center gap-1"
+          style={{ color: "var(--muted)" }}>
+          {backLabel}
+        </Link>
+        <Link
+          href="/dashboard/alerts"
+          className="flex items-center justify-center w-8 h-8 rounded-full transition-colors"
+          style={{ background: "var(--card-border)", color: "var(--muted)" }}
+          title="Alarm-Übersicht">
+          <Bell size={15} />
+        </Link>
+      </div>
 
       {/* Hero */}
       <div
