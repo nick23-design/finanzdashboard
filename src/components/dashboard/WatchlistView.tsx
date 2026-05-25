@@ -7,7 +7,7 @@ import { CardSkeleton } from "@/components/ui/Skeleton";
 import { searchStocks, STOCKS, type StockEntry } from "@/lib/stocks-list";
 import Link from "next/link";
 import { Search, X, Plus, Globe, Bell } from "lucide-react";
-import { HotPickCard } from "./HotPickCard";
+import { NHSelectTeaser } from "./NHSelectTeaser";
 import { MorningBriefingCard } from "./MorningBriefingCard";
 import { MarketIndexBar } from "./MarketIndexBar";
 
@@ -196,8 +196,8 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
       {/* Morgen-Briefing */}
       <MorningBriefingCard />
 
-      {/* Hot Pick */}
-      <HotPickCard />
+      {/* NH Select Pick des Tages */}
+      <NHSelectTeaser />
 
       {/* Search Bar */}
       <div className="relative">
