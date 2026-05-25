@@ -1,15 +1,22 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Search, RefreshCw, ChevronRight } from "lucide-react";
+import { ArrowLeft, Search, RefreshCw, Globe } from "lucide-react";
 import { ScoreBadge } from "@/components/ui/ScoreBadge";
 import { ScoreBar } from "@/components/ui/ScoreBar";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { searchStocks, type StockEntry } from "@/lib/stocks-list";
 import type { SignalType } from "@/types/finance";
 import type { CompareResult } from "@/app/api/ai-analysis/compare/route";
+
+interface LiveResult { symbol: string; name: string; exchange: string | null; type: string | null }
+
+const REGION_LABEL: Record<StockEntry["region"], string> = {
+  US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
+};
 
 type Period = "1W" | "1M" | "3M" | "6M" | "1J";
 
@@ -247,37 +254,129 @@ function AICompareCard({ symbolA, symbolB, snapshotLoaded }: { symbolA: string; 
 
 function StockSearch({ label, color, onSelect }: { label: string; color: string; onSelect: (s: string) => void }) {
   const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<StockEntry[]>([]);
+  const [liveResults, setLiveResults] = useState<LiveResult[]>([]);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [showDrop, setShowDrop] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const hits = searchStocks(q);
+    setSuggestions(hits);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (q.length >= 2) {
+      setShowDrop(true);
+      setLiveLoading(true);
+      debounceRef.current = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+          if (res.ok) {
+            const data: LiveResult[] = await res.json();
+            const staticSyms = new Set(hits.map(h => h.symbol));
+            setLiveResults(data.filter(r => !staticSyms.has(r.symbol)));
+          }
+        } catch { /* ignore */ }
+        setLiveLoading(false);
+      }, 300);
+    } else {
+      setLiveResults([]);
+      setLiveLoading(false);
+      setShowDrop(q.length >= 1 && hits.length > 0);
+    }
+  }, [q]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (dropRef.current?.contains(e.target as Node) || inputRef.current?.contains(e.target as Node)) return;
+      setShowDrop(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  async function pick(symbol: string) {
+    setShowDrop(false);
+    setQ("");
+    setSuggestions([]);
+    setLiveResults([]);
+    onSelect(symbol);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const sym = q.trim().toUpperCase();
-    if (!sym) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/assets/${sym}`);
-      if (res.ok) { onSelect(sym); setQ(""); }
-    } finally { setLoading(false); }
+    if (sym) pick(sym);
   }
 
+  const hasDrop = showDrop && (suggestions.length > 0 || liveResults.length > 0 || liveLoading);
+
   return (
-    <form onSubmit={submit} className="flex gap-2">
-      <div className="relative flex-1">
-        <input
-          value={q} onChange={e => setQ(e.target.value.toUpperCase())}
-          placeholder={`${label} Ticker…`}
-          maxLength={10}
-          className="w-full rounded-xl pl-8 pr-3 py-2.5 text-white text-sm border outline-none"
-          style={{ background: "var(--card)", borderColor: color + "50" }}
-        />
-        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: "var(--muted)" }} />
-      </div>
-      <button type="submit" disabled={!q || loading}
-        className="px-3 py-2 rounded-xl text-sm font-semibold disabled:opacity-40"
-        style={{ background: color, color: "#000" }}>
-        {loading ? "…" : <ChevronRight size={16} />}
-      </button>
-    </form>
+    <div className="relative">
+      <form onSubmit={submit}>
+        <div className="relative">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--muted)" }} />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={e => setQ(e.target.value.toUpperCase())}
+            onFocus={() => (suggestions.length > 0 || liveResults.length > 0) && setShowDrop(true)}
+            placeholder={label}
+            maxLength={20}
+            autoComplete="off"
+            className="w-full rounded-xl pl-8 pr-3 py-2.5 text-white text-sm border outline-none"
+            style={{ background: "var(--card)", borderColor: color + "50" }}
+          />
+        </div>
+      </form>
+
+      {hasDrop && (
+        <div ref={dropRef} className="absolute top-full left-0 right-0 mt-1 rounded-xl border overflow-hidden z-50 shadow-xl" style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+          {suggestions.map(s => (
+            <button key={s.symbol} type="button"
+              onMouseDown={e => { e.preventDefault(); pick(s.symbol); }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left border-b last:border-b-0 hover:bg-white/5"
+              style={{ borderColor: "var(--card-border)" }}>
+              <span className="w-4 text-center flex-shrink-0 text-xs">{REGION_LABEL[s.region]}</span>
+              <div className="flex-1 min-w-0">
+                <span className="font-bold text-white text-xs">{s.symbol}</span>
+                <p className="text-[10px] truncate" style={{ color: "var(--muted)" }}>{s.name}</p>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: "rgba(100,116,139,0.2)", color: "var(--muted)" }}>{s.region}</span>
+            </button>
+          ))}
+
+          {suggestions.length > 0 && (liveResults.length > 0 || liveLoading) && (
+            <div className="px-3 py-1 flex items-center gap-2">
+              <span className="text-[10px] font-medium" style={{ color: "var(--muted)" }}>Weltweit</span>
+              <div className="flex-1 h-px" style={{ background: "var(--card-border)" }} />
+            </div>
+          )}
+
+          {liveResults.map(r => (
+            <button key={r.symbol} type="button"
+              onMouseDown={e => { e.preventDefault(); pick(r.symbol); }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left border-b last:border-b-0 hover:bg-white/5"
+              style={{ borderColor: "var(--card-border)" }}>
+              <Globe size={11} className="flex-shrink-0" style={{ color: "var(--muted)" }} />
+              <div className="flex-1 min-w-0">
+                <span className="font-bold text-white text-xs">{r.symbol}</span>
+                <p className="text-[10px] truncate" style={{ color: "var(--muted)" }}>{r.name}</p>
+              </div>
+              {r.exchange && <span className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: "rgba(100,116,139,0.2)", color: "var(--muted)" }}>{r.exchange}</span>}
+            </button>
+          ))}
+
+          {liveLoading && (
+            <div className="px-3 py-2 flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full border border-t-transparent animate-spin flex-shrink-0" style={{ borderColor: "var(--muted)", borderTopColor: "transparent" }} />
+              <span className="text-[10px]" style={{ color: "var(--muted)" }}>Suche weltweit…</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
