@@ -546,7 +546,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
           <ScoreBar label="Gesamt" score={score.total_score} />
           <ScoreBar label="Fundamental (40%)" score={score.fundamental_score} />
           <ScoreBar label="Technisch (30%)" score={score.technical_score} />
-          <ScoreBar label="Risiko (30%)" score={score.risk_score} />
+          <ScoreBar label="Risiko inv. (30%)" score={score.risk_score} />
           <details className="text-xs" style={{ color: "var(--muted)" }}>
             <summary className="cursor-pointer font-medium">Erklärung anzeigen</summary>
             <p className="mt-2 leading-relaxed">{score.explanation}</p>

@@ -229,7 +229,7 @@ export function ScreenerView() {
                       <ScoreBar value={e.technical_score} color="#22c55e" />
                     </div>
                     <div>
-                      <p className="text-[9px] mb-0.5" style={{ color: "var(--muted)" }}>Risiko</p>
+                      <p className="text-[9px] mb-0.5" style={{ color: "var(--muted)" }}>Risiko (inv.)</p>
                       <ScoreBar value={e.risk_score} color="#f59e0b" />
                     </div>
                   </div>

@@ -576,7 +576,7 @@ export function CompareView() {
                     <ScoreBar label="Gesamt" score={score.total_score} />
                     <ScoreBar label="Fundamental" score={score.fundamental_score} />
                     <ScoreBar label="Technisch" score={score.technical_score} />
-                    <ScoreBar label="Risiko" score={score.risk_score} />
+                    <ScoreBar label="Risiko (inv.)" score={score.risk_score} />
                   </>
                 ) : <Skeleton className="w-full" height="h-20" />}
               </div>
