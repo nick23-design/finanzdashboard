@@ -126,20 +126,28 @@ const SECTIONS: Section[] = [
           <p>• <strong className="text-white">Risiko inv. (30%):</strong> Debt-to-Equity, RSI-Extremwerte, MA-Spread</p>
           <p className="mt-1">Signale: ≥80 Bullish · ≥60 Slightly Bullish · ≥40 Neutral · ≥20 Caution · &lt;20 High Risk</p>
         </Block>
-        <Block label="KI-Vollanalyse (Agent Vera)">
-          <p><strong className="text-white">Claude Sonnet</strong> analysiert Snapshot-Daten (Fundamentals + Technicals) und liefert Empfehlung, Conviction-Score, Bull/Bear-Case, Wachstumsausblick und News-Sentiment. Ergebnis wird 6 Stunden gecacht.</p>
+        <Block label="KI-Vollanalyse (Multi-Agenten-Pipeline)">
+          <p>Die Analyse läuft in vier Stufen:</p>
+          <p className="mt-1">• <strong className="text-white">Felix (Haiku 4.5):</strong> Sammelt aktuelle News-Titel via Google News RSS</p>
+          <p>• <strong className="text-white">Nina (Haiku 4.5):</strong> Ruft über Jina AI Reader Artikel-Auszüge ab — auch bei schwer zugänglichen Quellen häufig möglich, aber nicht garantiert</p>
+          <p>• <strong className="text-white">Opus 4.7 (Extended Thinking):</strong> Orchestriert die Analyse — wertet Fundamentals, Technicals und News-Kontext aus, liefert Empfehlung, Conviction-Score (1–10), Kursziele, Bull/Bear-Case und Wachstumsausblick</p>
+          <p>• <strong className="text-white">Vera (Sonnet 4.6):</strong> Fact-Checks Opus-Aussagen anhand der News-Quellen und ergänzt das Analyse-Protokoll mit Korrekturen und Einschränkungen</p>
+          <p className="mt-1">Ergebnis wird 6 Stunden gecacht. Kursziele werden aus MA50-Abstand und Analysten-Konsens berechnet — modellbasierte Orientierungsmarken, kein Ersatz für professionelle Analysten-Kursziele.</p>
         </Block>
         <Block label="Konkurrenten">
-          <p>3 Peer-Aktien pro Titel — statische Liste für ~30 bekannte Unternehmen, für unbekannte Symbole ermittelt <strong className="text-white">Claude Haiku</strong> die Peers dynamisch.</p>
+          <p>3 Peer-Aktien pro Titel — statische Liste für ~30 bekannte Unternehmen, für unbekannte Symbole ermittelt <strong className="text-white">Claude Haiku 4.5</strong> die Peers dynamisch.</p>
         </Block>
         <Block label="Datenquellen">
           <Pill label="Yahoo Finance (inoffiziell)" />
-          <Pill label="Claude Sonnet (Vera)" />
-          <Pill label="Claude Haiku (Peers)" />
+          <Pill label="Claude Opus 4.7 (Analyse)" />
+          <Pill label="Claude Sonnet 4.6 (Vera)" />
+          <Pill label="Claude Haiku 4.5 (Felix / Nina / Peers)" />
+          <Pill label="Google News RSS" />
+          <Pill label="Jina AI Reader" />
         </Block>
         <RiskBox items={[
           "Der Score basiert auf wenigen Datenpunkten — kein DCF, kein Branchen-Kontext, keine Zukunftsprognosen.",
-          "Vera hat keinen Internetzugang — analysiert nur gecachte Snapshot-Daten, keine aktuellen Nachrichten.",
+          "Vera prüft nur Artikel, die Nina bereits abgerufen hat (max. 3 Fetches pro Analyse, gesicherte Whitelist) — kein freier Internetzugang.",
           "KGV, Cashflow und Wachstum können von Yahoo Finance fehlen oder veraltet sein — fehlende Werte werden neutral gewertet.",
           "Ein hoher Score ist kein Kaufsignal, sondern ein Indikator auf Basis historischer Kennzahlen.",
         ]} />

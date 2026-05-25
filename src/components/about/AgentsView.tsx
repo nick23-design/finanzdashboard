@@ -49,7 +49,7 @@ const AGENTS: AgentDoc[] = [
       "Haiku klassifiziert nach Relevanz und übersetzt ins Deutsche",
     ],
     strengths: [
-      "Jina AI Reader umgeht Paywalls und liefert echten Artikeltext statt Marketing-Beschreibungen",
+      "Jina AI Reader kann häufig lesbare Artikel-Auszüge liefern, auch bei schwer zugänglichen Seiten — besser als reine Marketing-Beschreibungen",
       "Schnell: Single-Call für alle Artikel + parallele Jina-Fetches",
       "Deutsche Übersetzungen profitieren von echtem Artikelkontext",
     ],
@@ -131,7 +131,7 @@ const AGENTS: AgentDoc[] = [
     ],
     strengths: [
       "Jina AI Reader liefert echten Artikeltext — Sentiment deutlich präziser als mit Titeln allein",
-      "Paywall-Bypass: Bloomberg, FT und Reuters werden erstmals inhaltlich erfasst",
+      "Jina kann häufig Auszüge auch aus schwer zugänglichen Quellen wie Bloomberg und FT liefern — nicht garantiert, aber deutlich besser als nur Titel",
       "Premium-Quellengewichtung reduziert Einfluss reißerischer Kleinmedien",
     ],
     weaknesses: [
@@ -185,7 +185,7 @@ const AGENTS: AgentDoc[] = [
   },
   {
     id: "vera",
-    model: "Claude Haiku 4.5",
+    model: "Claude Sonnet 4.6",
     modelColor: "#ef4444",
     trigger: "Teil der Vollanalyse-Pipeline (on-demand)",
     cache: "6 Stunden (als Teil des Gesamtergebnisses)",
@@ -227,8 +227,8 @@ const AGENTS: AgentDoc[] = [
       "Conviction-Anpassung (−3 bis 0) bleibt eine grobe Näherung",
       "fetch_article-Aufrufe (max. 3 × 5 s Timeout) können Analysezeit um bis zu 15 s verlängern",
     ],
-    reliability: 5,
-    reliabilityNote: "Stärkste Fact-Check-Schicht bisher: aktive Recherche, strukturierter DB-Feedback-Loop mit Guardrails, läuft immer, prüft mit echtem Artikelinhalt.",
+    reliability: 4,
+    reliabilityNote: "Deutlich stärker durch Sonnet, aktive Recherche und Feedback-Loop. Bleibt aber ein KI-Modell das nur begrenzten Quellenpool prüft und selbst Fehler machen kann — reliability 5 erst wenn manueller Review oder harte Claim-Validation ergänzt wird.",
   },
   {
     id: "opus",
@@ -269,7 +269,7 @@ const AGENTS: AgentDoc[] = [
       "Adaptive Thinking aktiviert bei erkannten Widersprüchen zwischen Signalen",
       "Guardrails aus Vera's früheren Korrekturen reduzieren wiederkehrende Fehlertypen bei bekannten Aktien",
       "Zod-Validierung des Tool-Outputs verhindert fehlerhafte Werte (falsche Enum, Conviction außerhalb 1–10)",
-      "Konkrete Kursziele mit Begründung sind praktisch verwertbar",
+      "Kursziele aus MA50 und Analysten-Konsens berechnet — modellbasierte Orientierungsmarken, kein Ersatz für professionelle Analysten-Kursziele",
     ],
     weaknesses: [
       "Teuerster und langsamster Agent in der Pipeline (~15–30 s)",
@@ -353,7 +353,7 @@ const AGENTS: AgentDoc[] = [
     strengths: [
       "Premium RSS (Reuters, AP, MarketWatch) liefert echte Artikelzusammenfassungen direkt im Feed",
       "Breite Abdeckung durch sechs verschiedene Quellen (3 Google News + 3 Premium)",
-      "Ticker-Validierung filtert halluzinierte oder falsche Symbole zuverlässig heraus",
+      "Ticker-Validierung filtert nicht existierende Symbole heraus — garantiert aber nicht die richtige Unternehmenszuordnung",
     ],
     weaknesses: [
       "Google News RSS liefert weiterhin nur Titel — Premium-Beschreibungen abhängig von Feed-Qualität",
@@ -429,7 +429,7 @@ const AGENTS: AgentDoc[] = [
     strengths: [
       "Erfasst Investmentideen aus qualitativen Quellen jenseits von Headlines",
       "Podcasts behandeln oft tiefere Thesen als Tagesnachrichten",
-      "Ticker-Validierung filtert halluzinierte Symbole jetzt heraus (wie US/DE-Scout)",
+      "Ticker-Validierung filtert nicht existierende Symbole heraus (wie US/DE-Scout) — garantiert keine korrekte Unternehmenszuordnung",
     ],
     weaknesses: [
       "Qualität stark abhängig von Podcast-Verfügbarkeit und -Inhalt",
