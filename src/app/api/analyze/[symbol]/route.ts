@@ -26,9 +26,25 @@ async function getCachedScore(symbol: string): Promise<AnalysisScore | null> {
     .limit(1)
     .single();
 
-  // Cast needed: Supabase's inferred type from .single() is a union that
-  // TypeScript cannot narrow to a plain object via truthiness alone.
   return (data as AnalysisScore | null) ?? null;
+}
+
+async function getCachedSnapshot(symbol: string): Promise<AssetSnapshot | null> {
+  const supabase = await createClient();
+  const cutoff = new Date(
+    Date.now() - CACHE_TTL_HOURS * 60 * 60 * 1000
+  ).toISOString();
+
+  const { data } = await supabase
+    .from("asset_snapshots")
+    .select("*")
+    .eq("symbol", symbol)
+    .gte("fetched_at", cutoff)
+    .order("fetched_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  return (data as AssetSnapshot | null) ?? null;
 }
 
 export async function POST(
@@ -64,24 +80,29 @@ export async function POST(
   }
 
   try {
-    const raw = await fetchAssetData(symbol);
-    const snapshot: AssetSnapshot = {
-      id: "",
-      symbol: raw.symbol,
-      price: raw.price,
-      currency: raw.currency,
-      isin: raw.isin ?? null,
-      description: raw.description ?? null,
-      pe_ratio: raw.pe_ratio,
-      market_cap: raw.market_cap,
-      debt_to_equity: raw.debt_to_equity,
-      revenue_growth: raw.revenue_growth,
-      free_cashflow: raw.free_cashflow,
-      rsi: raw.rsi,
-      moving_average_50: raw.moving_average_50,
-      moving_average_200: raw.moving_average_200,
-      fetched_at: raw.fetched_at,
-    };
+    // Prefer cached asset snapshot to avoid waking Render backend
+    let snapshot: AssetSnapshot | null = await getCachedSnapshot(symbol);
+
+    if (!snapshot) {
+      const raw = await fetchAssetData(symbol);
+      snapshot = {
+        id: "",
+        symbol: raw.symbol,
+        price: raw.price,
+        currency: raw.currency,
+        isin: raw.isin ?? null,
+        description: raw.description ?? null,
+        pe_ratio: raw.pe_ratio,
+        market_cap: raw.market_cap,
+        debt_to_equity: raw.debt_to_equity,
+        revenue_growth: raw.revenue_growth,
+        free_cashflow: raw.free_cashflow,
+        rsi: raw.rsi,
+        moving_average_50: raw.moving_average_50,
+        moving_average_200: raw.moving_average_200,
+        fetched_at: raw.fetched_at,
+      };
+    }
 
     const score = calculateScore(snapshot);
 
