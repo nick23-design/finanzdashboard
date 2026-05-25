@@ -4,7 +4,10 @@ import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
+import { fetchGoogleNews } from "@/lib/finance-client";
+import { PEER_MAP } from "@/lib/peer-map";
 import type { AssetSnapshot, AnalysisScore } from "@/types/database";
+import type { GoogleNewsItem } from "@/lib/finance-client";
 
 export interface CompareResult {
   symbolA: string;
@@ -89,6 +92,46 @@ async function getCachedScore(symbol: string): Promise<AnalysisScore | null> {
   return (data as AnalysisScore | null) ?? null;
 }
 
+async function getPeerAverages(symbol: string): Promise<string> {
+  const peers = PEER_MAP[symbol];
+  if (!peers?.length) return "";
+
+  const supabase = await createClient();
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data } = await supabase
+    .from("asset_snapshots")
+    .select("symbol, pe_ratio, revenue_growth, debt_to_equity")
+    .in("symbol", peers)
+    .gte("fetched_at", cutoff)
+    .order("fetched_at", { ascending: false });
+
+  if (!data?.length) return "";
+
+  const seen = new Set<string>();
+  const rows = (data as { symbol: string; pe_ratio: number | null; revenue_growth: number | null; debt_to_equity: number | null }[])
+    .filter(r => { if (seen.has(r.symbol)) return false; seen.add(r.symbol); return true; });
+
+  const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const peVals   = rows.map(r => r.pe_ratio).filter((v): v is number => v != null);
+  const grVals   = rows.map(r => r.revenue_growth).filter((v): v is number => v != null);
+  const deVals   = rows.map(r => r.debt_to_equity).filter((v): v is number => v != null);
+  const peAvg    = avg(peVals);
+  const grAvg    = avg(grVals);
+  const deAvg    = avg(deVals);
+
+  const parts: string[] = [`Peers (${rows.map(r => r.symbol).join(", ")})`];
+  if (peAvg != null) parts.push(`Ø KGV: ${peAvg.toFixed(1)}`);
+  if (grAvg != null) parts.push(`Ø Wachstum: ${(grAvg * 100).toFixed(1)}%`);
+  if (deAvg != null) parts.push(`Ø D/E: ${deAvg.toFixed(2)}`);
+  return parts.length > 1 ? parts.join(" | ") : "";
+}
+
+function formatNews(symbol: string, news: GoogleNewsItem[]): string {
+  if (!news.length) return "";
+  return `AKTUELLE NEWS ${symbol} (${news.length} Artikel):\n` +
+    news.slice(0, 5).map(n => `  - [${n.source}] ${n.title}`).join("\n");
+}
+
 export async function POST(request: NextRequest) {
   const auth = await requireAuth();
   if (isNextResponse(auth)) return auth;
@@ -119,11 +162,15 @@ export async function POST(request: NextRequest) {
   const frontendA: Partial<AssetSnapshot> | null = body.dataA ?? null;
   const frontendB: Partial<AssetSnapshot> | null = body.dataB ?? null;
 
-  const [dbSnapshotA, dbSnapshotB, scoreA, scoreB] = await Promise.all([
+  const [dbSnapshotA, dbSnapshotB, scoreA, scoreB, newsA, newsB, peerA, peerB] = await Promise.all([
     getCachedSnapshot(symbolA),
     getCachedSnapshot(symbolB),
     getCachedScore(symbolA),
     getCachedScore(symbolB),
+    fetchGoogleNews(symbolA).catch(() => [] as GoogleNewsItem[]),
+    fetchGoogleNews(symbolB).catch(() => [] as GoogleNewsItem[]),
+    getPeerAverages(symbolA).catch(() => ""),
+    getPeerAverages(symbolB).catch(() => ""),
   ]);
 
   // Use DB snapshot if available, fall back to frontend-provided data
@@ -137,18 +184,25 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const prompt = `Du bist Kai, ein Vergleichs-Analyst. Vergleiche diese zwei Aktien für einen wachstumsorientierten Investor und gib eine klare Empfehlung.
+  const newsSectionA = formatNews(symbolA, newsA);
+  const newsSectionB = formatNews(symbolB, newsB);
+
+  const prompt = `Du bist Kai, ein Vergleichs-Analyst. Vergleiche diese zwei Aktien für einen wachstumsorientierten Investor und gib eine klare, begründete Empfehlung. Berücksichtige Kennzahlen, Branchen-Kontext UND aktuelle Nachrichtenlage.
 
 === ${symbolA} ===
 ${formatSnapshot(snapshotA, scoreA)}
+${peerA ? `\nBRANCHEN-KONTEXT ${symbolA}: ${peerA}` : ""}
+${newsSectionA ? `\n${newsSectionA}` : ""}
 
 === ${symbolB} ===
 ${formatSnapshot(snapshotB, scoreB)}
+${peerB ? `\nBRANCHEN-KONTEXT ${symbolB}: ${peerB}` : ""}
+${newsSectionB ? `\n${newsSectionB}` : ""}
 
 Antworte ausschließlich mit validem JSON:
 {
   "winner": "${symbolA}" oder "${symbolB}" oder null (wenn sehr ausgeglichen),
-  "summary": "2-3 Sätze Gesamtbild des Vergleichs",
+  "summary": "2-3 Sätze Gesamtbild des Vergleichs inkl. Sentiment und Branchen-Einordnung",
   "recommendation": "Klare Handlungsempfehlung (1 Satz)",
   "a_strengths": ["Stärke 1", "Stärke 2", "Stärke 3"],
   "b_strengths": ["Stärke 1", "Stärke 2", "Stärke 3"],
@@ -160,9 +214,10 @@ Antworte ausschließlich mit validem JSON:
   try {
     const client = getClient();
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
-      system: "Du bist Kai, ein präziser Aktienvergleichs-Analyst. Antworte ausschließlich mit validem JSON.",
+      model: "claude-opus-4-7",
+      max_tokens: 2000,
+      thinking: { type: "adaptive" },
+      system: "Du bist Kai, ein präziser Aktienvergleichs-Analyst. Du hast Zugang zu Kennzahlen, Branchen-Peers und aktuellen News beider Aktien. Antworte ausschließlich mit validem JSON.",
       messages: [{ role: "user", content: prompt }],
     });
 
