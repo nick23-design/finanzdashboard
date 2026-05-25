@@ -64,7 +64,40 @@ export async function GET(request: NextRequest) {
       ).join("\n")
     : "Keine Scout-Ergebnisse vorhanden.";
 
-  // 3. Opus synthesizes NH Select pick
+  // 3. Fetch current prices for all candidate symbols before calling Opus
+  const FINANCE_API_URL = process.env.FINANCE_API_URL || "http://localhost:8000";
+  const candidateSymbols = [
+    ...new Set([
+      ...(radarSignals ?? []).map(s => s.symbol),
+      ...(scoutSources ?? []).map(s => s.symbol),
+    ]),
+  ];
+
+  const priceMap: Record<string, number | null> = {};
+  await Promise.all(
+    candidateSymbols.map(async (sym) => {
+      try {
+        const res = await fetch(`${FINANCE_API_URL}/assets/${sym}`, {
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (res.ok) {
+          const d = await res.json() as { price?: number };
+          priceMap[sym] = d.price ?? null;
+        } else {
+          priceMap[sym] = null;
+        }
+      } catch {
+        priceMap[sym] = null;
+      }
+    })
+  );
+
+  const priceText = candidateSymbols
+    .filter(s => priceMap[s] != null)
+    .map(s => `${s}: $${(priceMap[s] as number).toFixed(2)}`)
+    .join(" | ");
+
+  // 4. Opus synthesizes NH Select pick
   const today = new Date().toLocaleDateString("de-DE", {
     weekday: "long", day: "2-digit", month: "2-digit", year: "numeric"
   });
@@ -74,6 +107,8 @@ export async function GET(request: NextRequest) {
     max_tokens: 1024,
     thinking: { type: "enabled", budget_tokens: 2000 },
     system: `Du bist Opus, der leitende Investment-Stratege von NextHorizon. Deine Aufgabe ist die tägliche NH-Select-Empfehlung: die eine vielversprechendste Aktie des Tages, basierend auf Radar-Signalen und Scout-Recherchen.
+
+Berücksichtige die aktuellen Kurse bei der Entscheidung: Aktien die bereits stark gestiegen sind (mögliche Überhitzung) oder nahe Widerständen notieren sind kritisch zu bewerten.
 
 Antworte ausschließlich als JSON-Objekt.`,
     messages: [{
@@ -85,6 +120,7 @@ ${radarText}
 
 SCOUT-RECHERCHEN (letzte 48h):
 ${scoutText}
+${priceText ? `\nAKTUELLE KURSE:\n${priceText}` : ""}
 
 Wähle die eine beste Aktie als NH Select für heute. Format:
 {
@@ -116,18 +152,8 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
     return NextResponse.json({ error: "Opus konnte keine Empfehlung generieren" }, { status: 500 });
   }
 
-  // 4. Fetch current price for Trefferquote tracking
-  let priceAtPick: number | null = null;
-  try {
-    const FINANCE_API_URL = process.env.FINANCE_API_URL || "http://localhost:8000";
-    const priceRes = await fetch(`${FINANCE_API_URL}/assets/${pick.symbol}`);
-    if (priceRes.ok) {
-      const priceData = await priceRes.json() as { price?: number };
-      priceAtPick = priceData.price ?? null;
-    }
-  } catch { /* non-critical */ }
-
-  // 5. Save to nh_select_daily
+  // 5. Save to nh_select_daily — price already fetched in priceMap above
+  const priceAtPick: number | null = priceMap[pick.symbol] ?? null;
   const row = {
     ...pick,
     agent: "Synthesizer",

@@ -2,50 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
 import Anthropic from "@anthropic-ai/sdk";
+import { PEER_MAP } from "@/lib/peer-map";
 
-// Static peer map for common stocks — avoids AI call for frequent lookups
-const PEER_MAP: Record<string, string[]> = {
-  // US Tech
-  AAPL:  ["MSFT", "GOOGL", "SAMSUNG"],
-  MSFT:  ["AAPL", "GOOGL", "AMZN"],
-  GOOGL: ["META", "MSFT", "AMZN"],
-  GOOG:  ["META", "MSFT", "AMZN"],
-  META:  ["GOOGL", "SNAP", "PINS"],
-  AMZN:  ["MSFT", "GOOGL", "WMT"],
-  NVDA:  ["AMD", "INTC", "QCOM"],
-  AMD:   ["NVDA", "INTC", "QCOM"],
-  INTC:  ["NVDA", "AMD", "QCOM"],
-  TSLA:  ["GM", "F", "RIVN"],
-  NFLX:  ["DIS", "WBD", "PARA"],
-  CRM:   ["ORCL", "SAP", "NOW"],
-  ORCL:  ["MSFT", "SAP", "CRM"],
-  NOW:   ["CRM", "ORCL", "WDAY"],
-  SHOP:  ["AMZN", "WMT", "ETSY"],
-  PYPL:  ["V", "MA", "SQ"],
-  SQ:    ["PYPL", "V", "MA"],
-  V:     ["MA", "PYPL", "AXP"],
-  MA:    ["V", "PYPL", "AXP"],
-  JPM:   ["BAC", "WFC", "GS"],
-  BAC:   ["JPM", "WFC", "C"],
-  GS:    ["JPM", "MS", "BAC"],
-  // US Other
-  WMT:   ["AMZN", "TGT", "COST"],
-  TGT:   ["WMT", "AMZN", "COST"],
-  UNH:   ["CVS", "CI", "HUM"],
-  JNJ:   ["PFE", "ABT", "MRK"],
-  PFE:   ["JNJ", "MRK", "ABBV"],
-  // German / European
-  SAP:   ["ORCL", "CRM", "MSFT"],
-  SIE:   ["ABB", "HON", "ETN"],
-  ALV:   ["AXA", "MUV2", "Z"],
-  BMW:   ["MBG", "VOW3", "TSLA"],
-  MBG:   ["BMW", "VOW3", "TSLA"],
-  VOW3:  ["BMW", "MBG", "STLA"],
-  // ETFs — show similar ETFs
-  SPY:   ["QQQ", "IWM", "VTI"],
-  QQQ:   ["SPY", "VGT", "XLK"],
-  VTI:   ["SPY", "IVV", "SCHB"],
-};
 
 function parseJSON<T>(raw: string): T {
   const stripped = raw.replace(/```(?:json)?/g, "").trim();

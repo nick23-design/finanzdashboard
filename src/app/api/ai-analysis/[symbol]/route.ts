@@ -51,11 +51,52 @@ import type {
 } from "@/lib/finance-client";
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
+import { PEER_MAP } from "@/lib/peer-map";
 import type { AssetSnapshot, Database } from "@/types/database";
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
 const CACHE_TTL_HOURS = 6;
+
+async function fetchPeerContext(symbol: string): Promise<string> {
+  const peers = PEER_MAP[symbol];
+  if (!peers?.length) return "";
+
+  const supabase = await createClient();
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  const { data } = await supabase
+    .from("asset_snapshots")
+    .select("symbol, pe_ratio, revenue_growth, debt_to_equity, market_cap")
+    .in("symbol", peers)
+    .gte("fetched_at", cutoff)
+    .order("fetched_at", { ascending: false });
+
+  if (!data || data.length === 0) return "";
+
+  // Deduplicate to latest per symbol
+  const seen = new Set<string>();
+  const rows = (data as { symbol: string; pe_ratio: number | null; revenue_growth: number | null; debt_to_equity: number | null; market_cap: number | null }[])
+    .filter(r => { if (seen.has(r.symbol)) return false; seen.add(r.symbol); return true; });
+
+  if (rows.length === 0) return "";
+
+  const peValues = rows.map(r => r.pe_ratio).filter((v): v is number => v != null);
+  const growthValues = rows.map(r => r.revenue_growth).filter((v): v is number => v != null);
+  const deValues = rows.map(r => r.debt_to_equity).filter((v): v is number => v != null);
+
+  const avg = (arr: number[]) => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+  const peAvg = avg(peValues);
+  const growthAvg = avg(growthValues);
+  const deAvg = avg(deValues);
+
+  const lines = [`Vergleich mit ${rows.map(r => r.symbol).join(", ")} (Branchen-Peers):`];
+  if (peAvg != null) lines.push(`  Ø KGV Peers: ${peAvg.toFixed(1)}`);
+  if (growthAvg != null) lines.push(`  Ø Umsatzwachstum Peers: ${(growthAvg * 100).toFixed(1)}%`);
+  if (deAvg != null) lines.push(`  Ø Debt/Equity Peers: ${deAvg.toFixed(2)}`);
+
+  return lines.join("\n");
+}
 
 interface FundamentalAnalysis {
   growth_rating: number;
@@ -190,11 +231,12 @@ function formatAnalystData(a: AnalystData | null): string {
   return lines.join("\n");
 }
 
-async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, focus?: string): Promise<FundamentalAnalysis> {
+async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, peerContext?: string, focus?: string): Promise<FundamentalAnalysis> {
   const client = getClient();
   const edgarSection = formatEdgarTrend(edgar);
+  const peerSection = peerContext ? `\n\nBRANCHEN-VERGLEICH:\n${peerContext}\nBewerte KGV, Wachstum und Verschuldung relativ zu diesen Peer-Werten.` : "";
   const focusNote = focus ? `\n\nBesonderer Fokus für diesen Durchlauf: ${focus}` : "";
-  const prompt = `Bewerte diese Aktie für einen wachstumsorientierten Investor:\n\n${formatMetrics(s)}${edgarSection ? "\n\n" + edgarSection : ""}${focusNote}\n\nJSON-Format:\n{"growth_rating":<1-10>,"key_positives":["..."],"key_risks":["..."],"valuation_comment":"..."}`;
+  const prompt = `Bewerte diese Aktie für einen wachstumsorientierten Investor:\n\n${formatMetrics(s)}${edgarSection ? "\n\n" + edgarSection : ""}${peerSection}${focusNote}\n\nJSON-Format:\n{"growth_rating":<1-10>,"key_positives":["..."],"key_risks":["..."],"valuation_comment":"..."}`;
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -489,6 +531,7 @@ async function runOrchestrator(
   trends: TrendPoint[],
   institutional: InstitutionalData | null,
   analystData: AnalystData | null,
+  peerContext?: string,
 ): Promise<OrchestratorResult> {
   const client = getClient();
   let fundamental: FundamentalAnalysis | null = null;
@@ -625,7 +668,7 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
       let content: string;
       if (toolUse.name === "analyze_fundamentals") {
         const { focus } = toolUse.input as { focus?: string };
-        fundamental = await runFundamentalAgent(snapshot, edgarFacts, focus);
+        fundamental = await runFundamentalAgent(snapshot, edgarFacts, peerContext, focus);
         content = JSON.stringify(fundamental);
       } else if (toolUse.name === "analyze_sentiment") {
         sentiment = await runSentimentAgent(googleNews);
@@ -643,7 +686,7 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
 
   // Fallback: Orchestrator hat nicht sauber abgeschlossen → alte Pipeline
   const [fb_f, fb_s, fb_m] = await Promise.all([
-    fundamental ?? runFundamentalAgent(snapshot, edgarFacts),
+    fundamental ?? runFundamentalAgent(snapshot, edgarFacts, peerContext),
     sentiment ?? runSentimentAgent(googleNews),
     marketIntel ?? runMarketIntelAgent(insiderTrades, trends, institutional),
   ]);
@@ -815,8 +858,9 @@ export async function POST(
       fetched_at: assetData.fetched_at,
     };
 
+    const peerContext = await fetchPeerContext(symbol).catch(() => "");
     const orchestrated = await runOrchestrator(
-      symbol, snapshot, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData,
+      symbol, snapshot, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData, peerContext,
     );
 
     const result: AIAnalysisResult = {
