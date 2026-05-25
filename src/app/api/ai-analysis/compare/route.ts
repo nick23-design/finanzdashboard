@@ -64,12 +64,11 @@ function formatSnapshot(s: AssetSnapshot, score: AnalysisScore | null): string {
 
 async function getCachedSnapshot(symbol: string): Promise<AssetSnapshot | null> {
   const supabase = await createClient();
-  const cutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+  // No time cutoff — any stored snapshot is sufficient for AI comparison
   const { data } = await supabase
     .from("asset_snapshots")
     .select("*")
     .eq("symbol", symbol)
-    .gte("fetched_at", cutoff)
     .order("fetched_at", { ascending: false })
     .limit(1)
     .single();
