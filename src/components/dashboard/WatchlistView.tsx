@@ -10,6 +10,7 @@ import { Search, X, Plus, Globe, Bell } from "lucide-react";
 import { HotPickCard } from "./HotPickCard";
 import { MorningBriefingCard } from "./MorningBriefingCard";
 import { MarketIndexBar } from "./MarketIndexBar";
+import { SectorTeaser } from "./SectorTeaser";
 
 const REGION_LABEL: Record<StockEntry["region"], string> = {
   US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
@@ -192,6 +193,9 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
 
       {/* Marktindizes */}
       <MarketIndexBar />
+
+      {/* Sektor-Radar Teaser */}
+      <SectorTeaser />
 
       {/* Morgen-Briefing */}
       <MorningBriefingCard />
