@@ -31,23 +31,44 @@ async function validateTicker(symbol: string): Promise<string | null> {
 }
 
 const RSS_SOURCES = [
+  // Google News (titles only — descriptions are HTML link lists)
   {
     url: "https://news.google.com/rss/search?q=Aktie+Kaufen+Empfehlung+Analyst&hl=de&gl=DE&ceid=DE:de",
     label: "Google News DE (Analyst-Empfehlungen)",
+    premium: false,
   },
   {
     url: "https://news.google.com/rss/search?q=Aktie+Kurs+Prognose+Kursziel&hl=de&gl=DE&ceid=DE:de",
     label: "Google News DE (Kursziele)",
+    premium: false,
   },
   {
     url: "https://news.google.com/rss/search?q=DAX+MDAX+Aktie+Chancen+stark&hl=de&gl=DE&ceid=DE:de",
     label: "Google News DE (DAX/MDAX)",
+    premium: false,
+  },
+  // Premium RSS — plain-text <description> with real content
+  {
+    url: "https://de.reuters.com/rssFeed/businessNews",
+    label: "Reuters DE",
+    premium: true,
+  },
+  {
+    url: "https://www.handelsblatt.com/contentexport/feed/schlagzeilen",
+    label: "Handelsblatt",
+    premium: true,
+  },
+  {
+    url: "https://www.faz.net/rss/aktuell/wirtschaft/",
+    label: "FAZ Wirtschaft",
+    premium: true,
   },
 ];
 
 interface NewsItem {
   title: string;
   source: string;
+  description?: string;
 }
 
 interface ScoutPick {
@@ -59,20 +80,55 @@ interface ScoutPick {
   sources: string[];
 }
 
-async function fetchFeed(url: string, label: string): Promise<NewsItem[]> {
+function isHtmlDescription(text: string): boolean {
+  return text.includes("<") && text.includes(">");
+}
+
+async function fetchFeed(url: string, label: string, premium: boolean): Promise<NewsItem[]> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
     if (!res.ok) return [];
     const text = await res.text();
-    const titleRe = /<title>([\s\S]*?)<\/title>/g;
+
     const items: NewsItem[] = [];
+    // Extract <item> blocks to pair titles with descriptions
+    const itemRe = /<item>([\s\S]*?)<\/item>/g;
     let m: RegExpExecArray | null;
-    while ((m = titleRe.exec(text)) !== null && items.length < 8) {
-      const t = m[1].replace(/<[^>]+>/g, "").trim();
-      if (t && !t.toLowerCase().includes("google news")) {
-        items.push({ title: t, source: label });
+
+    while ((m = itemRe.exec(text)) !== null && items.length < 8) {
+      const block = m[1];
+      const titleMatch = block.match(/<title>([\s\S]*?)<\/title>/);
+      if (!titleMatch) continue;
+      const title = titleMatch[1].replace(/<!\[CDATA\[|\]\]>/g, "").replace(/<[^>]+>/g, "").trim();
+      if (!title || title.toLowerCase().includes("google news")) continue;
+
+      const item: NewsItem = { title, source: label };
+
+      if (premium) {
+        const descMatch = block.match(/<description>([\s\S]*?)<\/description>/);
+        if (descMatch) {
+          const raw = descMatch[1].replace(/<!\[CDATA\[|\]\]>/g, "").trim();
+          if (!isHtmlDescription(raw) && raw.length > 40) {
+            item.description = raw.replace(/\s+/g, " ").slice(0, 500);
+          }
+        }
+      }
+
+      items.push(item);
+    }
+
+    // Fallback: extract titles without descriptions if item blocks not found
+    if (!items.length) {
+      const titleRe = /<title>([\s\S]*?)<\/title>/g;
+      let t: RegExpExecArray | null;
+      while ((t = titleRe.exec(text)) !== null && items.length < 8) {
+        const title = t[1].replace(/<[^>]+>/g, "").trim();
+        if (title && !title.toLowerCase().includes("google news")) {
+          items.push({ title, source: label });
+        }
       }
     }
+
     return items;
   } catch {
     return [];
@@ -86,7 +142,7 @@ export async function GET(request: NextRequest) {
   }
 
   const allNews = (
-    await Promise.all(RSS_SOURCES.map(s => fetchFeed(s.url, s.label)))
+    await Promise.all(RSS_SOURCES.map(s => fetchFeed(s.url, s.label, s.premium)))
   ).flat();
 
   if (!allNews.length) {
@@ -94,7 +150,10 @@ export async function GET(request: NextRequest) {
   }
 
   const newsText = allNews
-    .map(n => `[${n.source}] ${n.title}`)
+    .map(n => {
+      const desc = n.description ? `\n   → ${n.description}` : "";
+      return `[${n.source}] ${n.title}${desc}`;
+    })
     .join("\n");
 
   const msg = await anthropic.messages.create({

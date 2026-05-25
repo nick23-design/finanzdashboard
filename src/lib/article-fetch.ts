@@ -1,16 +1,38 @@
 /**
- * Fetches og:description / meta description from an article URL.
- * Reads only the first 8 KB of the response to capture the <head> section,
- * then aborts — avoids downloading full article bodies.
+ * Fetches a readable article excerpt via Jina AI Reader (https://r.jina.ai).
+ * Falls back to og:description scraping when Jina fails or returns too little content.
  */
 export async function fetchArticleDescription(url: string | null): Promise<string | null> {
   if (!url) return null;
+
+  // --- Jina AI Reader (primary) ---
+  try {
+    const jinaUrl = `https://r.jina.ai/${url}`;
+    const headers: Record<string, string> = {
+      Accept: "text/plain",
+      "X-Return-Format": "text",
+    };
+    if (process.env.JINA_API_KEY) headers["Authorization"] = `Bearer ${process.env.JINA_API_KEY}`;
+
+    const res = await fetch(jinaUrl, { signal: AbortSignal.timeout(5_000), headers });
+    if (res.ok) {
+      const text = await res.text();
+      // Jina returns markdown — take first meaningful block (skip navigation/boilerplate lines)
+      const lines = text
+        .split("\n")
+        .map(l => l.trim())
+        .filter(l => l.length > 40 && !l.startsWith("#") && !l.startsWith("![")); // skip headings + images
+      const excerpt = lines.slice(0, 4).join(" ").replace(/\s+/g, " ").slice(0, 700).trim();
+      if (excerpt.length > 80) return excerpt;
+    }
+  } catch { /* Jina unavailable — fall through */ }
+
+  // --- og:description fallback ---
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(2_500),
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
         Accept: "text/html",
       },
       redirect: "follow",
@@ -20,9 +42,7 @@ export async function fetchArticleDescription(url: string | null): Promise<strin
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let html = "";
-    const MAX_BYTES = 8_000;
-
-    while (html.length < MAX_BYTES) {
+    while (html.length < 8_000) {
       const { done, value } = await reader.read();
       if (done) break;
       html += decoder.decode(value, { stream: true });
@@ -30,22 +50,18 @@ export async function fetchArticleDescription(url: string | null): Promise<strin
     }
     reader.cancel().catch(() => {});
 
-    // og:description (two attribute orderings)
     const og =
       html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']{15,400})["']/i)?.[1] ??
       html.match(/<meta[^>]+content=["']([^"']{15,400})["'][^>]+property=["']og:description["']/i)?.[1];
     if (og) return cleanDesc(og);
 
-    // meta name=description
     const meta =
       html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']{15,400})["']/i)?.[1] ??
       html.match(/<meta[^>]+content=["']([^"']{15,400})["'][^>]+name=["']description["']/i)?.[1];
     if (meta) return cleanDesc(meta);
+  } catch { /* ignore */ }
 
-    return null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function cleanDesc(raw: string): string {
