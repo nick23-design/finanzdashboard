@@ -133,7 +133,16 @@ interface SynthesisResult {
 interface FactCheckResult {
   corrections: string[];
   verified_claims: string[];
-  confidence_adjustment: number; // -3 to +3 applied to conviction
+  confidence_adjustment: number;
+  corrected_summary?: string;
+  corrected_bull_case?: string[];
+  corrected_bear_case?: string[];
+}
+
+export interface ProtocolEntry {
+  agent: string;
+  status: "ok" | "warning" | "skipped";
+  detail: string;
 }
 
 interface MarketIntelAnalysis {
@@ -151,6 +160,7 @@ export interface AIAnalysisResult extends SynthesisResult {
   price_levels: PriceLevels | null;
   analyzed_at: string;
   from_cache: boolean;
+  protocol: ProtocolEntry[];
 }
 
 function getClient() {
@@ -372,11 +382,15 @@ async function runFactCheckAgent(
   symbol: string,
   synthesis: SynthesisResult,
   analystData: AnalystData | null,
-  googleNews: GoogleNewsItem[],
-): Promise<SynthesisResult> {
+  googleNews: NewsItemWithDesc[],
+): Promise<{ result: SynthesisResult; entry: ProtocolEntry }> {
   const client = getClient();
 
-  const newsHeadlines = googleNews.slice(0, 10).map(n => `- ${n.title}`).join("\n") || "Keine Schlagzeilen verfügbar";
+  const newsSection = googleNews.slice(0, 10).map(n => {
+    const excerpt = n.description ? `\n   Excerpt: ${n.description}` : "";
+    return `- ${n.title} (${n.source})${excerpt}`;
+  }).join("\n") || "Keine Schlagzeilen verfügbar";
+
   const analystSection = formatAnalystData(analystData) || "Keine Analysten-Daten verfügbar";
 
   const draftText = `Empfehlung: ${synthesis.recommendation} (Überzeugung: ${synthesis.conviction}/10)
@@ -390,37 +404,56 @@ Wachstumsausblick: ${synthesis.growth_outlook}`;
 VERFÜGBARE FAKTEN:
 ${analystSection}
 
-AKTUELLE SCHLAGZEILEN:
-${newsHeadlines}
+AKTUELLE NACHRICHTEN (mit Artikel-Auszügen):
+${newsSection}
 
 ZU PRÜFENDE ANALYSE:
 ${draftText}
 
-Identifiziere Aussagen in der Analyse, die NICHT durch die obigen Fakten belegt sind (z.B. erfundene Firmennamen, nicht genannte Deals, nicht belegte Zahlen). Korrigiere NUR nachweisliche Fehler.
+Prüfe ob Aussagen in der Analyse durch die obigen Fakten und Artikel-Auszüge belegbar sind. Korrigiere NUR nachweisliche Fehler (erfundene Deals, falsche Zahlen, nicht belegte Ereignisse). Wenn Bull-Case oder Bear-Case unbelegte Behauptungen enthalten, liefere korrigierte Versionen.
 
 JSON-Format:
-{"corrections":["konkrete Korrektur oder leer array wenn alles korrekt"],"verified_claims":["verifizierte Aussagen"],"confidence_adjustment":<-3 bis 0, negativ wenn Fehler gefunden>}`;
+{"corrections":["konkrete Korrektur, oder leeres Array"],"verified_claims":["verifizierte Aussagen"],"confidence_adjustment":<-3 bis 0>,"corrected_summary":"(nur wenn Summary falsche Fakten enthält, sonst null)","corrected_bull_case":["(nur bei unbelegten Punkten ersetzen, belegte Punkte unverändert übernehmen)"],"corrected_bear_case":["(analog)"]}`;
+
+  const fallbackEntry: ProtocolEntry = { agent: "Vera", status: "skipped", detail: "Fact-Check nicht verfügbar" };
 
   try {
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 600,
-      system: "Du bist ein kritischer Fact-Checker für Finanzanalysen. Antworte ausschließlich mit validem JSON.",
+      max_tokens: 800,
+      system: "Du bist ein kritischer Fact-Checker für Finanzanalysen. Korrigiere nur was durch die gelieferten Daten nachweislich falsch ist. Antworte ausschließlich mit validem JSON.",
       messages: [{ role: "user", content: prompt }],
     });
 
     const factCheck = parseJSON<FactCheckResult>(extractText(response.content));
+    const corrections = (factCheck.corrections ?? []).filter(c => c.length > 0);
+    const convictionNew = Math.max(1, Math.min(10,
+      synthesis.conviction + (factCheck.confidence_adjustment ?? 0)
+    ));
 
-    if (factCheck.corrections.length > 0) {
-      const convictionAdjusted = Math.max(1, Math.min(10,
-        synthesis.conviction + (factCheck.confidence_adjustment ?? 0)
-      ));
-      return { ...synthesis, conviction: convictionAdjusted };
-    }
+    const result: SynthesisResult = {
+      ...synthesis,
+      conviction: convictionNew,
+      summary: factCheck.corrected_summary ?? synthesis.summary,
+      bull_case: factCheck.corrected_bull_case ?? synthesis.bull_case,
+      bear_case: factCheck.corrected_bear_case ?? synthesis.bear_case,
+    };
 
-    return synthesis;
+    const entry: ProtocolEntry = corrections.length > 0
+      ? {
+          agent: "Vera",
+          status: "warning",
+          detail: `${corrections.length} Korrektur${corrections.length > 1 ? "en" : ""}: ${corrections.join(" · ")}${factCheck.confidence_adjustment ? ` · Conviction ${synthesis.conviction}→${convictionNew}` : ""}`,
+        }
+      : {
+          agent: "Vera",
+          status: "ok",
+          detail: `${(factCheck.verified_claims ?? []).length} Aussagen verifiziert — keine Korrekturen nötig`,
+        };
+
+    return { result, entry };
   } catch {
-    return synthesis;
+    return { result: synthesis, entry: fallbackEntry };
   }
 }
 
@@ -524,6 +557,7 @@ interface OrchestratorResult {
   fundamental: FundamentalAnalysis;
   sentiment: SentimentAnalysis;
   market_intel: MarketIntelAnalysis | null;
+  protocol: ProtocolEntry[];
 }
 
 async function runOrchestrator(
@@ -541,6 +575,7 @@ async function runOrchestrator(
   let fundamental: FundamentalAnalysis | null = null;
   let sentiment: SentimentAnalysis | null = null;
   let marketIntel: MarketIntelAnalysis | null = null;
+  const protocol: ProtocolEntry[] = [];
 
   const dataAvailability = [
     `Finanzkennzahlen: ${snapshot.price != null ? "vorhanden" : "fehlen"}`,
@@ -640,7 +675,7 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
     );
     if (toolUses.length === 0) break;
 
-    // complete_analysis → return immediately
+    // complete_analysis → run Vera, then return
     const completeCall = toolUses.find(t => t.name === "complete_analysis");
     if (completeCall) {
       const inp = completeCall.input as {
@@ -649,7 +684,8 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
         entry?: number | null; target?: number | null; stop_loss?: number | null;
         entry_rationale?: string; target_rationale?: string;
       };
-      return {
+
+      const rawResult: SynthesisResult = {
         recommendation: inp.recommendation,
         conviction: Math.min(10, Math.max(1, Math.round(inp.conviction))),
         summary: inp.summary,
@@ -660,9 +696,24 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
           entry: inp.entry ?? null, target: inp.target ?? null, stop_loss: inp.stop_loss ?? null,
           entry_rationale: inp.entry_rationale ?? "", target_rationale: inp.target_rationale ?? "",
         } : null,
+      };
+
+      protocol.push({
+        agent: "Opus",
+        status: "ok",
+        detail: `Synthese: ${rawResult.recommendation} · Conviction ${rawResult.conviction}/10 · Adaptive Thinking aktiv`,
+      });
+
+      const { result: verified, entry: veraEntry } = await runFactCheckAgent(symbol, rawResult, analystData, googleNews);
+      protocol.push(veraEntry);
+
+      return {
+        ...verified,
+        price_levels: verified.price_levels ?? null,
         fundamental: fundamental ?? { growth_rating: 5, key_positives: [], key_risks: [], valuation_comment: "" },
         sentiment: sentiment ?? { sentiment: "neutral", key_themes: [], sentiment_summary: "" },
         market_intel: marketIntel,
+        protocol,
       };
     }
 
@@ -674,12 +725,29 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
         const { focus } = toolUse.input as { focus?: string };
         fundamental = await runFundamentalAgent(snapshot, edgarFacts, peerContext, focus);
         content = JSON.stringify(fundamental);
+        protocol.push({
+          agent: "Felix",
+          status: "ok",
+          detail: `Wachstumsbewertung ${fundamental.growth_rating}/10 · ${fundamental.key_positives.length} Stärken, ${fundamental.key_risks.length} Risiken${peerContext ? " · Peer-Kontext vorhanden" : ""}${focus ? ` · Fokus: ${focus}` : ""}`,
+        });
       } else if (toolUse.name === "analyze_sentiment") {
         sentiment = await runSentimentAgent(googleNews);
         content = JSON.stringify(sentiment);
+        const withExcerpts = googleNews.filter(n => n.description).length;
+        protocol.push({
+          agent: "Nina",
+          status: "ok",
+          detail: `Sentiment: ${sentiment.sentiment} · ${sentiment.key_themes.length} Themen · ${withExcerpts}/${googleNews.length} Artikel mit Jina-Excerpt`,
+        });
       } else if (toolUse.name === "analyze_market_intelligence") {
         marketIntel = await runMarketIntelAgent(insiderTrades, trends, institutional);
         content = JSON.stringify(marketIntel);
+        const noData = marketIntel.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar";
+        protocol.push({
+          agent: "Marco",
+          status: noData ? "skipped" : "ok",
+          detail: noData ? "Keine Daten verfügbar (nur für US-Aktien)" : `Insider: ${marketIntel.insider_signal} · Institutionen: ${marketIntel.institutional_trend} · Trends: ${marketIntel.trends_momentum}`,
+        });
       } else {
         content = JSON.stringify({ error: "Unbekanntes Tool" });
       }
@@ -694,9 +762,17 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
     sentiment ?? runSentimentAgent(googleNews),
     marketIntel ?? runMarketIntelAgent(insiderTrades, trends, institutional),
   ]);
+  if (!fundamental) protocol.push({ agent: "Felix", status: "ok", detail: `Wachstumsbewertung ${fb_f.growth_rating}/10 (Fallback)` });
+  if (!sentiment) protocol.push({ agent: "Nina", status: "ok", detail: `Sentiment: ${fb_s.sentiment} (Fallback)` });
+  if (!marketIntel) {
+    const noData = fb_m.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar";
+    protocol.push({ agent: "Marco", status: noData ? "skipped" : "ok", detail: noData ? "Keine Daten verfügbar" : `Insider: ${fb_m.insider_signal} (Fallback)` });
+  }
   const rawSynthesis = await runSynthesisAgent(symbol, snapshot, fb_f, fb_s, fb_m, analystData);
-  const synthesis = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews);
-  return { ...synthesis, price_levels: synthesis.price_levels ?? null, fundamental: fb_f, sentiment: fb_s, market_intel: fb_m };
+  protocol.push({ agent: "Opus", status: "ok", detail: `Synthese (Fallback): ${rawSynthesis.recommendation} · Conviction ${rawSynthesis.conviction}/10` });
+  const { result: synthesis, entry: veraEntry } = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews);
+  protocol.push(veraEntry);
+  return { ...synthesis, price_levels: synthesis.price_levels ?? null, fundamental: fb_f, sentiment: fb_s, market_intel: fb_m, protocol };
 }
 
 async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
@@ -736,6 +812,7 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
       },
       market_intel: (data.extra_data as Record<string, unknown>)?.market_intel as MarketIntelAnalysis | null ?? null,
       price_levels: (data.extra_data as Record<string, unknown>)?.price_levels as PriceLevels | null ?? null,
+      protocol: (data.extra_data as Record<string, unknown>)?.protocol as ProtocolEntry[] ?? [],
       analyzed_at: data.analyzed_at,
       from_cache: true,
     };
@@ -787,6 +864,7 @@ async function saveAnalysis(result: AIAnalysisResult): Promise<void> {
       extra_data: ({
         ...(result.market_intel ? { market_intel: result.market_intel } : {}),
         ...(result.price_levels ? { price_levels: result.price_levels } : {}),
+        protocol: result.protocol,
       }) as unknown as import("@/types/database").Json,
     };
     await supabase.from("ai_analyses").insert(payload);
@@ -882,6 +960,7 @@ export async function POST(
       sentiment: orchestrated.sentiment,
       market_intel: orchestrated.market_intel,
       price_levels: orchestrated.price_levels,
+      protocol: orchestrated.protocol,
       analyzed_at: new Date().toISOString(),
       from_cache: false,
     };
