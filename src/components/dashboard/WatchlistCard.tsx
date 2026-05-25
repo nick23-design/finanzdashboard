@@ -14,10 +14,10 @@ interface WatchlistCardProps {
 }
 
 const SIGNAL_BG: Record<string, string> = {
-  "Kaufen":           "rgba(34,197,94,0.13)",
-  "Leicht kaufen":    "rgba(34,197,94,0.07)",
-  "Leicht verkaufen": "rgba(239,68,68,0.07)",
-  "Verkaufen":        "rgba(239,68,68,0.13)",
+  "Bullish":          "rgba(34,197,94,0.13)",
+  "Slightly Bullish": "rgba(34,197,94,0.07)",
+  "Caution":          "rgba(239,68,68,0.07)",
+  "High Risk":        "rgba(239,68,68,0.13)",
 };
 
 interface QuickData {
