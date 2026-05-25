@@ -320,7 +320,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
           {backLabel}
         </Link>
         <Link
-          href="/dashboard/alerts"
+          href={`/dashboard/alerts?symbol=${symbol}`}
           className="flex items-center justify-center w-8 h-8 rounded-full transition-colors"
           style={{ background: "var(--card-border)", color: "var(--muted)" }}
           title="Alarm-Übersicht">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { PriceAlert } from "@/types/database";
 
@@ -199,10 +199,12 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
 
 export function AlertsView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const presetSymbol = searchParams.get("symbol")?.toUpperCase() ?? null;
   const [alerts, setAlerts] = useState<PriceAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [filterSymbol, setFilterSymbol] = useState<string | null>(null);
+  const [filterSymbol, setFilterSymbol] = useState<string | null>(presetSymbol);
 
   async function load() {
     setLoading(true);
@@ -221,7 +223,10 @@ export function AlertsView() {
     setAlerts(as => as.filter(a => a.id !== id));
   }
 
-  const symbols = [...new Set(alerts.map(a => a.symbol))].sort();
+  const symbolsFromAlerts = [...new Set(alerts.map(a => a.symbol))].sort();
+  const symbols = presetSymbol && !symbolsFromAlerts.includes(presetSymbol)
+    ? [presetSymbol, ...symbolsFromAlerts]
+    : symbolsFromAlerts;
   const filtered = filterSymbol ? alerts.filter(a => a.symbol === filterSymbol) : alerts;
   const active = filtered.filter(a => !a.triggered);
   const triggered = filtered.filter(a => a.triggered);
@@ -258,7 +263,7 @@ export function AlertsView() {
       </div>
 
       {/* Symbol filter chips */}
-      {symbols.length > 1 && (
+      {(symbols.length > 1 || presetSymbol) && (
         <div className="flex gap-2 flex-wrap">
           <button
             onClick={() => setFilterSymbol(null)}
@@ -294,11 +299,13 @@ export function AlertsView() {
       )}
 
       {/* Empty state */}
-      {alerts.length === 0 && !showForm && (
+      {filtered.length === 0 && !showForm && (
         <div className="rounded-2xl border p-8 text-center space-y-2"
           style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
           <p className="text-3xl">🔔</p>
-          <p className="text-sm font-medium text-white">Keine aktiven Alarme</p>
+          <p className="text-sm font-medium text-white">
+            {filterSymbol ? `Keine Alarme für ${filterSymbol}` : "Keine aktiven Alarme"}
+          </p>
           <p className="text-xs" style={{ color: "var(--muted)" }}>
             Setze Alarme direkt auf der Aktien-Seite oder über „+ Alarm".
           </p>
