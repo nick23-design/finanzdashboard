@@ -2,8 +2,13 @@
  * Fetches a readable article excerpt via Jina AI Reader (https://r.jina.ai).
  * Falls back to og:description scraping when Jina fails or returns too little content.
  */
-export async function fetchArticleDescription(url: string | null): Promise<string | null> {
+export async function fetchArticleDescription(
+  url: string | null,
+  options?: { maxLines?: number; maxChars?: number },
+): Promise<string | null> {
   if (!url) return null;
+  const maxLines = options?.maxLines ?? 4;
+  const maxChars = options?.maxChars ?? 700;
 
   // --- Jina AI Reader (primary) ---
   try {
@@ -22,7 +27,7 @@ export async function fetchArticleDescription(url: string | null): Promise<strin
         .split("\n")
         .map(l => l.trim())
         .filter(l => l.length > 40 && !l.startsWith("#") && !l.startsWith("![")); // skip headings + images
-      const excerpt = lines.slice(0, 4).join(" ").replace(/\s+/g, " ").slice(0, 700).trim();
+      const excerpt = lines.slice(0, maxLines).join(" ").replace(/\s+/g, " ").slice(0, maxChars).trim();
       if (excerpt.length > 80) return excerpt;
     }
   } catch { /* Jina unavailable — fall through */ }

@@ -26,10 +26,36 @@
  *   ALTER TABLE public.ai_analyses ENABLE ROW LEVEL SECURITY;
  *   CREATE POLICY "Allow authenticated" ON public.ai_analyses
  *     FOR ALL TO authenticated USING (true) WITH CHECK (true);
+ *
+ *   -- Vera Feedback Dataset:
+ *   CREATE TABLE IF NOT EXISTS public.fact_check_findings (
+ *     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ *     analysis_id UUID REFERENCES public.ai_analyses(id) ON DELETE CASCADE,
+ *     symbol TEXT NOT NULL,
+ *     claim TEXT NOT NULL,
+ *     issue_type TEXT NOT NULL CHECK (issue_type IN (
+ *       'unbelegt_guidance','uebertriebener_konsens','falsche_zahl',
+ *       'erfundenes_event','fehlende_evidenz','sonstiges'
+ *     )),
+ *     correction TEXT NOT NULL,
+ *     severity TEXT NOT NULL DEFAULT 'medium' CHECK (severity IN ('low','medium','high')),
+ *     evidence_urls TEXT[] DEFAULT '{}',
+ *     confidence INTEGER NOT NULL CHECK (confidence >= 1 AND confidence <= 10),
+ *     review_status TEXT NOT NULL DEFAULT 'auto' CHECK (review_status IN ('auto','confirmed','rejected')),
+ *     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+ *   );
+ *   CREATE INDEX IF NOT EXISTS fact_check_findings_symbol
+ *     ON public.fact_check_findings(symbol, created_at DESC);
+ *   CREATE INDEX IF NOT EXISTS fact_check_findings_issue_type
+ *     ON public.fact_check_findings(issue_type, created_at DESC);
+ *   ALTER TABLE public.fact_check_findings ENABLE ROW LEVEL SECURITY;
+ *   CREATE POLICY "Allow authenticated" ON public.fact_check_findings
+ *     FOR ALL TO authenticated USING (true) WITH CHECK (true);
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
 import {
@@ -52,12 +78,36 @@ import type {
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { PEER_MAP } from "@/lib/peer-map";
-import { enrichWithDescriptions } from "@/lib/article-fetch";
+import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
 import type { AssetSnapshot, Database } from "@/types/database";
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
 const CACHE_TTL_HOURS = 6;
+
+// --- Validation constants ---
+
+const ALLOWED_RECOMMENDATIONS = [
+  "Kaufen", "Leicht kaufen", "Halten", "Leicht verkaufen", "Verkaufen",
+] as const;
+type AllowedRecommendation = typeof ALLOWED_RECOMMENDATIONS[number];
+
+const CompleteAnalysisSchema = z.object({
+  recommendation: z.enum(["Kaufen", "Leicht kaufen", "Halten", "Leicht verkaufen", "Verkaufen"]),
+  conviction: z.number().min(1).max(10),
+  summary: z.string().min(1),
+  bull_case: z.array(z.string()),
+  bear_case: z.array(z.string()),
+  growth_outlook: z.string(),
+  entry: z.number().nullable().optional(),
+  target: z.number().nullable().optional(),
+  stop_loss: z.number().nullable().optional(),
+  entry_rationale: z.string().optional(),
+  target_rationale: z.string().optional(),
+});
+type CompleteAnalysisInput = z.infer<typeof CompleteAnalysisSchema>;
+
+// --- Peer context ---
 
 async function fetchPeerContext(symbol: string): Promise<string> {
   const peers = PEER_MAP[symbol];
@@ -75,7 +125,6 @@ async function fetchPeerContext(symbol: string): Promise<string> {
 
   if (!data || data.length === 0) return "";
 
-  // Deduplicate to latest per symbol
   const seen = new Set<string>();
   const rows = (data as { symbol: string; pe_ratio: number | null; revenue_growth: number | null; debt_to_equity: number | null; market_cap: number | null }[])
     .filter(r => { if (seen.has(r.symbol)) return false; seen.add(r.symbol); return true; });
@@ -98,6 +147,8 @@ async function fetchPeerContext(symbol: string): Promise<string> {
 
   return lines.join("\n");
 }
+
+// --- Types ---
 
 interface FundamentalAnalysis {
   growth_rating: number;
@@ -130,6 +181,15 @@ interface SynthesisResult {
   price_levels?: PriceLevels | null;
 }
 
+export interface StructuredFinding {
+  claim: string;
+  issue_type: "unbelegt_guidance" | "uebertriebener_konsens" | "falsche_zahl" | "erfundenes_event" | "fehlende_evidenz" | "sonstiges";
+  correction: string;
+  severity: "low" | "medium" | "high";
+  evidence_urls: string[];
+  confidence: number;
+}
+
 interface FactCheckResult {
   corrections: string[];
   verified_claims: string[];
@@ -137,6 +197,7 @@ interface FactCheckResult {
   corrected_summary?: string;
   corrected_bull_case?: string[];
   corrected_bear_case?: string[];
+  findings?: StructuredFinding[];
 }
 
 export interface ProtocolEntry {
@@ -163,6 +224,23 @@ export interface AIAnalysisResult extends SynthesisResult {
   protocol: ProtocolEntry[];
 }
 
+interface OrchestratorResult {
+  recommendation: string;
+  conviction: number;
+  summary: string;
+  bull_case: string[];
+  bear_case: string[];
+  growth_outlook: string;
+  price_levels: PriceLevels | null;
+  fundamental: FundamentalAnalysis;
+  sentiment: SentimentAnalysis;
+  market_intel: MarketIntelAnalysis | null;
+  protocol: ProtocolEntry[];
+  findings: StructuredFinding[];
+}
+
+// --- Helpers ---
+
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
@@ -175,12 +253,25 @@ function extractText(content: Anthropic.Messages.ContentBlock[]): string {
 }
 
 function parseJSON<T>(raw: string): T {
-  // Remove markdown fences, then extract the JSON object between first { and last }
   const stripped = raw.replace(/```(?:json)?/g, "").trim();
   const start = stripped.indexOf("{");
   const end = stripped.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) throw new Error("No JSON object found");
   return JSON.parse(stripped.slice(start, end + 1)) as T;
+}
+
+function clampConviction(n: number): number {
+  return Math.min(10, Math.max(1, Math.round(n)));
+}
+
+function validateRecommendation(r: string): AllowedRecommendation {
+  return ALLOWED_RECOMMENDATIONS.includes(r as AllowedRecommendation)
+    ? (r as AllowedRecommendation)
+    : "Halten";
+}
+
+function validateBeforeSave(r: AIAnalysisResult): boolean {
+  return !!(r.symbol?.trim() && r.summary?.trim() && r.recommendation?.trim());
 }
 
 function formatMetrics(s: AssetSnapshot): string {
@@ -242,6 +333,8 @@ function formatAnalystData(a: AnalystData | null): string {
   return lines.join("\n");
 }
 
+// --- Agents ---
+
 async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, peerContext?: string, focus?: string): Promise<FundamentalAnalysis> {
   const client = getClient();
   const edgarSection = formatEdgarTrend(edgar);
@@ -252,8 +345,7 @@ async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, p
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 600,
-    system:
-      "Du bist ein wachstumsorientierter Aktienanalyst. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
+    system: "Du bist ein wachstumsorientierter Aktienanalyst. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
     messages: [{ role: "user", content: prompt }],
   });
 
@@ -294,8 +386,7 @@ async function runSentimentAgent(news: NewsItemWithDesc[]): Promise<SentimentAna
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
-    system:
-      "Du bist ein Finanz-Nachrichtenanalyst. Artikel von Quellen mit [★] sind besonders zuverlässig und sollen stärker gewichtet werden. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
+    system: "Du bist ein Finanz-Nachrichtenanalyst. Artikel von Quellen mit [★] sind besonders zuverlässig und sollen stärker gewichtet werden. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
     messages: [
       {
         role: "user",
@@ -352,8 +443,7 @@ ${sentiment.sentiment_summary}${marketIntelSection}`;
     model: "claude-opus-4-7",
     max_tokens: 1200,
     thinking: { type: "adaptive" },
-    system:
-      "Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Investmentempfehlung auf Deutsch. WICHTIG: Beziehe dich ausschließlich auf die bereitgestellten Daten. Erwähne keine Firmennamen, Deals, Produkte oder Ereignisse, die nicht explizit in den Daten enthalten sind. Berechne konkrete Kursziele (price_levels): entry als idealen Einstieg (nahe MA50 oder -3% bei RSI>50), target als Kursziel (Analysten-Konsens bevorzugt, sonst +15-25%), stop_loss als -8-12% unter entry. Nutze null wenn Datenlage unklar. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
+    system: "Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Investmentempfehlung auf Deutsch. WICHTIG: Beziehe dich ausschließlich auf die bereitgestellten Daten. Erwähne keine Firmennamen, Deals, Produkte oder Ereignisse, die nicht explizit in den Daten enthalten sind. Berechne konkrete Kursziele (price_levels): entry als idealen Einstieg (nahe MA50 oder -3% bei RSI>50), target als Kursziel (Analysten-Konsens bevorzugt, sonst +15-25%), stop_loss als -8-12% unter entry. Nutze null wenn Datenlage unklar. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
     messages: [
       {
         role: "user",
@@ -383,12 +473,28 @@ async function runFactCheckAgent(
   synthesis: SynthesisResult,
   analystData: AnalystData | null,
   googleNews: NewsItemWithDesc[],
-): Promise<{ result: SynthesisResult; entry: ProtocolEntry }> {
+): Promise<{ result: SynthesisResult; entry: ProtocolEntry; findings: StructuredFinding[] }> {
   const client = getClient();
+
+  // URL whitelist — Vera may only fetch URLs already present in googleNews
+  const allowedUrls = new Set(googleNews.map(n => n.url).filter((u): u is string => !!u));
+
+  const veraTool: Anthropic.Messages.Tool = {
+    name: "fetch_article",
+    description: "Ruft den vollständigen Inhalt eines bekannten Nachrichtenartikels ab, um eine Behauptung zu verifizieren. Nur für URLs aus der bereitgestellten News-Liste verwenden. Max. 3 Aufrufe insgesamt.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        url: { type: "string", description: "URL des Artikels (muss aus der News-Liste stammen)" },
+        reason: { type: "string", description: "Welche konkrete Behauptung soll verifiziert werden?" },
+      },
+      required: ["url", "reason"],
+    },
+  };
 
   const newsSection = googleNews.slice(0, 10).map(n => {
     const excerpt = n.description ? `\n   Excerpt: ${n.description}` : "";
-    return `- ${n.title} (${n.source})${excerpt}`;
+    return `- [${n.url ?? "keine URL"}] ${n.title} (${n.source})${excerpt}`;
   }).join("\n") || "Keine Schlagzeilen verfügbar";
 
   const analystSection = formatAnalystData(analystData) || "Keine Analysten-Daten verfügbar";
@@ -399,62 +505,116 @@ Bull-Case: ${synthesis.bull_case.join(" | ")}
 Bear-Case: ${synthesis.bear_case.join(" | ")}
 Wachstumsausblick: ${synthesis.growth_outlook}`;
 
-  const prompt = `Du prüfst eine KI-generierte Aktienanalyse für ${symbol} auf Faktengenauigkeit.
+  const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren. Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit validem JSON.`;
+
+  const userContent = `Prüfe diese KI-Analyse für ${symbol} auf Faktengenauigkeit.
 
 VERFÜGBARE FAKTEN:
 ${analystSection}
 
-AKTUELLE NACHRICHTEN (mit Artikel-Auszügen):
+AKTUELLE NACHRICHTEN (mit URLs und Auszügen):
 ${newsSection}
 
 ZU PRÜFENDE ANALYSE:
 ${draftText}
 
-Prüfe ob Aussagen in der Analyse durch die obigen Fakten und Artikel-Auszüge belegbar sind. Korrigiere NUR nachweisliche Fehler (erfundene Deals, falsche Zahlen, nicht belegte Ereignisse). Wenn Bull-Case oder Bear-Case unbelegte Behauptungen enthalten, liefere korrigierte Versionen.
+Wenn ein Excerpt zu kurz ist um eine Behauptung zu verifizieren: nutze fetch_article für den relevantesten Artikel.
 
-JSON-Format:
-{"corrections":["konkrete Korrektur, oder leeres Array"],"verified_claims":["verifizierte Aussagen"],"confidence_adjustment":<-3 bis 0>,"corrected_summary":"(nur wenn Summary falsche Fakten enthält, sonst null)","corrected_bull_case":["(nur bei unbelegten Punkten ersetzen, belegte Punkte unverändert übernehmen)"],"corrected_bear_case":["(analog)"]}`;
+Abschließendes JSON-Format:
+{"corrections":["konkrete Korrektur, oder leeres Array"],"verified_claims":["verifizierte Aussagen"],"confidence_adjustment":<-3 bis 0>,"corrected_summary":"<nur bei Faktenfehler, sonst null>","corrected_bull_case":["<korrigierte Liste>"],"corrected_bear_case":["<korrigierte Liste>"],"findings":[{"claim":"<betroffene Behauptung>","issue_type":"unbelegt_guidance|uebertriebener_konsens|falsche_zahl|erfundenes_event|fehlende_evidenz|sonstiges","correction":"<Korrektur>","severity":"low|medium|high","evidence_urls":["<URL>"],"confidence":<1-10>}]}`;
 
+  const messages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: userContent }];
   const fallbackEntry: ProtocolEntry = { agent: "Vera", status: "skipped", detail: "Fact-Check nicht verfügbar" };
+  let fetchCount = 0;
+  let factCheck: FactCheckResult | null = null;
 
   try {
-    const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 800,
-      system: "Du bist ein kritischer Fact-Checker für Finanzanalysen. Korrigiere nur was durch die gelieferten Daten nachweislich falsch ist. Antworte ausschließlich mit validem JSON.",
-      messages: [{ role: "user", content: prompt }],
-    });
+    for (let i = 0; i < 6; i++) {
+      const response = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1500,
+        system: systemPrompt,
+        tools: [veraTool],
+        tool_choice: { type: "auto" } as Anthropic.Messages.ToolChoiceAuto,
+        messages,
+      });
 
-    const factCheck = parseJSON<FactCheckResult>(extractText(response.content));
-    const corrections = (factCheck.corrections ?? []).filter(c => c.length > 0);
-    const convictionNew = Math.max(1, Math.min(10,
-      synthesis.conviction + (factCheck.confidence_adjustment ?? 0)
-    ));
+      messages.push({ role: "assistant", content: response.content });
 
-    const result: SynthesisResult = {
-      ...synthesis,
-      conviction: convictionNew,
-      summary: factCheck.corrected_summary ?? synthesis.summary,
-      bull_case: factCheck.corrected_bull_case ?? synthesis.bull_case,
-      bear_case: factCheck.corrected_bear_case ?? synthesis.bear_case,
-    };
-
-    const entry: ProtocolEntry = corrections.length > 0
-      ? {
-          agent: "Vera",
-          status: "warning",
-          detail: `${corrections.length} Korrektur${corrections.length > 1 ? "en" : ""}: ${corrections.join(" · ")}${factCheck.confidence_adjustment ? ` · Conviction ${synthesis.conviction}→${convictionNew}` : ""}`,
+      if (response.stop_reason === "end_turn") {
+        const text = extractText(response.content);
+        if (text) {
+          try { factCheck = parseJSON<FactCheckResult>(text); } catch { /* use null → fallback */ }
         }
-      : {
-          agent: "Vera",
-          status: "ok",
-          detail: `${(factCheck.verified_claims ?? []).length} Aussagen verifiziert — keine Korrekturen nötig`,
-        };
+        break;
+      }
 
-    return { result, entry };
+      const toolUses = response.content.filter(
+        (b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use",
+      );
+      if (!toolUses.length) break;
+
+      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
+      for (const tu of toolUses) {
+        if (tu.name !== "fetch_article") {
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: "Unbekanntes Tool." });
+          continue;
+        }
+        if (fetchCount >= 3) {
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: "Limit erreicht: max. 3 fetch_article Aufrufe erlaubt." });
+          continue;
+        }
+        const { url } = tu.input as { url: string; reason: string };
+        if (!allowedUrls.has(url)) {
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: "Fehler: URL nicht in der erlaubten News-Liste." });
+          continue;
+        }
+        fetchCount++;
+        const articleContent = await fetchArticleDescription(url, { maxLines: 6, maxChars: 1200 });
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: tu.id,
+          content: articleContent ?? "Artikel konnte nicht abgerufen werden.",
+        });
+      }
+      messages.push({ role: "user", content: toolResults });
+    }
   } catch {
-    return { result: synthesis, entry: fallbackEntry };
+    return { result: synthesis, entry: fallbackEntry, findings: [] };
   }
+
+  if (!factCheck) return { result: synthesis, entry: fallbackEntry, findings: [] };
+
+  const corrections = (factCheck.corrections ?? []).filter(c => c.length > 0);
+  const convictionNew = clampConviction(synthesis.conviction + (factCheck.confidence_adjustment ?? 0));
+
+  const result: SynthesisResult = {
+    ...synthesis,
+    conviction: convictionNew,
+    summary: factCheck.corrected_summary ?? synthesis.summary,
+    bull_case: factCheck.corrected_bull_case ?? synthesis.bull_case,
+    bear_case: factCheck.corrected_bear_case ?? synthesis.bear_case,
+  };
+
+  const fetchNote = fetchCount > 0 ? ` · ${fetchCount} Artikel nachrecherchiert` : "";
+  const entry: ProtocolEntry = corrections.length > 0
+    ? {
+        agent: "Vera",
+        status: "warning",
+        detail: `${corrections.length} Korrektur${corrections.length > 1 ? "en" : ""}: ${corrections.join(" · ")}${factCheck.confidence_adjustment ? ` · Conviction ${synthesis.conviction}→${convictionNew}` : ""}${fetchNote}`,
+      }
+    : {
+        agent: "Vera",
+        status: "ok",
+        detail: `${(factCheck.verified_claims ?? []).length} Aussagen verifiziert — keine Korrekturen nötig${fetchNote}`,
+      };
+
+  const findings: StructuredFinding[] = (factCheck.findings ?? []).map(f => ({
+    ...f,
+    confidence: clampConviction(f.confidence ?? 5),
+  }));
+
+  return { result, entry, findings };
 }
 
 function formatMarketIntel(
@@ -524,8 +684,7 @@ async function runMarketIntelAgent(
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
-    system:
-      "Du bist ein Marktanalyse-Experte. Bewerte Insider-Aktivität, institutionelle Positionierung und Suchtrends als Investmentsignale. Antworte ausschließlich mit validem JSON.",
+    system: "Du bist ein Marktanalyse-Experte. Bewerte Insider-Aktivität, institutionelle Positionierung und Suchtrends als Investmentsignale. Antworte ausschließlich mit validem JSON.",
     messages: [
       {
         role: "user",
@@ -546,19 +705,76 @@ async function runMarketIntelAgent(
   }
 }
 
-interface OrchestratorResult {
-  recommendation: string;
-  conviction: number;
-  summary: string;
-  bull_case: string[];
-  bear_case: string[];
-  growth_outlook: string;
-  price_levels: PriceLevels | null;
-  fundamental: FundamentalAnalysis;
-  sentiment: SentimentAnalysis;
-  market_intel: MarketIntelAnalysis | null;
-  protocol: ProtocolEntry[];
+// --- Guardrails & Feedback Dataset ---
+
+async function fetchGuardrails(symbol: string): Promise<string> {
+  try {
+    const supabase = await createClient();
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const [{ data: symbolData }, { data: globalData }] = await Promise.all([
+      db.from("fact_check_findings")
+        .select("correction, issue_type")
+        .eq("symbol", symbol)
+        .gte("created_at", cutoff)
+        .neq("review_status", "rejected")
+        .gte("confidence", 7)
+        .order("created_at", { ascending: false })
+        .limit(5),
+      db.from("fact_check_findings")
+        .select("correction, issue_type")
+        .gte("created_at", cutoff)
+        .neq("review_status", "rejected")
+        .gte("confidence", 9)
+        .order("created_at", { ascending: false })
+        .limit(5),
+    ]);
+
+    const seen = new Set<string>();
+    const lines: string[] = [];
+    const rows = [...((symbolData as { correction: string; issue_type: string }[] | null) ?? []), ...((globalData as { correction: string; issue_type: string }[] | null) ?? [])];
+    for (const r of rows) {
+      const key = r.correction.slice(0, 60);
+      if (!seen.has(key)) {
+        seen.add(key);
+        lines.push(`  - ${r.correction}`);
+      }
+    }
+    if (!lines.length) return "";
+    return `HISTORISCHE GUARDRAILS (aus früheren Vera-Korrekturen — strikt einhalten):\n${lines.join("\n")}`;
+  } catch {
+    return "";
+  }
 }
+
+async function saveFactCheckFindings(
+  analysisId: string | null,
+  symbol: string,
+  findings: StructuredFinding[],
+): Promise<void> {
+  if (!findings.length || !analysisId) return;
+  try {
+    const supabase = await createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("fact_check_findings").insert(
+      findings.map(f => ({
+        analysis_id: analysisId,
+        symbol,
+        claim: f.claim,
+        issue_type: f.issue_type,
+        correction: f.correction,
+        severity: f.severity,
+        evidence_urls: f.evidence_urls ?? [],
+        confidence: clampConviction(f.confidence),
+        review_status: "auto",
+      })),
+    );
+  } catch { /* Non-critical */ }
+}
+
+// --- Orchestrator ---
 
 async function runOrchestrator(
   symbol: string,
@@ -576,6 +792,9 @@ async function runOrchestrator(
   let sentiment: SentimentAnalysis | null = null;
   let marketIntel: MarketIntelAnalysis | null = null;
   const protocol: ProtocolEntry[] = [];
+
+  // Load guardrails from Vera's past findings (parallel, non-blocking on failure)
+  const guardrails = await fetchGuardrails(symbol).catch(() => "");
 
   const dataAvailability = [
     `Finanzkennzahlen: ${snapshot.price != null ? "vorhanden" : "fehlen"}`,
@@ -652,17 +871,19 @@ Vorgehen: Starte mit Fundamental- und Sentiment-Analyse. Rufe Markt-Intelligenz 
     },
   ];
 
+  const systemPrompt = `Du bist Opus, der leitende Investment-Stratege. Du koordinierst dein Analyse-Team:
+- Felix (analyze_fundamentals): Fundamental-Analyst, kann mit Fokus mehrfach aufgerufen werden
+- Nina (analyze_sentiment): Sentiment-Analystin
+- Marco (analyze_market_intelligence): Markt-Intelligence-Spezialist
+
+Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und entscheidest selbst welche Analysen du benötigst. Erstelle faktenbasierte, präzise Empfehlungen auf Deutsch. Beziehe dich ausschließlich auf bereitgestellte Daten.${guardrails ? "\n\n" + guardrails : ""}`;
+
   for (let i = 0; i < 10; i++) {
     const response = await client.messages.create({
       model: "claude-opus-4-7",
       max_tokens: 2000,
       thinking: { type: "adaptive" },
-      system: `Du bist Opus, der leitende Investment-Stratege. Du koordinierst dein Analyse-Team:
-- Felix (analyze_fundamentals): Fundamental-Analyst, kann mit Fokus mehrfach aufgerufen werden
-- Nina (analyze_sentiment): Sentiment-Analystin
-- Marco (analyze_market_intelligence): Markt-Intelligence-Spezialist
-
-Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und entscheidest selbst welche Analysen du benötigst. Erstelle faktenbasierte, präzise Empfehlungen auf Deutsch. Beziehe dich ausschließlich auf bereitgestellte Daten.`,
+      system: systemPrompt,
       tools,
       messages,
     });
@@ -675,19 +896,35 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
     );
     if (toolUses.length === 0) break;
 
-    // complete_analysis → run Vera, then return
+    // complete_analysis → validate with Zod, run Vera, then return
     const completeCall = toolUses.find(t => t.name === "complete_analysis");
     if (completeCall) {
-      const inp = completeCall.input as {
-        recommendation: string; conviction: number; summary: string;
-        bull_case: string[]; bear_case: string[]; growth_outlook: string;
-        entry?: number | null; target?: number | null; stop_loss?: number | null;
-        entry_rationale?: string; target_rationale?: string;
-      };
+      let inp: CompleteAnalysisInput;
+      const parseResult = CompleteAnalysisSchema.safeParse(completeCall.input);
+      if (parseResult.success) {
+        inp = parseResult.data;
+      } else {
+        // Salvage what we can from malformed input
+        const raw = completeCall.input as Record<string, unknown>;
+        inp = {
+          recommendation: validateRecommendation(String(raw.recommendation ?? "Halten")),
+          conviction: clampConviction(Number(raw.conviction ?? 5)),
+          summary: String(raw.summary ?? ""),
+          bull_case: Array.isArray(raw.bull_case) ? raw.bull_case.map(String) : [],
+          bear_case: Array.isArray(raw.bear_case) ? raw.bear_case.map(String) : [],
+          growth_outlook: String(raw.growth_outlook ?? ""),
+          entry: raw.entry != null ? Number(raw.entry) : undefined,
+          target: raw.target != null ? Number(raw.target) : undefined,
+          stop_loss: raw.stop_loss != null ? Number(raw.stop_loss) : undefined,
+          entry_rationale: String(raw.entry_rationale ?? ""),
+          target_rationale: String(raw.target_rationale ?? ""),
+        };
+        protocol.push({ agent: "Opus", status: "warning", detail: "complete_analysis Schema-Validierung fehlgeschlagen — Fallback-Werte genutzt" });
+      }
 
       const rawResult: SynthesisResult = {
         recommendation: inp.recommendation,
-        conviction: Math.min(10, Math.max(1, Math.round(inp.conviction))),
+        conviction: clampConviction(inp.conviction),
         summary: inp.summary,
         bull_case: inp.bull_case ?? [],
         bear_case: inp.bear_case ?? [],
@@ -704,7 +941,7 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
         detail: `Synthese: ${rawResult.recommendation} · Conviction ${rawResult.conviction}/10 · Adaptive Thinking aktiv`,
       });
 
-      const { result: verified, entry: veraEntry } = await runFactCheckAgent(symbol, rawResult, analystData, googleNews);
+      const { result: verified, entry: veraEntry, findings } = await runFactCheckAgent(symbol, rawResult, analystData, googleNews);
       protocol.push(veraEntry);
 
       return {
@@ -714,6 +951,7 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
         sentiment: sentiment ?? { sentiment: "neutral", key_themes: [], sentiment_summary: "" },
         market_intel: marketIntel,
         protocol,
+        findings,
       };
     }
 
@@ -756,7 +994,7 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
     messages.push({ role: "user", content: toolResults });
   }
 
-  // Fallback: Orchestrator hat nicht sauber abgeschlossen → alte Pipeline
+  // Fallback: Orchestrator hat nicht sauber abgeschlossen → direkte Pipeline
   const [fb_f, fb_s, fb_m] = await Promise.all([
     fundamental ?? runFundamentalAgent(snapshot, edgarFacts, peerContext),
     sentiment ?? runSentimentAgent(googleNews),
@@ -770,10 +1008,12 @@ Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und
   }
   const rawSynthesis = await runSynthesisAgent(symbol, snapshot, fb_f, fb_s, fb_m, analystData);
   protocol.push({ agent: "Opus", status: "ok", detail: `Synthese (Fallback): ${rawSynthesis.recommendation} · Conviction ${rawSynthesis.conviction}/10` });
-  const { result: synthesis, entry: veraEntry } = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews);
+  const { result: synthesis, entry: veraEntry, findings } = await runFactCheckAgent(symbol, rawSynthesis, analystData, googleNews);
   protocol.push(veraEntry);
-  return { ...synthesis, price_levels: synthesis.price_levels ?? null, fundamental: fb_f, sentiment: fb_s, market_intel: fb_m, protocol };
+  return { ...synthesis, price_levels: synthesis.price_levels ?? null, fundamental: fb_f, sentiment: fb_s, market_intel: fb_m, protocol, findings };
 }
+
+// --- Cache & Persistence ---
 
 async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
   try {
@@ -843,7 +1083,8 @@ async function saveOutcome(result: AIAnalysisResult): Promise<void> {
   }
 }
 
-async function saveAnalysis(result: AIAnalysisResult): Promise<void> {
+async function saveAnalysis(result: AIAnalysisResult): Promise<string | null> {
+  if (!validateBeforeSave(result)) return null;
   try {
     const supabase = await createClient();
     const payload: AIAnalysisInsert = {
@@ -867,11 +1108,14 @@ async function saveAnalysis(result: AIAnalysisResult): Promise<void> {
         protocol: result.protocol,
       }) as unknown as import("@/types/database").Json,
     };
-    await supabase.from("ai_analyses").insert(payload);
+    const { data } = await supabase.from("ai_analyses").insert(payload).select("id").single();
+    return data?.id ?? null;
   } catch {
-    // Non-critical — analysis still returned even if caching fails
+    return null;
   }
 }
+
+// --- Route handler ---
 
 export async function POST(
   _request: NextRequest,
@@ -940,7 +1184,7 @@ export async function POST(
       fetched_at: assetData.fetched_at,
     };
 
-    // Enrich news with article descriptions for Nina's deeper sentiment analysis
+    // Enrich news with Jina excerpts for Nina + Vera
     const googleNewsEnriched = await enrichWithDescriptions(googleNews).catch(() => googleNews);
 
     const peerContext = await fetchPeerContext(symbol).catch(() => "");
@@ -965,7 +1209,10 @@ export async function POST(
       from_cache: false,
     };
 
-    await saveAnalysis(result);
+    const analysisId = await saveAnalysis(result);
+    if (analysisId && orchestrated.findings.length) {
+      void saveFactCheckFindings(analysisId, symbol, orchestrated.findings);
+    }
     void saveOutcome(result);
 
     return NextResponse.json(result);
