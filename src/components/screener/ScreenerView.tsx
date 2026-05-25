@@ -44,17 +44,37 @@ function ScoreBar({ value, color }: { value: number; color: string }) {
 export function ScreenerView() {
   const [entries, setEntries] = useState<ScreenerEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [seeding, setSeeding] = useState(false);
+  const [seedMsg, setSeedMsg] = useState<string | null>(null);
   const [signalFilter, setSignalFilter] = useState<string>("alle");
   const [minScore, setMinScore] = useState(0);
   const [sortBy, setSortBy] = useState("score_desc");
 
-  useEffect(() => {
+  function loadEntries() {
+    setLoading(true);
     fetch("/api/screener")
       .then(r => r.ok ? r.json() : [])
       .then(setEntries)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { loadEntries(); }, []);
+
+  async function handleSeed() {
+    setSeeding(true);
+    setSeedMsg("Lade Aktienuniversum … (kann 1–2 Min dauern)");
+    try {
+      const res = await fetch("/api/screener/seed", { method: "POST" });
+      const data = await res.json();
+      setSeedMsg(`✓ ${data.seeded} Aktien analysiert, ${data.skipped ?? 0} bereits aktuell`);
+      loadEntries();
+    } catch {
+      setSeedMsg("Fehler beim Laden – bitte erneut versuchen.");
+    } finally {
+      setSeeding(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     let list = entries.filter(e => {
@@ -77,11 +97,27 @@ export function ScreenerView() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-white">Screener</h2>
-        <span className="text-xs px-2 py-1 rounded-lg font-medium"
-          style={{ background: "var(--card-border)", color: "var(--muted)" }}>
-          {filtered.length} Aktien
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs px-2 py-1 rounded-lg font-medium"
+            style={{ background: "var(--card-border)", color: "var(--muted)" }}>
+            {filtered.length} Aktien
+          </span>
+          <button
+            onClick={handleSeed}
+            disabled={seeding}
+            className="text-xs px-3 py-1.5 rounded-xl font-semibold disabled:opacity-50 transition-opacity"
+            style={{ background: "rgba(99,102,241,0.2)", color: "#818cf8" }}>
+            {seeding ? "Lädt…" : "Universe laden"}
+          </button>
+        </div>
       </div>
+
+      {seedMsg && (
+        <div className="rounded-xl px-3 py-2 text-xs font-medium"
+          style={{ background: "rgba(99,102,241,0.12)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.25)" }}>
+          {seedMsg}
+        </div>
+      )}
 
       {/* Signal filter chips */}
       <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
