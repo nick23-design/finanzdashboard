@@ -19,6 +19,7 @@ interface QuickData {
   totalScore: number;
   priceChangePct: number | null;
   sparkline: number[];
+  name: string | null;
 }
 
 function Sparkline({ prices, isUp }: { prices: number[]; isUp: boolean }) {
@@ -104,6 +105,7 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
           totalScore: score?.total_score ?? 50,
           priceChangePct,
           sparkline,
+          name: asset?.name ?? item.name ?? null,
         });
       } catch {
         if (!cancelled) setData(null);
@@ -141,11 +143,16 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
           </div>
 
           {/* Company name */}
-          {item.name && item.name !== item.symbol && (
-            <p className="text-[10px] truncate" style={{ color: "var(--muted)" }}>
-              {item.name}
-            </p>
-          )}
+          {(() => {
+            const displayName = data?.name ?? item.name;
+            return displayName && displayName !== item.symbol ? (
+              <p className="text-[10px] truncate" style={{ color: "var(--muted)" }}>
+                {displayName}
+              </p>
+            ) : loading ? (
+              <Skeleton className="w-20" height="h-3" />
+            ) : null;
+          })()}
 
           {/* Price */}
           {loading ? (
