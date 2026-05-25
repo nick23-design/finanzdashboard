@@ -5,9 +5,12 @@ import { tickerSchema } from "@/lib/validation";
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { fetchGoogleNews } from "@/lib/finance-client";
+import { enrichWithDescriptions } from "@/lib/article-fetch";
 import { PEER_MAP } from "@/lib/peer-map";
 import type { AssetSnapshot, AnalysisScore } from "@/types/database";
 import type { GoogleNewsItem } from "@/lib/finance-client";
+
+type NewsItemWithDesc = GoogleNewsItem & { description: string | null };
 
 export interface CompareResult {
   symbolA: string;
@@ -126,10 +129,13 @@ async function getPeerAverages(symbol: string): Promise<string> {
   return parts.length > 1 ? parts.join(" | ") : "";
 }
 
-function formatNews(symbol: string, news: GoogleNewsItem[]): string {
+function formatNews(symbol: string, news: NewsItemWithDesc[]): string {
   if (!news.length) return "";
   return `AKTUELLE NEWS ${symbol} (${news.length} Artikel):\n` +
-    news.slice(0, 5).map(n => `  - [${n.source}] ${n.title}`).join("\n");
+    news.slice(0, 5).map(n => {
+      const desc = n.description ? `\n     → ${n.description}` : "";
+      return `  - [${n.source}] ${n.title}${desc}`;
+    }).join("\n");
 }
 
 export async function POST(request: NextRequest) {
@@ -162,7 +168,7 @@ export async function POST(request: NextRequest) {
   const frontendA: Partial<AssetSnapshot> | null = body.dataA ?? null;
   const frontendB: Partial<AssetSnapshot> | null = body.dataB ?? null;
 
-  const [dbSnapshotA, dbSnapshotB, scoreA, scoreB, newsA, newsB, peerA, peerB] = await Promise.all([
+  const [dbSnapshotA, dbSnapshotB, scoreA, scoreB, rawNewsA, rawNewsB, peerA, peerB] = await Promise.all([
     getCachedSnapshot(symbolA),
     getCachedSnapshot(symbolB),
     getCachedScore(symbolA),
@@ -171,6 +177,12 @@ export async function POST(request: NextRequest) {
     fetchGoogleNews(symbolB).catch(() => [] as GoogleNewsItem[]),
     getPeerAverages(symbolA).catch(() => ""),
     getPeerAverages(symbolB).catch(() => ""),
+  ]);
+
+  // Enrich both news lists with Jina article content in parallel
+  const [newsA, newsB] = await Promise.all([
+    enrichWithDescriptions(rawNewsA),
+    enrichWithDescriptions(rawNewsB),
   ]);
 
   // Use DB snapshot if available, fall back to frontend-provided data
