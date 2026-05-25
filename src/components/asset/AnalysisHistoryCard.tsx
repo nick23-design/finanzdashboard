@@ -350,6 +350,7 @@ export function AnalysisHistoryCard({ symbol }: { symbol: string }) {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const autoExpanded = history.length === 1;
 
   useEffect(() => {
     fetch(`/api/ai-analysis/${symbol}/history`)
@@ -381,13 +382,13 @@ export function AnalysisHistoryCard({ symbol }: { symbol: string }) {
         {loaded && history.length >= 2 && <ScoreTrendChart entries={history} />}
         {loaded && history.length === 1 && (
           <p className="text-xs" style={{ color: "var(--muted)" }}>
-            Eine Analyse vorhanden — nach weiteren Analysen erscheint hier ein Trend-Chart.
+            Erste Analyse — nach weiteren Durchläufen erscheint hier ein Trend-Chart.
           </p>
         )}
       </div>
 
       {/* Aufklappbare Liste */}
-      {open && loaded && history.length > 0 && (
+      {(open || autoExpanded) && loaded && history.length > 0 && (
         <div className="px-4 pb-4 border-t" style={{ borderColor: "var(--card-border)" }}>
           <div className="pt-3 space-y-2">
             {history.map((entry) => {

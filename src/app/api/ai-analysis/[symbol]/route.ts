@@ -532,7 +532,7 @@ Abschließendes JSON-Format:
     for (let i = 0; i < 6; i++) {
       const response = await client.messages.create({
         model: "claude-sonnet-4-6",
-        max_tokens: 1500,
+        max_tokens: 2500,
         system: systemPrompt,
         tools: [veraTool],
         tool_choice: { type: "auto" } as Anthropic.Messages.ToolChoiceAuto,
