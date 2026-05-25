@@ -147,7 +147,7 @@ function CompareChart({
   );
 }
 
-function AICompareCard({ symbolA, symbolB, snapshotLoaded }: { symbolA: string; symbolB: string; snapshotLoaded: boolean }) {
+function AICompareCard({ symbolA, symbolB, assetA, assetB, snapshotLoaded }: { symbolA: string; symbolB: string; assetA: AssetData | null; assetB: AssetData | null; snapshotLoaded: boolean }) {
   const [result, setResult] = useState<CompareResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -158,7 +158,12 @@ function AICompareCard({ symbolA, symbolB, snapshotLoaded }: { symbolA: string; 
       const res = await fetch("/api/ai-analysis/compare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbolA, symbolB }),
+        body: JSON.stringify({
+          symbolA,
+          symbolB,
+          dataA: assetA,
+          dataB: assetB,
+        }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? "Fehler"); return; }
@@ -574,7 +579,7 @@ export function CompareView() {
 
       {/* AI Compare */}
       {(symbolA && symbolB) && (
-        <AICompareCard symbolA={symbolA} symbolB={symbolB} snapshotLoaded={bothLoaded} />
+        <AICompareCard symbolA={symbolA} symbolB={symbolB} assetA={assetA} assetB={assetB} snapshotLoaded={bothLoaded} />
       )}
     </div>
   );

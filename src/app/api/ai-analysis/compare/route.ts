@@ -115,12 +115,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Bitte zwei verschiedene Aktien wählen" }, { status: 400 });
   }
 
-  const [snapshotA, snapshotB, scoreA, scoreB] = await Promise.all([
+  // Frontend can pass asset data directly (avoids Supabase snapshot dependency)
+  const frontendA: Partial<AssetSnapshot> | null = body.dataA ?? null;
+  const frontendB: Partial<AssetSnapshot> | null = body.dataB ?? null;
+
+  const [dbSnapshotA, dbSnapshotB, scoreA, scoreB] = await Promise.all([
     getCachedSnapshot(symbolA),
     getCachedSnapshot(symbolB),
     getCachedScore(symbolA),
     getCachedScore(symbolB),
   ]);
+
+  // Use DB snapshot if available, fall back to frontend-provided data
+  const snapshotA = dbSnapshotA ?? (frontendA ? { ...frontendA, id: "", symbol: symbolA, fetched_at: new Date().toISOString() } as AssetSnapshot : null);
+  const snapshotB = dbSnapshotB ?? (frontendB ? { ...frontendB, id: "", symbol: symbolB, fetched_at: new Date().toISOString() } as AssetSnapshot : null);
 
   if (!snapshotA || !snapshotB) {
     return NextResponse.json(

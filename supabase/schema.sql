@@ -96,6 +96,11 @@ create policy "Authenticated users can read snapshots"
   to authenticated
   using (true);
 
+create policy "Authenticated users can insert snapshots"
+  on public.asset_snapshots for insert
+  to authenticated
+  with check (true);
+
 create index if not exists asset_snapshots_symbol_fetched_idx
   on public.asset_snapshots(symbol, fetched_at desc);
 
