@@ -94,6 +94,13 @@ export default async function SettingsPage() {
           <span style={{ color: "var(--muted)" }}>›</span>
         </Link>
         <Link
+          href="/dashboard/agents"
+          className="flex items-center justify-between px-4 py-3 border-t"
+          style={{ borderColor: "var(--card-border)" }}>
+          <span className="text-sm text-white">KI-Agenten</span>
+          <span style={{ color: "var(--muted)" }}>›</span>
+        </Link>
+        <Link
           href="/dashboard/about"
           className="flex items-center justify-between px-4 py-3 border-t"
           style={{ borderColor: "var(--card-border)" }}>
