@@ -351,6 +351,7 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currency, setCurrency] = useState<string>("USD");
+  const [currencyLocked, setCurrencyLocked] = useState(false);
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -378,7 +379,7 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
       if (res.ok) {
         const d = await res.json();
         if (d.name) setForm(f => ({ ...f, name: d.name }));
-        if (d.currency) setCurrency(d.currency);
+        if (d.currency && !currencyLocked) setCurrency(d.currency);
       }
     } catch {}
   }
@@ -421,6 +422,7 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
           purchase_price: parseFloat(form.purchase_price),
           purchase_date: form.purchase_date,
           broker: form.broker || undefined,
+          purchase_currency: currency,
         }),
       });
       if (!res.ok) {
@@ -513,19 +515,37 @@ function AddForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => v
         </div>
 
         <div>
-          <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>
-            Einstiegskurs ({cs}) *
-            {currency !== "USD" && (
-              <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded"
-                style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8" }}>
-                {currency} erkannt
-              </span>
-            )}
-          </label>
-          <input required type="number" step="any" min="0" className={field} style={fieldStyle}
-            placeholder={currency === "EUR" ? "150,00" : "150.00"}
-            value={form.purchase_price}
-            onChange={e => setForm(f => ({ ...f, purchase_price: e.target.value }))} />
+          <label className="text-xs block mb-1" style={{ color: "var(--muted)" }}>Einstiegskurs *</label>
+          <div className="flex gap-2">
+            <div className="flex rounded-xl overflow-hidden border text-xs font-semibold"
+              style={{ borderColor: "var(--card-border)" }}>
+              {["USD", "EUR", "GBP", "CHF"].map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => { setCurrency(c); setCurrencyLocked(true); }}
+                  className="px-2 py-2 transition-colors"
+                  style={{
+                    background: currency === c ? "var(--primary)" : "var(--background)",
+                    color: currency === c ? "#000" : "var(--muted)",
+                  }}>
+                  {c}
+                </button>
+              ))}
+            </div>
+            <input required type="number" step="any" min="0" className={`${field} flex-1`} style={fieldStyle}
+              placeholder="150.00"
+              value={form.purchase_price}
+              onChange={e => setForm(f => ({ ...f, purchase_price: e.target.value }))} />
+          </div>
+          {currencyLocked && (
+            <p className="text-[10px] mt-1" style={{ color: "var(--muted)" }}>
+              Manuell auf {currency} gesetzt — wird beim nächsten Ticker nicht überschrieben.
+              <button type="button" className="ml-1 underline" onClick={() => setCurrencyLocked(false)}>
+                Zurücksetzen
+              </button>
+            </p>
+          )}
         </div>
 
         <div>
