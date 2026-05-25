@@ -13,6 +13,7 @@ import { MarketIndexBar } from "./MarketIndexBar";
 import { SectorTeaser } from "./SectorTeaser";
 import { MacroBar } from "./MacroBar";
 import { EarningsCalendarCard } from "./EarningsCalendarCard";
+import { ScreenerTeaser } from "@/components/screener/ScreenerTeaser";
 
 const REGION_LABEL: Record<StockEntry["region"], string> = {
   US: "🇺🇸", DE: "🇩🇪", EU: "🇪🇺", CH: "🇨🇭", ETF: "📦",
@@ -204,6 +205,9 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
 
       {/* Earnings-Kalender */}
       <EarningsCalendarCard />
+
+      {/* Screener Teaser */}
+      <ScreenerTeaser />
 
       {/* Morgen-Briefing */}
       <MorningBriefingCard />

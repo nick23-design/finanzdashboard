@@ -61,6 +61,31 @@ export default async function SettingsPage() {
           <span className="text-sm text-white">Preis-Alerts</span>
           <span style={{ color: "var(--muted)" }}>›</span>
         </Link>
+        <Link
+          href="/dashboard/screener"
+          className="flex items-center justify-between px-4 py-3 border-t"
+          style={{ borderColor: "var(--card-border)" }}>
+          <div>
+            <span className="text-sm text-white">Screener</span>
+            <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded font-medium"
+              style={{ background: "rgba(99,102,241,0.2)", color: "#818cf8" }}>NEU</span>
+          </div>
+          <span style={{ color: "var(--muted)" }}>›</span>
+        </Link>
+        <Link
+          href="/dashboard/sectors"
+          className="flex items-center justify-between px-4 py-3 border-t"
+          style={{ borderColor: "var(--card-border)" }}>
+          <span className="text-sm text-white">Sektor-Übersicht</span>
+          <span style={{ color: "var(--muted)" }}>›</span>
+        </Link>
+        <Link
+          href="/dashboard/compare"
+          className="flex items-center justify-between px-4 py-3 border-t"
+          style={{ borderColor: "var(--card-border)" }}>
+          <span className="text-sm text-white">Aktienvergleich</span>
+          <span style={{ color: "var(--muted)" }}>›</span>
+        </Link>
       </div>
 
       <PushToggle />

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { PortfolioSummary, PortfolioGroup } from "@/app/api/portfolio/route";
 import { PortfolioChart } from "./PortfolioChart";
+import { CorrelationMatrix } from "./CorrelationMatrix";
 
 function fmt(n: number, dec = 2) { return n.toFixed(dec); }
 function fmtSign(n: number, dec = 2) { return (n >= 0 ? "+" : "") + n.toFixed(dec); }
@@ -587,6 +588,11 @@ export function PortfolioView() {
           </p>
           <PortfolioChart groups={data.groups} totalInvested={data.total_invested} period={period} />
         </div>
+      )}
+
+      {/* Correlation Matrix */}
+      {data && data.groups.length >= 2 && (
+        <CorrelationMatrix groups={data.groups} />
       )}
 
       {/* Add Form */}
