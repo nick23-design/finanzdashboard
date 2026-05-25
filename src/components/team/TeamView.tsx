@@ -132,6 +132,24 @@ const CATEGORIES: Category[] = [
         ],
         requiresFinanceApi: true,
       },
+      {
+        id: "kai",
+        avatarId: "kai",
+        name: "Kai",
+        role: "Vergleichs-Analyst",
+        model: "claude-haiku-4-5",
+        modelLabel: "Claude Haiku 4.5",
+        color: "#6366f1",
+        description:
+          "Kai vergleicht zwei Aktien direkt miteinander und gibt eine klare Empfehlung. Er analysiert Kennzahlen, Scores und Marktposition beider Unternehmen und nennt Stärken, Schwächen und einen klaren Sieger.",
+        tasks: [
+          "Direktvergleich zweier Aktien auf Abruf",
+          "Kennzahlen- und Score-Analyse nebeneinander",
+          "Stärken und Schwächen jeder Aktie",
+          "Klare Handlungsempfehlung mit Begründung",
+        ],
+        requiresFinanceApi: false,
+      },
     ],
   },
   {

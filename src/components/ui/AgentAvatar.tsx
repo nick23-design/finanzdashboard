@@ -13,6 +13,7 @@ export const AGENTS = {
   nina:           { name: "Nina",             description: "Sentiment-Analystin",              seed: "NinaNHAgent",       color: "#8b5cf6" },
   marco:          { name: "Marco",            description: "Markt-Intelligence-Spezialist",    seed: "MarcoNHAgent",      color: "#f97316" },
   vera:           { name: "Vera",             description: "Fakten-Prüferin",                  seed: "VeraNHAgent",       color: "#ef4444" },
+  kai:            { name: "Kai",              description: "Vergleichs-Analyst",               seed: "KaiNHAgent",        color: "#6366f1" },
   lena:           { name: "Lena",             description: "News-Kuratorin",                   seed: "LenaNHAgent",       color: "#06b6d4" },
   lisa:           { name: "Lisa",             description: "News-Kuratorin",                   seed: "LisaNHAgent",       color: "#06b6d4" },
 } as const;

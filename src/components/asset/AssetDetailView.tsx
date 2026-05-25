@@ -455,23 +455,32 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
 
   return (
     <div className="space-y-4">
-      {/* Back + Alerts */}
+      {/* Back + Actions */}
       <div className="flex items-center justify-between">
         <Link href={backHref} className="text-sm flex items-center gap-1"
           style={{ color: "var(--muted)" }}>
           {backLabel}
         </Link>
-        <Link
-          href={`/dashboard/alerts?symbol=${symbol}`}
-          className="relative flex items-center justify-center w-8 h-8 rounded-full transition-colors"
-          style={{ background: "var(--card-border)", color: "var(--muted)" }}
-          title="Alarm-Übersicht">
-          <Bell size={15} />
-          {triggeredCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2"
-              style={{ background: "#ef4444", borderColor: "var(--background)" }} />
-          )}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/dashboard/compare?a=${symbol}`}
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-full font-medium"
+            style={{ background: "var(--card-border)", color: "var(--muted)" }}
+            title="Aktie vergleichen">
+            Vergleichen
+          </Link>
+          <Link
+            href={`/dashboard/alerts?symbol=${symbol}`}
+            className="relative flex items-center justify-center w-8 h-8 rounded-full transition-colors"
+            style={{ background: "var(--card-border)", color: "var(--muted)" }}
+            title="Alarm-Übersicht">
+            <Bell size={15} />
+            {triggeredCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2"
+                style={{ background: "#ef4444", borderColor: "var(--background)" }} />
+            )}
+          </Link>
+        </div>
       </div>
 
       {/* Hero */}

@@ -190,27 +190,6 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
         </div>
       </div>
 
-      {/* Sort chips */}
-      {items.length > 1 && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10px]" style={{ color: "var(--muted)" }}>Sortierung:</span>
-          {(["default", "az", "perf", "score"] as const).map((opt) => {
-            const label = { default: "Standard", az: "A–Z", perf: "Performance", score: "Score" }[opt];
-            return (
-              <button key={opt} onClick={() => setSortBy(opt)}
-                className="text-[10px] px-2 py-0.5 rounded-full font-medium"
-                style={{
-                  background: sortBy === opt ? "var(--primary)" : "var(--card)",
-                  color: sortBy === opt ? "#000" : "var(--muted)",
-                  border: `1px solid ${sortBy === opt ? "transparent" : "var(--card-border)"}`,
-                }}>
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
       {/* Marktindizes */}
       <MarketIndexBar />
 
@@ -405,6 +384,27 @@ export function WatchlistView({ initialItems }: WatchlistViewProps) {
       )}
 
       {isPending && <CardSkeleton />}
+
+      {/* Sort chips */}
+      {items.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px]" style={{ color: "var(--muted)" }}>Sortierung:</span>
+          {(["default", "az", "perf", "score"] as const).map((opt) => {
+            const label = { default: "Standard", az: "A–Z", perf: "Performance", score: "Score" }[opt];
+            return (
+              <button key={opt} onClick={() => setSortBy(opt)}
+                className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                style={{
+                  background: sortBy === opt ? "var(--primary)" : "var(--card)",
+                  color: sortBy === opt ? "#000" : "var(--muted)",
+                  border: `1px solid ${sortBy === opt ? "transparent" : "var(--card-border)"}`,
+                }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Watchlist Items */}
       {items.length === 0 && !isPending ? (

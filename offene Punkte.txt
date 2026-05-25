@@ -1,0 +1,14 @@
+ 1. Score-Trend — Aktuell ist der Score ein Snapshot. Wenn man sieht dass er von 45 → 55 → 68 über 3 Wochen gestiegen ist, ist das viel actionabler als eine einzelne Zahl.
+  Scores historisch in Supabase speichern und als Mini-Chart darstellen.
+  2. Tägliches Morgen-Briefing — Eine KI-generierte Karte um ~8:00 Uhr: Markt-Übernacht-Bewegungen, relevante News für deine Watchlist, Top-Chance des Tages. Würde die App
+  zum täglichen Ritual machen.
+  3. NH Select Trefferquote mit Kursentwicklung — Wie hat sich der Kurs nach jedem Pick tatsächlich entwickelt? +12% nach 2 Wochen, -5% nach 1 Woche etc. Schließt die
+  Feedback-Schleife und macht die KI-Qualität messbar. Das check-outcomes-Cron ist schon da, braucht nur Frontend.
+
+  Mittelfristig interessant:
+
+  4. Konkurrenten-Vergleich — Auf der Asset-Detailseite: 2-3 direkte Wettbewerber mit Score und Kursveränderung. Hilft bei relativer Bewertung ohne externes Tool.
+  5. Sektor-Radar — Welche Sektoren sind gerade stark/schwach? Gibt Makro-Kontext zu den Picks.
+
+  Meine Empfehlung: Zuerst den Score-Trend — er nutzt vorhandene Infrastruktur, erfordert keine neue KI-Logik und macht das Herzstück der App (den Score) deutlich wertvoller.
+   Danach das Morgen-Briefing, weil es die App vom passiven Tool zum aktiven Assistenten macht.
