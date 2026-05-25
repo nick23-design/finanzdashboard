@@ -187,6 +187,16 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [earnings, setEarnings] = useState<EarningsCalendar | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [triggeredCount, setTriggeredCount] = useState(0);
+
+  useEffect(() => {
+    fetch("/api/alerts")
+      .then(r => r.ok ? r.json() : [])
+      .then((data: { triggered: boolean }[]) =>
+        setTriggeredCount(data.filter(a => a.triggered).length)
+      )
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -321,10 +331,14 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         </Link>
         <Link
           href={`/dashboard/alerts?symbol=${symbol}`}
-          className="flex items-center justify-center w-8 h-8 rounded-full transition-colors"
+          className="relative flex items-center justify-center w-8 h-8 rounded-full transition-colors"
           style={{ background: "var(--card-border)", color: "var(--muted)" }}
           title="Alarm-Übersicht">
           <Bell size={15} />
+          {triggeredCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2"
+              style={{ background: "#ef4444", borderColor: "var(--background)" }} />
+          )}
         </Link>
       </div>
 
