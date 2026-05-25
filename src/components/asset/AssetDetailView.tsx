@@ -20,7 +20,7 @@ import type { SignalType } from "@/types/finance";
 import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
 import { formatCountdown, formatRelativeTime } from "@/lib/time";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
-import { Bell, TrendingUp } from "lucide-react";
+import { Bell, TrendingUp, RotateCw } from "lucide-react";
 import type { PortfolioGroup } from "@/app/api/portfolio/route";
 import { PeersSection } from "./PeersSection";
 
@@ -398,6 +398,20 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     return () => clearInterval(id);
   }, [aiLoading]);
 
+  async function handleManualRefresh() {
+    setRefreshing(true);
+    try {
+      const res = await fetch(`/api/assets/${symbol}?refresh=true`);
+      if (res.ok) {
+        const data = await res.json();
+        setAsset(data);
+        const scoreRes = await fetch(`/api/analyze/${symbol}`, { method: "POST" });
+        if (scoreRes.ok) setScore(await scoreRes.json());
+      }
+    } catch { /* ignore */ }
+    setRefreshing(false);
+  }
+
   async function runAIAnalysis() {
     setAiLoading(true);
     setAiError(null);
@@ -508,15 +522,25 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             <p className="text-2xl font-bold text-white">
               {asset?.price != null ? asset.price.toFixed(2) : "—"}
             </p>
-            {asset?.fetched_at && (
-              <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                {refreshing
-                  ? "Aktualisiere…"
-                  : cacheRemainingMs != null && cacheRemainingMs > 0
-                  ? `${formatRelativeTime(asset.fetched_at)} · in ${formatCountdown(cacheRemainingMs)}`
-                  : formatRelativeTime(asset.fetched_at)}
-              </p>
-            )}
+            <div className="flex items-center justify-end gap-1.5 mt-0.5">
+              {asset?.fetched_at && (
+                <p className="text-xs" style={{ color: "var(--muted)" }}>
+                  {refreshing
+                    ? "Aktualisiere…"
+                    : cacheRemainingMs != null && cacheRemainingMs > 0
+                    ? `${formatRelativeTime(asset.fetched_at)} · in ${formatCountdown(cacheRemainingMs)}`
+                    : formatRelativeTime(asset.fetched_at)}
+                </p>
+              )}
+              <button
+                onClick={handleManualRefresh}
+                disabled={refreshing}
+                title="Daten neu laden"
+                className="flex items-center justify-center w-5 h-5 rounded-full disabled:opacity-40"
+                style={{ color: "var(--muted)" }}>
+                <RotateCw size={11} className={refreshing ? "animate-spin" : ""} />
+              </button>
+            </div>
           </div>
         </div>
 

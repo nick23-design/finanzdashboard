@@ -88,7 +88,20 @@ export async function GET(
   }
   const symbol = parsed.data;
 
-  const cached = await getCachedSnapshot(symbol);
+  const url = new URL(request.url);
+  const forceRefresh = url.searchParams.get("refresh") === "true";
+
+  if (forceRefresh) {
+    const rlLive = rateLimit({ key: `assets-live:${user.id}`, limit: 10, windowSecs: 600 });
+    if (!rlLive.allowed) {
+      return NextResponse.json(
+        { error: "Zu viele Live-Abrufe. Bitte warte kurz." },
+        { status: 429 }
+      );
+    }
+  }
+
+  const cached = forceRefresh ? null : await getCachedSnapshot(symbol);
   if (cached) {
     return NextResponse.json({ ...cached, fromCache: true });
   }
