@@ -505,9 +505,20 @@ async function runFactCheckAgent(
     },
   };
 
+  function articleAgeDays(published: string | null): number | null {
+    if (!published) return null;
+    try {
+      const pub = new Date(published);
+      if (isNaN(pub.getTime())) return null;
+      return Math.floor((Date.now() - pub.getTime()) / 86_400_000);
+    } catch { return null; }
+  }
+
   const newsSection = googleNews.slice(0, 10).map(n => {
+    const days = articleAgeDays(n.published);
+    const ageLabel = days === null ? "" : days === 0 ? " (heute)" : days === 1 ? " (gestern)" : ` (vor ${days} Tagen)`;
     const excerpt = n.description ? `\n   Excerpt: ${n.description}` : "";
-    return `- [${n.url ?? "keine URL"}] ${n.title} (${n.source})${excerpt}`;
+    return `- [${n.url ?? "keine URL"}] ${n.title} (${n.source}${ageLabel})${excerpt}`;
   }).join("\n") || "Keine Schlagzeilen verfügbar";
 
   const analystSection = formatAnalystData(analystData) || "Keine Analysten-Daten verfügbar";
@@ -528,10 +539,16 @@ Wachstumsausblick: ${synthesis.growth_outlook}`;
 
   const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren. Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit validem JSON.
 
-WICHTIGE REGELN:
-1. AUTORITATIVE FAKTEN (live von Finance API) dürfen NIEMALS durch Preisangaben aus Nachrichtenartikeln überschrieben werden. Artikel berichten historische Kursstände — der aktuelle Kurs steht im Abschnitt AUTORITATIVE MARKTDATEN.
-2. Prozentzahlen in Artikeln (z.B. "Rally vom März-Tief") sind relative historische Bewegungen, keine aktuellen MA-Abstände — nur korrigieren wenn die Analyse explizit einen falschen MA-Abstand berechnet.
-3. Umsatzwachstum (TTM, YoY) ist korrekt wenn es dem gelieferten Wert entspricht — nicht als Fehler werten weil einzelne Quartale besser liefen.`;
+REGELN — Autoritative Daten & Artikel-Freshness:
+1. AUTORITATIVE MARKTDATEN (Finance API, live) haben immer Vorrang — Kurs, MA50, MA200, KGV und Umsatzwachstum aus diesem Abschnitt dürfen NICHT durch Artikelangaben überschrieben werden. Nachrichtenartikel berichten Kursstände zum Zeitpunkt ihrer Veröffentlichung, nicht den aktuellen Kurs.
+2. Altersbasierte Vertrauensregeln — eine Korrektur ist nur zulässig wenn der Beleg-Artikel aktuell genug ist:
+   - Kurse, Marktpreise, aktuelle Kennzahlen: nur Artikel < 2 Tage (älter = veraltet, keine Korrektur)
+   - Quartalsergebnisse, Guidance, Prognosen: nur Artikel < 14 Tage
+   - Ereignisse (M&A, Produktlaunch, Personalwechsel): nur Artikel < 30 Tage
+   - Strukturelle Fakten (Geschäftsmodell, Branche, Produktkategorien): kein Alterslimit
+   - Bei zu alten Artikeln: KEINE Korrektur — ggf. als findings-Eintrag mit confidence ≤ 4 und Hinweis "Artikel möglicherweise veraltet (vor X Tagen)"
+3. Prozentzahlen in Artikeln (z.B. "51% Rally vom März-Tief") sind historische Kursbewegungen, keine MA-Abstände — nicht als MA-Korrektur verwenden.
+4. Umsatzwachstum (TTM, YoY) ist der korrekte Jahresvergleich — einzelne positive Quartale widerlegen einen negativen TTM-Wert nicht.`;
 
   const userContent = `Prüfe diese KI-Analyse für ${symbol} auf Faktengenauigkeit.
 
@@ -541,7 +558,7 @@ ${authFacts}
 ANALYSTEN-KONSENS (Zukunftsprognosen):
 ${analystSection}
 
-AKTUELLE NACHRICHTEN (mit URLs und Auszügen — historische Preisangaben darin sind nicht der aktuelle Kurs):
+NACHRICHTEN (Alter in Klammern — beachte Altersregeln; Preisangaben in Artikeln sind historisch):
 ${newsSection}
 
 ZU PRÜFENDE ANALYSE:
