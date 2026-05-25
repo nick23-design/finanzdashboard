@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { RefreshCw, Sunrise } from "lucide-react";
+import { RefreshCw, Sunrise, ChevronDown, ChevronUp } from "lucide-react";
 import type { MorningBriefing } from "@/app/api/morning-briefing/route";
 
 export function MorningBriefingCard() {
@@ -10,6 +10,18 @@ export function MorningBriefingCard() {
   const [loading, setLoading]   = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]       = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("briefing_collapsed") === "1";
+  });
+
+  function toggleCollapse() {
+    setCollapsed(v => {
+      const next = !v;
+      localStorage.setItem("briefing_collapsed", next ? "1" : "0");
+      return next;
+    });
+  }
 
   async function load(force = false) {
     if (force) setRefreshing(true);
@@ -84,24 +96,35 @@ export function MorningBriefingCard() {
       }}>
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between cursor-pointer" onClick={toggleCollapse}>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
           <Sunrise size={13} style={{ color: "#818cf8" }} />
           <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#818cf8" }}>
             Morgen-Briefing
           </span>
           <span className="text-[10px]" style={{ color: "var(--muted)" }}>{timeStr}</span>
+          {collapsed && (
+            <span className="text-xs truncate ml-1" style={{ color: "var(--muted)" }}>
+              · {briefing.headline}
+            </span>
+          )}
         </div>
-        <button
-          onClick={() => load(true)}
-          disabled={refreshing}
-          title="Aktualisieren"
-          className="p-1 rounded-lg disabled:opacity-40"
-          style={{ color: "var(--muted)" }}>
-          <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={e => { e.stopPropagation(); load(true); }}
+            disabled={refreshing}
+            title="Aktualisieren"
+            className="p-1 rounded-lg disabled:opacity-40"
+            style={{ color: "var(--muted)" }}>
+            <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+          </button>
+          {collapsed
+            ? <ChevronDown size={14} style={{ color: "var(--muted)" }} />
+            : <ChevronUp size={14} style={{ color: "var(--muted)" }} />}
+        </div>
       </div>
 
+      {collapsed ? null : <>
       {/* Headline */}
       <p className="text-sm font-semibold text-white leading-snug">{briefing.headline}</p>
 
@@ -182,6 +205,7 @@ export function MorningBriefingCard() {
           </Link>
         </div>
       )}
+      </>}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Sparkles, RefreshCw, TrendingUp } from "lucide-react";
+import { Sparkles, RefreshCw, TrendingUp, ChevronDown, ChevronUp } from "lucide-react";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import { getNextWeekdayCron, formatCountdown } from "@/lib/time";
 
@@ -25,6 +25,18 @@ export function HotPickCard() {
   const [finnCountdown, setFinnCountdown] = useState(() =>
     formatCountdown(getNextWeekdayCron(7, 0).getTime() - Date.now())
   );
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("hotpick_collapsed") === "1";
+  });
+
+  function toggleCollapse() {
+    setCollapsed(v => {
+      const next = !v;
+      localStorage.setItem("hotpick_collapsed", next ? "1" : "0");
+      return next;
+    });
+  }
 
   useEffect(() => {
     const id = setInterval(
@@ -97,31 +109,42 @@ export function HotPickCard() {
         borderColor: "rgba(245,158,11,0.35)",
       }}>
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center justify-between cursor-pointer" onClick={toggleCollapse}>
+        <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
           <AgentAvatar agent="finn" size="xs" />
           <Sparkles size={13} style={{ color: "#f59e0b" }} />
           <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#f59e0b" }}>
             Hot Pick · Finn
           </span>
-          {pick.is_agent_pick && (
+          {pick.is_agent_pick && !collapsed && (
             <span
               className="text-xs px-1.5 py-0.5 rounded-full font-medium"
               style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa" }}>
               Autonome Analyse
             </span>
           )}
+          {collapsed && (
+            <span className="text-xs font-bold" style={{ color: "#f59e0b" }}>
+              {pick.symbol} · Score {pick.score}
+            </span>
+          )}
         </div>
-        <button
-          onClick={() => loadPick(true)}
-          disabled={refreshing}
-          title="Neu berechnen"
-          className="p-1 rounded-lg disabled:opacity-40"
-          style={{ color: "var(--muted)" }}>
-          <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={e => { e.stopPropagation(); loadPick(true); }}
+            disabled={refreshing}
+            title="Neu berechnen"
+            className="p-1 rounded-lg disabled:opacity-40"
+            style={{ color: "var(--muted)" }}>
+            <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+          </button>
+          {collapsed
+            ? <ChevronDown size={14} style={{ color: "var(--muted)" }} />
+            : <ChevronUp size={14} style={{ color: "var(--muted)" }} />}
+        </div>
       </div>
 
+      {collapsed ? null : <>
       {/* Main content */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -178,6 +201,7 @@ export function HotPickCard() {
           Nächste Analyse in {finnCountdown}
         </p>
       )}
+      </>}
     </div>
   );
 }
