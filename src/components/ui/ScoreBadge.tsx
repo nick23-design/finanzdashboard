@@ -1,11 +1,11 @@
 import type { SignalType } from "@/types/finance";
 
 const SIGNAL_STYLES: Record<SignalType, { bg: string; text: string; label: string }> = {
-  Bullish:           { bg: "#052e16", text: "#4ade80", label: "Bullish" },
-  "Slightly Bullish":{ bg: "#042f2e", text: "#2dd4bf", label: "Leicht Bullish" },
-  Neutral:           { bg: "#1e293b", text: "#94a3b8", label: "Neutral" },
-  Caution:           { bg: "#431407", text: "#fb923c", label: "Vorsicht" },
-  "High Risk":       { bg: "#450a0a", text: "#f87171", label: "Hohes Risiko" },
+  Bullish:           { bg: "rgba(34,197,94,0.18)",  text: "#4ade80", label: "Bullish" },
+  "Slightly Bullish":{ bg: "rgba(34,197,94,0.10)",  text: "#86efac", label: "Leicht Bullish" },
+  Neutral:           { bg: "rgba(148,163,184,0.15)", text: "#94a3b8", label: "Neutral" },
+  Caution:           { bg: "rgba(251,146,60,0.18)",  text: "#fb923c", label: "Vorsicht" },
+  "High Risk":       { bg: "rgba(239,68,68,0.18)",   text: "#f87171", label: "Hohes Risiko" },
 };
 
 interface ScoreBadgeProps {
