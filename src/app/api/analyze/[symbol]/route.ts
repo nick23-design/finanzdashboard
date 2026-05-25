@@ -119,7 +119,8 @@ export async function POST(
         explanation: score.explanation,
       });
 
-    if (insertError) throw new Error(insertError.message);
+    // Insert failure (e.g. RLS) should not block returning the score
+    if (insertError) console.error("Score insert failed:", insertError.message);
 
     return NextResponse.json({
       symbol: score.symbol,

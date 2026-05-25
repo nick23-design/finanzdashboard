@@ -121,5 +121,10 @@ create policy "Authenticated users can read scores"
   to authenticated
   using (true);
 
+create policy "Authenticated users can insert scores"
+  on public.analysis_scores for insert
+  to authenticated
+  with check (true);
+
 create index if not exists analysis_scores_symbol_created_idx
   on public.analysis_scores(symbol, created_at desc);
