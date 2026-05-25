@@ -545,6 +545,9 @@ Wachstumsausblick: ${synthesis.growth_outlook}`;
     snapshot.free_cashflow != null ? `Free Cashflow: ${fmtBigAuth(snapshot.free_cashflow)} ${snapshot.currency ?? "USD"}` : null,
     snapshot.debt_to_equity != null ? `Debt/Equity: ${snapshot.debt_to_equity.toFixed(2)}` : null,
     snapshot.market_cap != null ? `Marktkapitalisierung: ${fmtBigAuth(snapshot.market_cap)} ${snapshot.currency ?? "USD"}` : null,
+    snapshot.currency && snapshot.currency !== "USD"
+      ? `Währungshinweis: Finance API liefert Analysten-Kursziele in USD. Opus darf diese in ${snapshot.currency} umrechnen — das ist korrekt und kein Fehler.`
+      : null,
   ].filter(Boolean).join("\n");
 
   const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren. Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit validem JSON.
@@ -558,7 +561,8 @@ REGELN — Autoritative Daten & Artikel-Freshness:
    - Strukturelle Fakten (Geschäftsmodell, Branche, Produktkategorien): kein Alterslimit
    - Bei zu alten Artikeln: KEINE Korrektur — ggf. als findings-Eintrag mit confidence ≤ 4 und Hinweis "Artikel möglicherweise veraltet (vor X Tagen)"
 3. Prozentzahlen in Artikeln (z.B. "51% Rally vom März-Tief") sind historische Kursbewegungen, keine MA-Abstände — nicht als MA-Korrektur verwenden.
-4. Umsatzwachstum (TTM, YoY) ist der korrekte Jahresvergleich — einzelne positive Quartale widerlegen einen negativen TTM-Wert nicht.`;
+4. Umsatzwachstum (TTM, YoY) ist der korrekte Jahresvergleich — einzelne positive Quartale widerlegen einen negativen TTM-Wert nicht.
+5. Währungsumrechnung bei Analysten-Kurszielen: Finance API liefert Kursziele immer in USD. Bei Aktien die nicht in USD notieren darf Opus diese in die lokale Notierungswährung umrechnen. Eine solche Umrechnung ist KEIN Fehler — auch wenn der umgerechnete Wert vom USD-Betrag in den autoritativen Daten abweicht.`;
 
   const userContent = `Prüfe diese KI-Analyse für ${symbol} auf Faktengenauigkeit.
 
