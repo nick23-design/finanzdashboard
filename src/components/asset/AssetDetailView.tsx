@@ -25,8 +25,20 @@ import type { PortfolioGroup } from "@/app/api/portfolio/route";
 
 // ── Portfolio Position ────────────────────────────────────────────────────────
 
+type PosPeriod = "all" | "1mo" | "3mo" | "6mo" | "1y";
+const POS_PERIODS: { id: PosPeriod; label: string }[] = [
+  { id: "all", label: "ALL" },
+  { id: "1mo", label: "1M" },
+  { id: "3mo", label: "3M" },
+  { id: "6mo", label: "6M" },
+  { id: "1y",  label: "1J" },
+];
+
 function PortfolioPositionSection({ symbol }: { symbol: string }) {
   const [group, setGroup] = useState<PortfolioGroup | null>(null);
+  const [period, setPeriod] = useState<PosPeriod>("all");
+  const [startPrice, setStartPrice] = useState<number | null>(null);
+  const [histLoading, setHistLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/portfolio")
@@ -38,9 +50,30 @@ function PortfolioPositionSection({ symbol }: { symbol: string }) {
       .catch(() => {});
   }, [symbol]);
 
+  useEffect(() => {
+    if (period === "all") { setStartPrice(null); return; }
+    setHistLoading(true);
+    fetch(`/api/assets/${symbol}/history?period=${period}`)
+      .then(r => r.ok ? r.json() : [])
+      .then((pts: { time: string; value: number }[]) => setStartPrice(pts[0]?.value ?? null))
+      .catch(() => setStartPrice(null))
+      .finally(() => setHistLoading(false));
+  }, [period, symbol]);
+
   if (!group) return null;
 
-  const pnlColor = group.pnl == null ? "var(--muted)" : group.pnl >= 0 ? "#22c55e" : "#ef4444";
+  const isAll = period === "all";
+  let displayPnl: number | null = null;
+  let displayPct: number | null = null;
+  if (isAll) {
+    displayPnl = group.pnl;
+    displayPct = group.pnl_pct;
+  } else if (startPrice != null && group.current_price != null) {
+    displayPct = (group.current_price - startPrice) / startPrice * 100;
+    displayPnl = group.total_shares * (group.current_price - startPrice);
+  }
+
+  const pnlColor = displayPnl == null ? "var(--muted)" : displayPnl >= 0 ? "#22c55e" : "#ef4444";
   const dayColor = group.day_change_pct == null ? "var(--muted)" : group.day_change_pct >= 0 ? "#22c55e" : "#ef4444";
 
   return (
@@ -51,14 +84,12 @@ function PortfolioPositionSection({ symbol }: { symbol: string }) {
           <TrendingUp size={14} style={{ color: "var(--primary)" }} />
           <h3 className="font-semibold text-white text-sm">Meine Position</h3>
         </div>
-        <Link href="/dashboard/portfolio"
-          className="text-xs"
-          style={{ color: "var(--muted)" }}>
+        <Link href="/dashboard/portfolio" className="text-xs" style={{ color: "var(--muted)" }}>
           Portfolio →
         </Link>
       </div>
 
-      <div className="grid grid-cols-4 gap-2 text-xs">
+      <div className="grid grid-cols-4 gap-2 text-xs mb-3">
         <div>
           <p style={{ color: "var(--muted)" }}>Aktien</p>
           <p className="font-semibold text-white mt-0.5">{group.total_shares}</p>
@@ -81,20 +112,43 @@ function PortfolioPositionSection({ symbol }: { symbol: string }) {
         </div>
       </div>
 
-      {group.pnl != null && (
-        <div className="mt-3 pt-3 border-t flex items-center justify-between"
-          style={{ borderColor: "var(--card-border)" }}>
-          <span className="text-xs" style={{ color: "var(--muted)" }}>Gesamt P&L</span>
+      {/* Period picker */}
+      <div className="flex gap-1 p-0.5 rounded-lg border mb-3"
+        style={{ background: "var(--background)", borderColor: "var(--card-border)" }}>
+        {POS_PERIODS.map(p => (
+          <button key={p.id} onClick={() => setPeriod(p.id)}
+            className="flex-1 py-1 text-[11px] font-semibold rounded-md transition-all"
+            style={{
+              background: period === p.id ? "var(--primary)" : "transparent",
+              color: period === p.id ? "#000" : "var(--muted)",
+            }}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* P&L for selected period */}
+      <div className="pt-2 border-t flex items-center justify-between"
+        style={{ borderColor: "var(--card-border)" }}>
+        <span className="text-xs" style={{ color: "var(--muted)" }}>
+          P&L {isAll ? "gesamt" : POS_PERIODS.find(p => p.id === period)?.label}
+        </span>
+        {histLoading ? (
+          <div className="w-3 h-3 rounded-full border-2 border-t-transparent animate-spin"
+            style={{ borderColor: "var(--primary)", borderTopColor: "transparent" }} />
+        ) : displayPnl != null ? (
           <span className="text-sm font-bold" style={{ color: pnlColor }}>
-            {group.pnl >= 0 ? "+" : ""}{group.pnl.toFixed(2)}$
-            {group.pnl_pct != null && (
+            {displayPnl >= 0 ? "+" : ""}{displayPnl.toFixed(2)}$
+            {displayPct != null && (
               <span className="text-xs font-normal ml-1">
-                ({group.pnl_pct >= 0 ? "+" : ""}{group.pnl_pct.toFixed(1)}%)
+                ({displayPct >= 0 ? "+" : ""}{displayPct.toFixed(1)}%)
               </span>
             )}
           </span>
-        </div>
-      )}
+        ) : (
+          <span className="text-xs" style={{ color: "var(--muted)" }}>—</span>
+        )}
+      </div>
     </div>
   );
 }
