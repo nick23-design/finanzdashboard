@@ -14,17 +14,17 @@ interface WatchlistCardProps {
 }
 
 const SIGNAL_BG: Record<string, string> = {
-  "Kaufen":           "rgba(34,197,94,0.07)",
-  "Leicht kaufen":    "rgba(34,197,94,0.04)",
-  "Leicht verkaufen": "rgba(239,68,68,0.04)",
-  "Verkaufen":        "rgba(239,68,68,0.07)",
+  "Kaufen":           "rgba(34,197,94,0.13)",
+  "Leicht kaufen":    "rgba(34,197,94,0.07)",
+  "Leicht verkaufen": "rgba(239,68,68,0.07)",
+  "Verkaufen":        "rgba(239,68,68,0.13)",
 };
 
 interface QuickData {
   price: number | null;
   currency: string | null;
   signal: SignalType;
-  totalScore: number;
+  totalScore: number | null;
   priceChangePct: number | null;
   sparkline: number[];
   name: string | null;
@@ -106,8 +106,8 @@ export function WatchlistCard({ item, onRemove, onDataLoaded }: WatchlistCardPro
             ? ((currentPrice - prevClose) / prevClose) * 100
             : (asset?.price_change_pct ?? null);
 
-        const totalScore = score?.total_score ?? 50;
-        const signal = score?.signal ?? "Neutral";
+        const totalScore = score?.total_score ?? null;
+        const signal: SignalType = score?.signal ?? "Neutral";
         setData({
           price: currentPrice,
           currency: asset?.currency ?? null,
@@ -117,7 +117,7 @@ export function WatchlistCard({ item, onRemove, onDataLoaded }: WatchlistCardPro
           sparkline,
           name: asset?.name ?? item.name ?? null,
         });
-        onDataLoaded?.(item.symbol, totalScore, priceChangePct);
+        onDataLoaded?.(item.symbol, totalScore ?? 50, priceChangePct);
       } catch {
         if (!cancelled) setData(null);
       } finally {
@@ -131,7 +131,7 @@ export function WatchlistCard({ item, onRemove, onDataLoaded }: WatchlistCardPro
 
   const isUp = (data?.priceChangePct ?? 0) >= 0;
   const accentColor = !loading && data ? (isUp ? "#22c55e" : "#ef4444") : "transparent";
-  const cardBg = !loading && data ? (SIGNAL_BG[data.signal] ?? "var(--card)") : "var(--card)";
+  const cardBg = !loading && data?.totalScore != null ? (SIGNAL_BG[data.signal] ?? "var(--card)") : "var(--card)";
 
   return (
     <div
@@ -195,7 +195,7 @@ export function WatchlistCard({ item, onRemove, onDataLoaded }: WatchlistCardPro
         <div className="flex items-center justify-between pt-0.5">
           {loading ? (
             <Skeleton className="w-14" height="h-5" />
-          ) : data ? (
+          ) : data?.totalScore != null ? (
             <ScoreBadge signal={data.signal} score={data.totalScore} size="sm" />
           ) : (
             <span />
