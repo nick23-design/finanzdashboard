@@ -22,6 +22,7 @@ import { formatCountdown, formatRelativeTime } from "@/lib/time";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import { Bell, TrendingUp } from "lucide-react";
 import type { PortfolioGroup } from "@/app/api/portfolio/route";
+import { PeersSection } from "./PeersSection";
 
 // ── Portfolio Position ────────────────────────────────────────────────────────
 
@@ -552,6 +553,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
           </details>
         </div>
       )}
+
+      {/* Vergleichbare Unternehmen */}
+      <PeersSection symbol={symbol} />
 
       {/* Unternehmensbeschreibung */}
       {asset?.description && (
