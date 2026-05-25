@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { fetchGoogleNews } from "@/lib/finance-client";
+import { enrichWithDescriptions } from "@/lib/article-fetch";
 import type { FeedNewsItem } from "@/app/api/news/feed/route";
 
 export async function GET(
@@ -13,11 +14,14 @@ export async function GET(
 
   const { symbol } = await params;
   const news = await fetchGoogleNews(symbol).catch(() => []);
-  const raw = news.slice(0, 6);
+  const rawNews = news.slice(0, 6);
 
-  if (!raw.length) return NextResponse.json([]);
+  if (!rawNews.length) return NextResponse.json([]);
 
-  let enriched: FeedNewsItem[] = raw.map(item => ({
+  // Enrich with article descriptions in parallel
+  const rawWithDesc = await enrichWithDescriptions(rawNews);
+
+  let enriched: FeedNewsItem[] = rawWithDesc.map(item => ({
     symbol,
     title: item.title,
     title_de: item.title,
@@ -30,14 +34,19 @@ export async function GET(
   if (process.env.ANTHROPIC_API_KEY) {
     try {
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const list = raw.map((it, i) => `${i}. ${it.title}`).join("\n");
+      const list = rawWithDesc.map((it, i) => {
+        const desc = it.description ? `\n   → ${it.description}` : "";
+        return `${i}. ${it.title}${desc}`;
+      }).join("\n");
       const res = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 700,
         system: "Du bist eine Finanz-Nachrichtenredakteurin. Antworte ausschließlich mit validem JSON.",
         messages: [{
           role: "user",
-          content: `Klassifiziere und übersetze diese Nachrichten über ${symbol} für Investoren.\n\nRelevanz: "hoch"=direkte Unternehmensnews (Zahlen, Produkte, Übernahmen), "mittel"=Analysten/Sektor, "niedrig"=allgemein\n\n${list}\n\nJSON: {"items":[{"index":0,"importance":"hoch"|"mittel"|"niedrig","title_de":"deutsche Übersetzung"},...]}`,
+          content: `Klassifiziere und übersetze diese Nachrichten über ${symbol} für Investoren.
+Wo vorhanden, gibt es nach dem Titel einen kurzen Artikelauszug (→) für mehr Kontext.
+Relevanz: "hoch"=direkte Unternehmensnews (Zahlen, Produkte, Übernahmen), "mittel"=Analysten/Sektor, "niedrig"=allgemein\n\n${list}\n\nJSON: {"items":[{"index":0,"importance":"hoch"|"mittel"|"niedrig","title_de":"deutsche Übersetzung"},...]}`,
         }],
       });
       const text = res.content

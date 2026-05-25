@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
 import { fetchGoogleNews } from "@/lib/finance-client";
+import { enrichWithDescriptions } from "@/lib/article-fetch";
 
 export interface FeedNewsItem {
   symbol: string;
@@ -18,10 +19,13 @@ interface LenaResult {
   items: { index: number; importance: "hoch" | "mittel" | "niedrig"; title_de: string }[];
 }
 
-async function runLenaAgent(items: { title: string; symbol: string }[]): Promise<LenaResult> {
+async function runLenaAgent(items: { title: string; symbol: string; description?: string | null }[]): Promise<LenaResult> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const list = items.map((it, i) => `${i}. [${it.symbol}] ${it.title}`).join("\n");
+  const list = items.map((it, i) => {
+    const desc = it.description ? `\n   → ${it.description}` : "";
+    return `${i}. [${it.symbol}] ${it.title}${desc}`;
+  }).join("\n");
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -32,6 +36,7 @@ async function runLenaAgent(items: { title: string; symbol: string }[]): Promise
       {
         role: "user",
         content: `Klassifiziere und übersetze diese Finanznachrichten für Aktieninvestoren.
+Wo vorhanden, gibt es nach dem Titel einen kurzen Artikelauszug (→) für mehr Kontext.
 
 Relevanz-Regeln:
 - "hoch": direkte Unternehmensnews (Quartalszahlen, Produkte, Übernahmen, CEO-Wechsel, Regulierung)
@@ -85,25 +90,34 @@ export async function GET() {
     })
   );
 
-  const raw = results.flat().sort((a, b) => {
+  const sorted = results.flat().sort((a, b) => {
     if (!a.published && !b.published) return 0;
     if (!a.published) return 1;
     if (!b.published) return -1;
     return new Date(b.published).getTime() - new Date(a.published).getTime();
   });
 
-  if (!raw.length) return NextResponse.json([]);
+  if (!sorted.length) return NextResponse.json([]);
 
-  // Run Lena to classify + translate
-  let enriched: FeedNewsItem[] = raw.map(item => ({
-    ...item,
+  // Enrich all articles with descriptions in parallel (2.5 s timeout each)
+  const rawWithDesc = await enrichWithDescriptions(sorted);
+
+  // Run Lena to classify + translate (now with article excerpts for better context)
+  let enriched: FeedNewsItem[] = rawWithDesc.map(item => ({
+    symbol: item.symbol,
+    title: item.title,
     title_de: item.title,
+    source: item.source,
+    published: item.published,
+    url: item.url,
     importance: "mittel" as const,
   }));
 
   if (process.env.ANTHROPIC_API_KEY) {
     try {
-      const lenaResult = await runLenaAgent(raw.map(r => ({ title: r.title, symbol: r.symbol })));
+      const lenaResult = await runLenaAgent(
+        rawWithDesc.map(r => ({ title: r.title, symbol: r.symbol, description: r.description }))
+      );
       lenaResult.items.forEach(({ index, importance, title_de }) => {
         if (enriched[index]) {
           enriched[index].importance = importance;

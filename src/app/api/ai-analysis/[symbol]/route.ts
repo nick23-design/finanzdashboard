@@ -52,6 +52,7 @@ import type {
 import { createClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { PEER_MAP } from "@/lib/peer-map";
+import { enrichWithDescriptions } from "@/lib/article-fetch";
 import type { AssetSnapshot, Database } from "@/types/database";
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
@@ -260,7 +261,9 @@ async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, p
   }
 }
 
-async function runSentimentAgent(news: GoogleNewsItem[]): Promise<SentimentAnalysis> {
+type NewsItemWithDesc = GoogleNewsItem & { description?: string | null };
+
+async function runSentimentAgent(news: NewsItemWithDesc[]): Promise<SentimentAnalysis> {
   if (news.length === 0) {
     return {
       sentiment: "neutral",
@@ -274,7 +277,8 @@ async function runSentimentAgent(news: GoogleNewsItem[]): Promise<SentimentAnaly
   const PREMIUM_SOURCES = ["Reuters", "Bloomberg", "Financial Times", "WSJ", "Wall Street Journal", "CNBC", "Handelsblatt", "FAZ", "Seeking Alpha"];
   const headlines = news.map(n => {
     const tier = PREMIUM_SOURCES.some(s => n.source.includes(s)) ? "[★]" : "[ ]";
-    return `${tier} ${n.title} (${n.source})`;
+    const desc = n.description ? `\n   → ${n.description}` : "";
+    return `${tier} ${n.title} (${n.source})${desc}`;
   }).join("\n");
 
   const response = await client.messages.create({
@@ -525,7 +529,7 @@ interface OrchestratorResult {
 async function runOrchestrator(
   symbol: string,
   snapshot: AssetSnapshot,
-  googleNews: GoogleNewsItem[],
+  googleNews: NewsItemWithDesc[],
   edgarFacts: EdgarFacts | null,
   insiderTrades: InsiderTrade[],
   trends: TrendPoint[],
@@ -858,9 +862,12 @@ export async function POST(
       fetched_at: assetData.fetched_at,
     };
 
+    // Enrich news with article descriptions for Nina's deeper sentiment analysis
+    const googleNewsEnriched = await enrichWithDescriptions(googleNews).catch(() => googleNews);
+
     const peerContext = await fetchPeerContext(symbol).catch(() => "");
     const orchestrated = await runOrchestrator(
-      symbol, snapshot, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData, peerContext,
+      symbol, snapshot, googleNewsEnriched, edgarFacts, insiderTrades, trends, institutional, analystData, peerContext,
     );
 
     const result: AIAnalysisResult = {
