@@ -110,14 +110,16 @@ export function MorningBriefingCard() {
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <button
-            onClick={e => { e.stopPropagation(); load(true); }}
-            disabled={refreshing}
-            title="Aktualisieren"
-            className="p-1 rounded-lg disabled:opacity-40"
-            style={{ color: "var(--muted)" }}>
-            <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
-          </button>
+          {!collapsed && (
+            <button
+              onClick={e => { e.stopPropagation(); load(true); }}
+              disabled={refreshing}
+              title="Aktualisieren"
+              className="p-1 rounded-lg disabled:opacity-40"
+              style={{ color: "var(--muted)" }}>
+              <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+            </button>
+          )}
           {collapsed
             ? <ChevronDown size={14} style={{ color: "var(--muted)" }} />
             : <ChevronUp size={14} style={{ color: "var(--muted)" }} />}

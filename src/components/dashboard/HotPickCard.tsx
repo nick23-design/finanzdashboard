@@ -130,14 +130,16 @@ export function HotPickCard() {
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <button
-            onClick={e => { e.stopPropagation(); loadPick(true); }}
-            disabled={refreshing}
-            title="Neu berechnen"
-            className="p-1 rounded-lg disabled:opacity-40"
-            style={{ color: "var(--muted)" }}>
-            <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
-          </button>
+          {!collapsed && (
+            <button
+              onClick={e => { e.stopPropagation(); loadPick(true); }}
+              disabled={refreshing}
+              title="Neu berechnen"
+              className="p-1 rounded-lg disabled:opacity-40"
+              style={{ color: "var(--muted)" }}>
+              <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+            </button>
+          )}
           {collapsed
             ? <ChevronDown size={14} style={{ color: "var(--muted)" }} />
             : <ChevronUp size={14} style={{ color: "var(--muted)" }} />}
