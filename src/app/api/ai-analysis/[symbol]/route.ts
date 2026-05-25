@@ -550,10 +550,10 @@ Abschließendes JSON-Format:
 
       messages.push({ role: "assistant", content: response.content });
 
-      if (response.stop_reason === "end_turn") {
+      if (response.stop_reason === "end_turn" || response.stop_reason === "max_tokens") {
         const text = extractText(response.content);
         if (text) {
-          try { factCheck = parseJSON<FactCheckResult>(text); } catch { /* use null → fallback */ }
+          try { factCheck = parseJSON<FactCheckResult>(text); } catch { /* incomplete JSON → fallback */ }
         }
         break;
       }
