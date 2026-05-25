@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET() {
   try {
-    const supabase = createServiceClient();
+    const supabase = await createClient();
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
