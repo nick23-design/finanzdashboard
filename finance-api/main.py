@@ -186,14 +186,17 @@ def search_stocks(q: str = Query(..., min_length=1, max_length=50)):
         results = []
         for item in data.get("quotes", []):
             symbol = item.get("symbol", "")
+            quote_type = item.get("quoteType", "")
+            # Exclude Yahoo-internal fund codes (0P...) and mutual funds — no reliable price data
+            if not symbol or symbol.startswith("0P") or quote_type == "MUTUALFUND":
+                continue
             name = item.get("longname") or item.get("shortname") or symbol
-            if symbol:
-                results.append(SearchResult(
-                    symbol=symbol,
-                    name=name,
-                    exchange=item.get("exchange"),
-                    type=item.get("quoteType"),
-                ))
+            results.append(SearchResult(
+                symbol=symbol,
+                name=name,
+                exchange=item.get("exchange"),
+                type=quote_type,
+            ))
         return results
     except Exception:
         return []
