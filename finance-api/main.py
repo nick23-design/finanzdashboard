@@ -344,6 +344,50 @@ def get_asset(symbol: str, request: Request):
         market_cap = _safe_int(info.get("marketCap")) or fast_market_cap
         currency = info.get("currency") or fast_currency or "USD"
 
+        pe_ratio = _safe_float(info.get("trailingPE") or info.get("forwardPE"))
+        if pe_ratio is None and last_price:
+            eps = _safe_float(info.get("trailingEps") or info.get("forwardEps"))
+            if eps and eps > 0:
+                pe_ratio = round(last_price / eps, 2)
+
+        rev_growth = _safe_float(info.get("revenueGrowth"))
+        if rev_growth is None:
+            try:
+                income = ticker.get_income_stmt(freq="yearly")
+                if income is not None and not income.empty:
+                    for row_label in ["TotalRevenue", "Total Revenue"]:
+                        if row_label in income.index:
+                            revenues = income.loc[row_label].dropna().sort_index(ascending=False)
+                            if len(revenues) >= 2:
+                                r0, r1 = float(revenues.iloc[0]), float(revenues.iloc[1])
+                                if r1 != 0:
+                                    rev_growth = round((r0 - r1) / abs(r1), 4)
+                            break
+            except Exception:
+                pass
+
+        fcf = _safe_int(info.get("freeCashflow"))
+        if fcf is None:
+            try:
+                cf = ticker.get_cash_flow(freq="yearly")
+                if cf is not None and not cf.empty:
+                    op_cf = None
+                    capex = None
+                    for label in ["OperatingCashFlow", "Operating Cash Flow"]:
+                        if label in cf.index:
+                            op_cf = _safe_float(cf.loc[label].dropna().iloc[0])
+                            break
+                    for label in ["CapitalExpenditure", "Capital Expenditure"]:
+                        if label in cf.index:
+                            capex = _safe_float(cf.loc[label].dropna().iloc[0])
+                            break
+                    if op_cf is not None and capex is not None:
+                        fcf = _safe_int(op_cf + capex)
+                    elif op_cf is not None:
+                        fcf = _safe_int(op_cf)
+            except Exception:
+                pass
+
         return AssetResponse(
             symbol=symbol,
             name=info.get("longName") or info.get("shortName") or symbol,
@@ -351,11 +395,11 @@ def get_asset(symbol: str, request: Request):
             currency=currency,
             isin=isin,
             description=description,
-            pe_ratio=_safe_float(info.get("trailingPE") or info.get("forwardPE")),
+            pe_ratio=pe_ratio,
             market_cap=market_cap,
             debt_to_equity=_safe_float(info.get("debtToEquity")),
-            revenue_growth=_safe_float(info.get("revenueGrowth")),
-            free_cashflow=_safe_int(info.get("freeCashflow")),
+            revenue_growth=rev_growth,
+            free_cashflow=fcf,
             rsi=rsi,
             moving_average_50=ma50,
             moving_average_200=ma200,

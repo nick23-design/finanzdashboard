@@ -61,6 +61,24 @@ const CATEGORIES: Category[] = [
         isOrchestrator: true,
       },
       {
+        id: "diana",
+        avatarId: "diana",
+        name: "Diana",
+        role: "Datenqualitäts-Modul",
+        model: "rule-based",
+        modelLabel: "Regelbasiert",
+        color: "#06b6d4",
+        description:
+          "Diana prüft vor jeder Analyse die Vollständigkeit der verfügbaren Kennzahlen. Sie berechnet einen Datenbasis-Score (0–100) und gibt einen maximalen Conviction-Cap an Opus weiter — damit lückenhafte Daten nicht zu überkonfidenten Empfehlungen führen.",
+        tasks: [
+          "Datenbasis-Score (0–100) regelbasiert berechnen",
+          "Fehlende Kennzahlen identifizieren (KGV, FCF, Marktkapitalisierung etc.)",
+          "Conviction-Cap für Opus setzen (4–10)",
+          "Datenbasis-Warnung in der Analyse-UI anzeigen",
+        ],
+        requiresFinanceApi: true,
+      },
+      {
         id: "felix",
         avatarId: "felix",
         name: "Felix",

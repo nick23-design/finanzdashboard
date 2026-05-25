@@ -24,6 +24,48 @@ interface AgentDoc {
 
 const AGENTS: AgentDoc[] = [
   {
+    id: "diana",
+    model: "Regelbasiert (kein LLM)",
+    modelColor: "#06b6d4",
+    trigger: "Teil der Vollanalyse-Pipeline (on-demand)",
+    cache: "6 Stunden (als Teil des Gesamtergebnisses)",
+    pipeline: "Schritt 0 — Datenqualitäts-Vorprüfung",
+    inputs: [
+      "Asset-Snapshot: Preis, KGV, Marktkapitalisierung, Umsatzwachstum, Free Cashflow, Debt/Equity, RSI, MA50, MA200",
+      "EDGAR-Verfügbarkeit: Prüft ob SEC-Quartalsdaten für das Symbol vorhanden sind",
+    ],
+    outputs: [
+      "Completeness-Score 0–100",
+      "Liste fehlender Kennzahlen",
+      "Liste veralteter oder unplausibler Felder",
+      "Warnungen (z. B. kein EDGAR für EU-Aktien, Preis fehlt)",
+      "Analysis-Confidence-Cap 4–10 für Opus",
+    ],
+    systemPrompt: `"Kein LLM — Diana ist vollständig regelbasiert. Kein API-Call, kein Modell, kein Prompt."`,
+    workflow: [
+      "Alle Kennzahlen des Asset-Snapshots werden gegen eine Pflichtfeld-Liste geprüft",
+      "Fehlende Pflichtfelder (KGV, Marktkapitalisierung, etc.) werden mit Punktabzug bewertet",
+      "EDGAR-Verfügbarkeit wird separat geprüft (US-only, wichtig für Felix)",
+      "Score 0–100 wird berechnet: ≥85 = gut, ≥70 = lückenhaft, ≥55 = schwach",
+      "Score-Mapping zu Confidence-Cap: ≥85→10, ≥70→8, ≥55→7, ≥40→6, ≥25→5, sonst 4",
+      "Cap wird als Obergrenze an Opus übergeben und im Analyse-Ergebnis sichtbar gemacht",
+    ],
+    strengths: [
+      "Kein LLM — kein API-Call, kein Kostenfaktor, keine Latenz, keine Halluzinationen",
+      "Verhindert, dass lückenhafte Rohdaten zu überkonfidenten Empfehlungen führen",
+      "Macht Datenlücken für den User transparent (Datenbasis-Balken in der UI)",
+      "Läuft immer synchron vor der Analyse — kein Ausfallrisiko",
+    ],
+    weaknesses: [
+      "Kann die Qualität der Rohdaten nicht verbessern — nur bewerten und bremsen",
+      "EDGAR-Prüfung nur für US-Aktien; EU-Aktien verlieren systematisch Punkte",
+      "Score ist heuristisch — kein absoluter Wahrheitswert, nur ein Proxy für Datenvollständigkeit",
+      "Versteht keine inhaltlichen Fehler in den Daten, nur fehlende oder unplausible Werte",
+    ],
+    reliability: 5,
+    reliabilityNote: "Deterministisch — kein Modell, kein Zufall. Zuverlässigkeit 5/5 für das was sie tut: Datenvollständigkeit bewerten und Cap setzen.",
+  },
+  {
     id: "lisa",
     model: "Claude Haiku 4.5",
     modelColor: "#06b6d4",
