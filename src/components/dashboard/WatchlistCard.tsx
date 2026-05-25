@@ -23,7 +23,7 @@ interface QuickData {
 
 function Sparkline({ prices, isUp }: { prices: number[]; isUp: boolean }) {
   if (prices.length < 2) return null;
-  const w = 100, h = 28;
+  const w = 48, h = 20;
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   const range = max - min || 1;
@@ -34,8 +34,7 @@ function Sparkline({ prices, isUp }: { prices: number[]; isUp: boolean }) {
   });
   const color = isUp ? "#22c55e" : "#ef4444";
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
-      className="w-full opacity-70" style={{ height: 28 }}>
+    <svg width={w} height={h} className="flex-shrink-0 opacity-75">
       <polyline points={pts.join(" ")} fill="none" stroke={color}
         strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
@@ -132,10 +131,13 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
       <div className="p-3 space-y-2">
         <Link href={`/dashboard/asset/${item.symbol}`} className="block space-y-2">
 
-          {/* Top: logo + symbol */}
+          {/* Top: logo + symbol + sparkline */}
           <div className="flex items-center gap-1.5 min-w-0">
             <CompanyLogo symbol={item.symbol} />
-            <span className="font-bold text-white text-sm truncate">{item.symbol}</span>
+            <span className="font-bold text-white text-sm">{item.symbol}</span>
+            {!loading && data && data.sparkline.length >= 2 && (
+              <Sparkline prices={data.sparkline} isUp={isUp} />
+            )}
           </div>
 
           {/* Company name */}
@@ -202,12 +204,6 @@ export function WatchlistCard({ item, onRemove }: WatchlistCardProps) {
         </div>
       </div>
 
-      {/* Sparkline — volle Breite, unten */}
-      {!loading && data && data.sparkline.length >= 2 && (
-        <Link href={`/dashboard/asset/${item.symbol}`} className="block px-3 pb-2">
-          <Sparkline prices={data.sparkline} isUp={isUp} />
-        </Link>
-      )}
     </div>
   );
 }
