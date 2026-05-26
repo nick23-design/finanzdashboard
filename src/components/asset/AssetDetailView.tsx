@@ -291,6 +291,7 @@ const JOB_STEP_LABELS: Record<string, string> = {
   run_agents:   "Felix, Nina & Marco analysieren…",
   run_synthesis:"Synthese wird erstellt…",
   run_vera:     "Vera prüft Fakten…",
+  vera_pending: "Analyse bereit, Vera prüft nach…",
   save_result:  "Ergebnis wird gespeichert…",
   completed:    "Analyse abgeschlossen",
 };
@@ -440,10 +441,17 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         setAiProgress(progress);
         setAiCurrentStep(step);
 
-        if (job.status === "completed" && job.result) {
-          stopPolling();
+        if (job.result) {
           setAiAnalysis(job.result as unknown as AIAnalysisResult);
           setAiLoading(false);
+          if (pollingTimeoutRef.current) {
+            clearTimeout(pollingTimeoutRef.current);
+            pollingTimeoutRef.current = null;
+          }
+        }
+
+        if (job.status === "completed") {
+          stopPolling();
         } else if (job.status === "failed") {
           stopPolling();
           setAiError(typeof job.error === "string" ? job.error : "Analyse fehlgeschlagen.");
@@ -454,6 +462,11 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             stopPolling();
             setAiError("Analyse hat sich aufgehängt. Bitte erneut versuchen.");
             setAiLoading(false);
+          }
+        } else if (job.status === "reviewing" && job.result && typeof job.updated_at === "string") {
+          const staleMs = Date.now() - new Date(job.updated_at).getTime();
+          if (staleMs > 90_000) {
+            stopPolling();
           }
         }
       } catch { /* Netzwerkfehler → weiter pollen */ }

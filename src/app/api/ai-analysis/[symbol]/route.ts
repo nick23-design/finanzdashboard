@@ -87,6 +87,7 @@ export const maxDuration = 10;
 const ENRICH_MAX_ARTICLES = 6;
 const ENRICH_TIMEOUT_MS = 8_000;
 const VERA_MAX_TURNS = 3;
+const DEFERRED_VERA_TIMEOUT_MS = 18_000;
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
@@ -1199,7 +1200,7 @@ async function runAnalysisPipeline(
   peerContext: string,
   serviceClient: SbClient,
   onSynthesisStart?: () => Promise<void>,
-  onVeraStart?: () => Promise<void>,
+  _onVeraStart?: () => Promise<void>,
 ): Promise<OrchestratorResult> {
   const protocol: ProtocolEntry[] = [];
   const guardrails = await fetchGuardrails(symbol, serviceClient).catch(() => "");
@@ -1227,32 +1228,130 @@ async function runAnalysisPipeline(
   protocol.push({ agent: "Opus", status: "ok", detail: `Synthese: ${rawSynthesis.recommendation} · Conviction ${cappedConviction}/10${capNote}${guardrails ? " · Guardrails aktiv" : ""}` });
 
   const cappedSynthesis = { ...rawSynthesis, conviction: cappedConviction };
-
-  // Vera — Fact-Check mit Jina-Excerpts (Haiku, kein article-fetch = ~4s); harter 18s-Fallback
-  if (onVeraStart) await onVeraStart().catch(() => {});
-  const veraTimeout = new Promise<{ result: SynthesisResult; entry: ProtocolEntry; findings: StructuredFinding[] }>(
-    resolve => setTimeout(() => resolve({
-      result: cappedSynthesis,
-      entry: { agent: "Vera", status: "skipped", detail: "Timeout — Fact-Check übersprungen" },
-      findings: [],
-    }), 18_000),
-  );
-  const { result: verified, entry: veraEntry, findings } = await Promise.race([
-    runFactCheckAgent(symbol, cappedSynthesis, analystData, googleNews, snapshot, true),
-    veraTimeout,
-  ]);
-  protocol.push(veraEntry);
+  protocol.push({
+    agent: "Vera",
+    status: "skipped",
+    detail: "Fact-Check läuft nachgelagert und blockiert die Analyse nicht",
+  });
 
   return {
-    ...verified,
-    conviction: Math.min(verified.conviction, confidenceCap),
-    price_levels: verified.price_levels ?? null,
+    ...cappedSynthesis,
+    conviction: Math.min(cappedSynthesis.conviction, confidenceCap),
+    price_levels: cappedSynthesis.price_levels ?? null,
     fundamental,
     sentiment,
     market_intel: marketIntel,
     protocol,
-    findings,
+    findings: [],
   };
+}
+
+function replaceVeraProtocolEntry(entries: ProtocolEntry[], entry: ProtocolEntry): ProtocolEntry[] {
+  const pendingIndex = entries.findIndex(
+    item => item.agent === "Vera" && item.detail.includes("nachgelagert"),
+  );
+  if (pendingIndex === -1) return [...entries, entry];
+  return entries.map((item, index) => index === pendingIndex ? entry : item);
+}
+
+function buildAnalysisExtraData(result: AIAnalysisResult): import("@/types/database").Json {
+  return ({
+    ...(result.market_intel ? { market_intel: result.market_intel } : {}),
+    ...(result.price_levels ? { price_levels: result.price_levels } : {}),
+    ...(result.data_quality ? { data_quality: result.data_quality } : {}),
+    protocol: result.protocol,
+  }) as unknown as import("@/types/database").Json;
+}
+
+async function runDeferredVeraCheck({
+  analysisId,
+  jobId,
+  userId,
+  symbol,
+  result,
+  analystData,
+  googleNews,
+  snapshot,
+  confidenceCap,
+  serviceClient,
+}: {
+  analysisId: string | null;
+  jobId: string;
+  userId: string;
+  symbol: string;
+  result: AIAnalysisResult;
+  analystData: AnalystData | null;
+  googleNews: NewsItemWithDesc[];
+  snapshot: AssetSnapshot;
+  confidenceCap: number;
+  serviceClient: ReturnType<typeof createServiceClient>;
+}): Promise<void> {
+  const ts = () => new Date().toISOString();
+
+  const completeWith = async (finalResult: AIAnalysisResult) => {
+    if (analysisId) {
+      await serviceClient.from("ai_analyses").update({
+        recommendation: finalResult.recommendation,
+        conviction: finalResult.conviction,
+        summary: finalResult.summary,
+        bull_case: finalResult.bull_case,
+        bear_case: finalResult.bear_case,
+        growth_outlook: finalResult.growth_outlook,
+        extra_data: buildAnalysisExtraData(finalResult),
+      }).eq("id", analysisId);
+    }
+
+    await serviceClient.from("analysis_jobs").update({
+      status: "completed",
+      current_step: "completed",
+      progress: 100,
+      result: finalResult as unknown as import("@/types/database").Json,
+      updated_at: ts(),
+    }).eq("id", jobId).eq("user_id", userId);
+  };
+
+  const timeoutResult = Symbol("vera-timeout");
+  const factCheckPromise = runFactCheckAgent(
+    symbol, result, analystData, googleNews, snapshot, true,
+  ).catch(() => null);
+
+  const factCheck = await Promise.race([
+    factCheckPromise,
+    new Promise<typeof timeoutResult>(resolve =>
+      setTimeout(() => resolve(timeoutResult), DEFERRED_VERA_TIMEOUT_MS),
+    ),
+  ]);
+
+  if (!factCheck || factCheck === timeoutResult) {
+    const skippedResult: AIAnalysisResult = {
+      ...result,
+      protocol: replaceVeraProtocolEntry(result.protocol, {
+        agent: "Vera",
+        status: "skipped",
+        detail: "Fact-Check wegen Timeout übersprungen",
+      }),
+    };
+    await completeWith(skippedResult);
+    return;
+  }
+
+  const verifiedResult: AIAnalysisResult = {
+    ...result,
+    recommendation: factCheck.result.recommendation,
+    conviction: Math.min(factCheck.result.conviction, confidenceCap),
+    summary: factCheck.result.summary,
+    bull_case: factCheck.result.bull_case,
+    bear_case: factCheck.result.bear_case,
+    growth_outlook: factCheck.result.growth_outlook,
+    price_levels: factCheck.result.price_levels ?? result.price_levels,
+    protocol: replaceVeraProtocolEntry(result.protocol, factCheck.entry),
+  };
+
+  if (analysisId && factCheck.findings.length) {
+    void saveFactCheckFindings(analysisId, symbol, factCheck.findings, serviceClient);
+  }
+
+  await completeWith(verifiedResult);
 }
 
 // ─── Background Job ───────────────────────────────────────────────────────────
@@ -1363,18 +1462,49 @@ export async function runAnalysisJob(
     };
 
     const analysisId = await saveAnalysis(result, serviceClient);
-    if (analysisId && orchestrated.findings.length) {
-      void saveFactCheckFindings(analysisId, symbol, orchestrated.findings, serviceClient);
-    }
     void saveOutcome(result, serviceClient);
 
     await serviceClient.from("analysis_jobs").update({
-      status: "completed",
-      current_step: "completed",
+      status: "reviewing",
+      current_step: "run_vera",
       progress: 100,
       result: result as unknown as import("@/types/database").Json,
       updated_at: ts(),
     }).eq("id", jobId).eq("user_id", userId);
+
+    await runDeferredVeraCheck({
+      analysisId,
+      jobId,
+      userId,
+      symbol,
+      result,
+      analystData,
+      googleNews: googleNewsEnriched,
+      snapshot,
+      confidenceCap: diana.analysis_confidence_cap,
+      serviceClient,
+    }).catch(async () => {
+      const skippedResult: AIAnalysisResult = {
+        ...result,
+        protocol: replaceVeraProtocolEntry(result.protocol, {
+          agent: "Vera",
+          status: "skipped",
+          detail: "Fact-Check konnte nachgelagert nicht abgeschlossen werden",
+        }),
+      };
+
+      try {
+        await serviceClient.from("analysis_jobs").update({
+          status: "completed",
+          current_step: "completed",
+          progress: 100,
+          result: skippedResult as unknown as import("@/types/database").Json,
+          updated_at: ts(),
+        }).eq("id", jobId).eq("user_id", userId);
+      } catch {
+        // The main result is already stored; Vera must never flip the job to failed.
+      }
+    });
 
   } catch (err) {
     await serviceClient.from("analysis_jobs").update({
@@ -1474,12 +1604,7 @@ async function saveAnalysis(result: AIAnalysisResult, client?: SbClient): Promis
       news_sentiment: result.sentiment.sentiment,
       news_themes: result.sentiment.key_themes,
       sentiment_summary: result.sentiment.sentiment_summary,
-      extra_data: ({
-        ...(result.market_intel ? { market_intel: result.market_intel } : {}),
-        ...(result.price_levels ? { price_levels: result.price_levels } : {}),
-        ...(result.data_quality ? { data_quality: result.data_quality } : {}),
-        protocol: result.protocol,
-      }) as unknown as import("@/types/database").Json,
+      extra_data: buildAnalysisExtraData(result),
     };
     const { data } = await supabase.from("ai_analyses").insert(payload).select("id").single();
     return data?.id ?? null;

@@ -31,7 +31,7 @@ export async function GET(
     status: data.status,
     current_step: data.current_step,
     progress: data.progress,
-    result: data.status === "completed" ? data.result : null,
+    result: data.result,
     error: data.error,
     created_at: data.created_at,
     updated_at: data.updated_at,
