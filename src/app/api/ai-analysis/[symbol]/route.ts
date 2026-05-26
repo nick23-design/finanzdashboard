@@ -437,7 +437,9 @@ function inferThesisType(s: AssetSnapshot, marketIntel: MarketIntelAnalysis | nu
   if (revenueGrowth > 0.15 && freeCashflow <= 0) return "Story Growth";
   if (revenueGrowth < 0 && freeCashflow <= 0) return "Turnaround";
   if (rsi >= 70 || aboveMa50 || marketIntel?.trends_momentum === "rising") return "Momentum";
-  if (s.debt_to_equity != null && s.debt_to_equity > 180) return "Speculative";
+  // Hohe Debt/Equity allein macht keine Aktie spekulativ — Finanzkonglomerate (Versicherungen, Banken)
+  // haben strukturell hohe Verschuldungsquoten. Ohne negative FCF und negatives Wachstum → Cyclical.
+  if (s.debt_to_equity != null && s.debt_to_equity > 180 && freeCashflow <= 0 && revenueGrowth < 0) return "Speculative";
   return "Cyclical";
 }
 
@@ -841,7 +843,7 @@ ${dataQuality ? `\nDATENQUALITÄT: ${dataQuality.completeness_score}/100 · Conv
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 2200,
+    max_tokens: 3500,
     system: `Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Research-Einschätzung auf Deutsch.
 
 WICHTIG:
