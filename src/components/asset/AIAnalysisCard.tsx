@@ -200,12 +200,17 @@ function getVeraReview(entries: ProtocolEntry[]): { status: VeraReviewStatus; en
     return { status: "running", entry };
   }
 
-  if (entry.status === "warning" || detail.includes("korrektur") || detail.includes("fehler")) {
-    return { status: "changed", entry };
+  if (
+    entry.status === "ok" ||
+    detail.includes("keine korrektur") ||
+    detail.includes("keine belegten fehler") ||
+    detail.includes("keine fehler")
+  ) {
+    return { status: "verified", entry };
   }
 
-  if (entry.status === "ok") {
-    return { status: "verified", entry };
+  if (entry.status === "warning" || detail.includes("korrektur") || detail.includes("fehler")) {
+    return { status: "changed", entry };
   }
 
   return { status: "failed", entry };
@@ -230,7 +235,7 @@ function VeraReviewCard({ entries }: { entries: ProtocolEntry[] }) {
       </div>
       <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-xs font-semibold text-white">Vera</p>
+          <p className="text-xs font-semibold text-white">Vera-Faktencheck</p>
           <span
             className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
             style={{ color: cfg.color, background: `${cfg.color}22` }}>
