@@ -1,5 +1,5 @@
 /*
- * Morgen-Briefing — personalisiertes KI-Briefing, täglich neu generiert.
+ * Morgen-Briefing — persönliches Markt-Briefing mit Watchlist-Relevanz.
  *
  * Supabase migration (einmalig im SQL-Editor ausführen):
  *
@@ -23,8 +23,13 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
-import { fetchAssetData, fetchGoogleNews, fetchMarketIndices } from "@/lib/finance-client";
-import type { GoogleNewsItem, MarketIndex } from "@/lib/finance-client";
+import {
+  fetchAssetData,
+  fetchGoogleNews,
+  fetchMarketIndices,
+  fetchEarningsCalendar,
+} from "@/lib/finance-client";
+import type { MarketIndex } from "@/lib/finance-client";
 
 export interface MorningBriefing {
   id: string;
@@ -59,6 +64,12 @@ function parseJSON<T>(raw: string): T {
   const end = stripped.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("No JSON");
   return JSON.parse(stripped.slice(start, end + 1)) as T;
+}
+
+function daysUntil(iso: string | null): number | null {
+  if (!iso) return null;
+  const diff = new Date(iso).getTime() - Date.now();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
 export async function GET(request: NextRequest) {
@@ -111,56 +122,88 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Fetch all data in parallel: assets, news (top 5), earnings (top 5), scores
   const top5 = watchlist.slice(0, 5);
-
-  // Fetch asset data and news in parallel (indices already fetched above)
-  const [assetSettled, newsSettled] = await Promise.all([
-    Promise.allSettled(top5.map(item => fetchAssetData(item.symbol))),
-    Promise.allSettled(top5.slice(0, 3).map(item => fetchGoogleNews(item.symbol))),
+  const [assetSettled, newsSettled, earningsSettled, scoresResult] = await Promise.all([
+    Promise.allSettled(watchlist.map(item => fetchAssetData(item.symbol))),
+    Promise.allSettled(top5.map(item => fetchGoogleNews(item.symbol))),
+    Promise.allSettled(top5.map(item => fetchEarningsCalendar(item.symbol))),
+    supabase
+      .from("analysis_scores")
+      .select("symbol, signal, total_score")
+      .in("symbol", watchlist.map(i => i.symbol))
+      .order("total_score", { ascending: false }),
   ]);
-  const indices = liveIndices;
 
-  // Build asset context string
-  const assetLines = top5.map((item, i) => {
+  // Build asset data map
+  interface AssetData {
+    price?: number | null;
+    currency?: string | null;
+    price_change_pct?: number | null;
+    rsi?: number | null;
+    moving_average_50?: number | null;
+  }
+  const assetMap = new Map<string, AssetData>();
+  watchlist.forEach((item, i) => {
     const r = assetSettled[i];
-    if (r.status === "rejected") return `${item.symbol} (${item.name}): Daten nicht verfügbar`;
-    const d = r.value as {
-      price?: number | null;
-      currency?: string | null;
-      price_change_pct?: number | null;
-      rsi?: number | null;
-      moving_average_50?: number | null;
-    };
+    if (r.status === "fulfilled") assetMap.set(item.symbol, r.value as AssetData);
+  });
+
+  // Sort watchlist items by absolute day change (notable movers first)
+  const ranked = watchlist.map(item => {
+    const d = assetMap.get(item.symbol);
+    return { item, data: d ?? null, absPct: Math.abs(d?.price_change_pct ?? 0) };
+  }).sort((a, b) => b.absPct - a.absPct);
+
+  // Split into notable (>= 1.5 % move) and rest
+  const notable = ranked.filter(r => r.absPct >= 1.5);
+  const rest    = ranked.filter(r => r.absPct < 1.5);
+
+  function formatAssetLine(symbol: string, name: string, d: AssetData | null): string {
+    if (!d) return `${symbol} (${name}): Daten nicht verfügbar`;
     const pct = d.price_change_pct != null
       ? ` (${d.price_change_pct > 0 ? "+" : ""}${d.price_change_pct.toFixed(1)}%)`
       : "";
     const rsi = d.rsi != null ? ` | RSI ${d.rsi.toFixed(0)}` : "";
     const ma50 = d.moving_average_50 != null ? ` | MA50 ${d.moving_average_50.toFixed(2)}` : "";
-    return `${item.symbol} (${item.name}): ${d.price?.toFixed(2) ?? "—"} ${d.currency ?? ""}${pct}${rsi}${ma50}`;
-  });
+    return `${symbol} (${name}): ${d.price?.toFixed(2) ?? "—"} ${d.currency ?? ""}${pct}${rsi}${ma50}`;
+  }
 
-  // Build news context string
-  const newsLines = top5.slice(0, 3).map((item, i) => {
+  const notableLines = notable.length > 0
+    ? notable.map(r => formatAssetLine(r.item.symbol, r.item.name, r.data))
+    : ["Keine außergewöhnlichen Bewegungen heute"];
+
+  const restLines = rest.length > 0
+    ? rest.map(r => formatAssetLine(r.item.symbol, r.item.name, r.data))
+    : [];
+
+  // News for top5 items (map by index in top5 order)
+  const newsLines = top5.map((item, i) => {
     const r = newsSettled[i];
-    if (r.status === "rejected") return "";
-    const articles = (r.value as GoogleNewsItem[]).slice(0, 2).map(n => `  · ${n.title}`).join("\n");
+    if (r.status === "rejected" || !r.value.length) return "";
+    const articles = r.value.slice(0, 2).map(n => `  · ${n.title}`).join("\n");
     return articles ? `${item.symbol}:\n${articles}` : "";
   }).filter(Boolean);
 
-  // Fetch existing scores for opportunity selection
-  const { data: scores } = await supabase
-    .from("analysis_scores")
-    .select("symbol, signal, total_score")
-    .in("symbol", top5.map(i => i.symbol))
-    .order("total_score", { ascending: false });
+  // Upcoming earnings in next 14 days
+  const earningsLines = top5.map((item, i) => {
+    const r = earningsSettled[i];
+    if (r.status === "rejected" || !r.value?.next_earnings_date) return null;
+    const days = daysUntil(r.value.next_earnings_date);
+    if (days == null || days < 0 || days > 14) return null;
+    const label = days === 0 ? "heute" : days === 1 ? "morgen" : `in ${days} Tagen`;
+    return `${item.symbol}: Earnings ${label} (${r.value.next_earnings_date})`;
+  }).filter((x): x is string => x !== null);
 
+  // Scores context
+  const scores = scoresResult.data;
   const scoresLine = scores && scores.length > 0
     ? scores.map(s => `${s.symbol}: ${s.signal} (${s.total_score}/100)`).join(", ")
     : "Keine Scores verfügbar";
 
-  // Build market indices context
-  const indicesLine = (indices as MarketIndex[]).length > 0
-    ? (indices as MarketIndex[]).map(idx => {
+  // Market indices context
+  const indicesLine = (liveIndices as MarketIndex[]).length > 0
+    ? (liveIndices as MarketIndex[]).map(idx => {
         if (idx.price == null) return `${idx.name}: keine Daten`;
         const pct = idx.change_pct != null
           ? ` (${idx.change_pct >= 0 ? "+" : ""}${idx.change_pct.toFixed(2)}%)`
@@ -174,31 +217,48 @@ export async function GET(request: NextRequest) {
   });
   const isWeekend = [0, 6].includes(new Date().getDay());
 
-  const prompt = `Morgen-Briefing für ${today}${isWeekend ? " (Wochenende – Märkte geschlossen)" : ""}.
+  const prompt = `Morgen-Briefing für ${today}${isWeekend ? " (Wochenende — Märkte geschlossen, Wochenrückblick)" : ""}.
 
 MARKTINDIZES:
 ${indicesLine}
 
-WATCHLIST-POSITIONEN:
-${assetLines.join("\n")}
+WATCHLIST — HEUTE AUFFÄLLIG (≥ 1,5 % Bewegung):
+${notableLines.join("\n")}
 
-ANALYSE-SCORES:
+WATCHLIST — WEITERE POSITIONEN:
+${restLines.length > 0 ? restLines.join("\n") : "—"}
+
+ANALYSE-SCORES (gespeichert):
 ${scoresLine}
 
-AKTUELLE SCHLAGZEILEN:
+NEWS-SCHLAGZEILEN (auffälligste Positionen):
 ${newsLines.join("\n") || "Keine Schlagzeilen verfügbar"}
 
-Erstelle ein prägnantes Morgen-Briefing auf Deutsch. Wähle als Tages-Chance die Aktie mit dem besten Chance/Risiko-Verhältnis (hoher Score + positive Signale).
+EARNINGS-TERMINE (nächste 14 Tage in Watchlist):
+${earningsLines.length > 0 ? earningsLines.join("\n") : "Keine bevorstehenden Earnings"}
 
-JSON-Format:
-{"headline":"Eine prägnante Zeile was heute wichtig ist","market_overview":"2-3 Sätze zur Marktlage","watchlist_highlights":["SYMBOL: kurze Beobachtung","..."],"daily_opportunity":{"symbol":"TICKER","name":"Unternehmensname","reason":"1-2 Sätze warum heute interessant"}}`;
+AUFGABE:
+Erstelle ein Morgen-Briefing auf Deutsch. Fokus:
+- 60 % Marktbild: Was bewegt die Märkte heute? Übergeordnetes Thema, Sektor-Kontext.
+- 25 % Watchlist-Relevanz: Nur Positionen erwähnen, die heute wirklich auffällig sind (Bewegung, Earnings, News). Stille Positionen nicht erwähnen.
+- 15 % Beobachtung des Tages: Eine Aktie oder ein Thema, das heute research-würdig ist.
+
+REGELN:
+- Keine Kauf- oder Verkaufsempfehlungen
+- Keine Kursversprechen, Kursziele oder Renditeerwartungen
+- Nur Aussagen, die aus den bereitgestellten Daten ableitbar sind
+- watchlist_highlights: maximal 3 Einträge, nur bei echten Signalen, sonst leeres Array
+- daily_opportunity ist eine Beobachtung/Research-Hinweis, keine Empfehlung
+
+JSON (exakt dieses Format):
+{"headline":"Eine prägnante Zeile was heute wichtig ist","market_overview":"2-3 Sätze zur Marktlage — marktgetrieben, nicht watchlist-getrieben","watchlist_highlights":["SYMBOL: kurze Beobachtung, nur wenn auffällig"],"daily_opportunity":{"symbol":"TICKER","name":"Unternehmensname","reason":"1-2 Sätze warum heute research-würdig"}}`;
 
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 700,
-      system: "Du bist ein prägnanter Finanz-Assistent. Erstelle faktenbasierte Morgen-Briefings auf Deutsch. Beziehe dich ausschließlich auf bereitgestellte Daten. Antworte ausschließlich mit validem JSON.",
+      max_tokens: 800,
+      system: "Du bist ein nüchterner Finanz-Assistent für ein privates Research-Dashboard. Erstelle faktenbasierte Morgen-Briefings auf Deutsch. Keine Kauf-/Verkaufsempfehlungen, keine Kursversprechen. Beziehe dich ausschließlich auf bereitgestellte Daten. Antworte ausschließlich mit validem JSON.",
       messages: [{ role: "user", content: prompt }],
     });
 
