@@ -448,6 +448,13 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
           stopPolling();
           setAiError(typeof job.error === "string" ? job.error : "Analyse fehlgeschlagen.");
           setAiLoading(false);
+        } else if (job.status === "running" && typeof job.updated_at === "string") {
+          const staleMs = Date.now() - new Date(job.updated_at).getTime();
+          if (staleMs > 90_000) {
+            stopPolling();
+            setAiError("Analyse hat sich aufgehängt. Bitte erneut versuchen.");
+            setAiLoading(false);
+          }
         }
       } catch { /* Netzwerkfehler → weiter pollen */ }
     }, 3000);

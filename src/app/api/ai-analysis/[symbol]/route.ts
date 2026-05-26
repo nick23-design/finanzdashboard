@@ -262,7 +262,7 @@ interface OrchestratorResult {
 // --- Helpers ---
 
 function getClient() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 25_000 });
 }
 
 function extractText(content: Anthropic.Messages.ContentBlock[]): string {
@@ -1226,11 +1226,26 @@ async function runAnalysisPipeline(
 
   const cappedSynthesis = { ...rawSynthesis, conviction: cappedConviction };
 
-  // Vera — ein schneller Sonnet-Call ohne article-fetch (Excerpts aus Schritt 2 reichen)
-  if (onVeraStart) await onVeraStart().catch(() => {});
+  // Vera wird im Background-Job übersprungen (zu unzuverlässig innerhalb after()-Budget)
+  // Vera bleibt aktiv wenn runAnalysisPipeline direkt (ohne Background-Job) aufgerufen wird
+  if (onVeraStart) {
+    // Background-Modus: Vera skippen
+    await onVeraStart().catch(() => {});
+    protocol.push({ agent: "Vera", status: "skipped", detail: "Wird in dieser Version übersprungen — Synthese ist vollständig" });
+    return {
+      ...cappedSynthesis,
+      price_levels: cappedSynthesis.price_levels ?? null,
+      fundamental,
+      sentiment,
+      market_intel: marketIntel,
+      protocol,
+      findings: [],
+    };
+  }
+
+  // Direktmodus (kein Background-Job): Vera läuft normal
   const { result: verified, entry: veraEntry, findings } = await runFactCheckAgent(
     symbol, cappedSynthesis, analystData, googleNews, snapshot,
-    true, // skipArticleFetch: Background-Job-Modus, kein Jina
   );
   protocol.push(veraEntry);
 
