@@ -81,7 +81,7 @@ import { PEER_MAP } from "@/lib/peer-map";
 import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
 import type { AssetSnapshot, Database } from "@/types/database";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
@@ -1358,7 +1358,10 @@ export async function POST(
     };
 
     // Enrich news with Jina excerpts for Nina + Vera
-    const googleNewsEnriched = await enrichWithDescriptions(googleNews).catch(() => googleNews);
+    const googleNewsEnriched = await Promise.race([
+      enrichWithDescriptions(googleNews),
+      new Promise<typeof googleNews>(resolve => setTimeout(() => resolve(googleNews), 8000)),
+    ]).catch(() => googleNews);
 
     const peerContext = await fetchPeerContext(symbol).catch(() => "");
 

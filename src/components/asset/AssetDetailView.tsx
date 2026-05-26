@@ -429,13 +429,15 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     pollingRef.current = setInterval(async () => {
       try {
         const res = await fetch(`/api/ai-analysis/${symbol}`);
-        const data = await res.json();
-        if (res.ok && "recommendation" in data) {
+        const text = await res.text();
+        let data: unknown;
+        try { data = JSON.parse(text); } catch { return; /* Nicht-JSON → weiter pollen */ }
+        if (res.ok && data !== null && typeof data === "object" && "recommendation" in data) {
           stopPolling();
           setAiAnalysis(data as AIAnalysisResult);
           setAiLoading(false);
         }
-      } catch { /* continue polling silently */ }
+      } catch { /* Netzwerkfehler → weiter pollen */ }
     }, 4000);
     pollingTimeoutRef.current = setTimeout(() => {
       stopPolling();
@@ -449,13 +451,22 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     setAiError(null);
     try {
       const res = await fetch(`/api/ai-analysis/${symbol}`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "KI-Analyse fehlgeschlagen");
-      if ("status" in data && data.status === "analyzing") {
+      const rawText = await res.text();
+      let data: unknown;
+      try { data = JSON.parse(rawText); }
+      catch { throw new Error(`Server-Fehler ${res.status} – Analyse konnte nicht geladen werden`); }
+      if (!res.ok) {
+        const errMsg = data !== null && typeof data === "object" && "error" in data
+          ? (data as { error: string }).error
+          : "KI-Analyse fehlgeschlagen";
+        throw new Error(errMsg);
+      }
+      const parsed = data as Record<string, unknown>;
+      if ("status" in parsed && parsed.status === "analyzing") {
         startPolling();
         return;
       }
-      setAiAnalysis(data as AIAnalysisResult);
+      setAiAnalysis(parsed as unknown as AIAnalysisResult);
       setAiLoading(false);
     } catch (err) {
       if (err instanceof TypeError) {
