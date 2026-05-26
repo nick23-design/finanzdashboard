@@ -34,6 +34,14 @@ import {
   fetchEarningsCalendar,
 } from "@/lib/finance-client";
 import type { MarketIndex } from "@/lib/finance-client";
+import {
+  sanitizeText,
+  validateIndexClaims,
+  assessDataQuality,
+  scoreIdeaCandidates,
+  type DataQuality,
+  type IndexWarning,
+} from "@/lib/briefing-validator";
 
 export interface BriefingProtocol {
   agent: string;
@@ -45,6 +53,12 @@ export interface BriefingProtocol {
   upcoming_earnings: string[];
   scores_used: string[];
   indices_count: number;
+  // Transparency / quality fields
+  data_quality: DataQuality;
+  validation_warnings: string[];
+  was_sanitized: boolean;
+  sanitization_changes: string[];
+  idea_selection_reasons: string[];
 }
 
 export interface MorningBriefing {
@@ -53,7 +67,7 @@ export interface MorningBriefing {
   headline: string;
   market_overview: string;
   watchlist_highlights: string[];
-  daily_opportunity: { symbol: string; name: string; reason: string } | null;
+  daily_opportunity: { symbol: string; name: string; reason: string; these?: string } | null;
   protocol: BriefingProtocol | null;
   indices: { symbol: string; name: string; price: number | null; change_pct: number | null }[];
   generated_at: string;
@@ -101,10 +115,9 @@ export async function GET(request: NextRequest) {
   const refresh = request.nextUrl.searchParams.get("refresh") === "1";
   const supabase = await createClient();
 
-  // Always fetch indices live (they change throughout the day)
+  // Always fetch indices live
   const liveIndices = await fetchMarketIndices();
 
-  // Return cached briefing text if available and not forced refresh
   if (!refresh) {
     const { data: cached } = await supabase
       .from("morning_briefings")
@@ -126,7 +139,6 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Fetch watchlist
   const { data: watchlist } = await supabase
     .from("watchlist_items")
     .select("symbol, name")
@@ -140,8 +152,8 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Fetch all data in parallel: assets, news (top 5), earnings (top 5), scores
   const top5 = watchlist.slice(0, 5);
+
   const [assetSettled, newsSettled, earningsSettled, scoresResult] = await Promise.all([
     Promise.allSettled(watchlist.map(item => fetchAssetData(item.symbol))),
     Promise.allSettled(top5.map(item => fetchGoogleNews(item.symbol))),
@@ -153,7 +165,6 @@ export async function GET(request: NextRequest) {
       .order("total_score", { ascending: false }),
   ]);
 
-  // Build asset data map
   interface AssetData {
     price?: number | null;
     currency?: string | null;
@@ -161,21 +172,99 @@ export async function GET(request: NextRequest) {
     rsi?: number | null;
     moving_average_50?: number | null;
   }
+
   const assetMap = new Map<string, AssetData>();
   watchlist.forEach((item, i) => {
     const r = assetSettled[i];
     if (r.status === "fulfilled") assetMap.set(item.symbol, r.value as AssetData);
   });
 
-  // Sort watchlist items by absolute day change (notable movers first)
+  // Sort watchlist by absolute day change
   const ranked = watchlist.map(item => {
     const d = assetMap.get(item.symbol);
     return { item, data: d ?? null, absPct: Math.abs(d?.price_change_pct ?? 0) };
   }).sort((a, b) => b.absPct - a.absPct);
 
-  // Split into notable (>= 1.5 % move) and rest
   const notable = ranked.filter(r => r.absPct >= 1.5);
   const rest    = ranked.filter(r => r.absPct < 1.5);
+
+  // News metadata
+  const newsFetchedFor = top5.map((item, i) => {
+    const r = newsSettled[i];
+    return (r.status === "fulfilled" && r.value.length > 0) ? item.symbol : null;
+  }).filter((x): x is string => x !== null);
+
+  const allNewsHeadlines = top5.flatMap((item, i) => {
+    const r = newsSettled[i];
+    if (r.status !== "fulfilled") return [];
+    return r.value.slice(0, 2).map(n => `${item.symbol}: ${n.title}`);
+  });
+
+  // Earnings in next 14 days
+  const earningsLines = top5.map((item, i) => {
+    const r = earningsSettled[i];
+    if (r.status === "rejected" || !r.value?.next_earnings_date) return null;
+    const days = daysUntil(r.value.next_earnings_date);
+    if (days == null || days < 0 || days > 14) return null;
+    const label = days === 0 ? "heute" : days === 1 ? "morgen" : `in ${days} Tagen`;
+    return `${item.symbol}: Earnings ${label} (${r.value.next_earnings_date})`;
+  }).filter((x): x is string => x !== null);
+
+  // Scores — deduplicate by symbol
+  const scoresRaw = scoresResult.data ?? [];
+  const scoresBySymbol = new Map<string, typeof scoresRaw[0]>();
+  for (const s of scoresRaw) {
+    if (!scoresBySymbol.has(s.symbol)) scoresBySymbol.set(s.symbol, s);
+  }
+  const scores = [...scoresBySymbol.values()];
+  const scoresLine = scores.length > 0
+    ? scores.map(s => `${s.symbol}: ${s.signal} (${s.total_score}/100)`).join(", ")
+    : "Keine Scores verfügbar";
+
+  // ── Data quality assessment ────────────────────────────────────────────────
+  const assetsWithPrice = [...assetMap.values()].filter(d => d.price != null).length;
+  const dataQuality = assessDataQuality({
+    assetsWithPrice,
+    watchlistTotal: watchlist.length,
+    newsCount: newsFetchedFor.length,
+    indicesCount: (liveIndices as MarketIndex[]).length,
+    scoresCount: scores.length,
+  });
+
+  // ── Idee des Tages — pre-score candidates ────────────────────────────────
+  const ideaCandidates = scoreIdeaCandidates(
+    top5.map((item, i) => ({
+      symbol: item.symbol,
+      name: item.name,
+      data: assetMap.get(item.symbol) ?? null,
+      hasScore: scoresBySymbol.has(item.symbol),
+      hasNews: newsSettled[i].status === "fulfilled" && (newsSettled[i] as PromiseFulfilledResult<{ title: string }[]>).value.length > 0,
+      hasEarnings: earningsLines.some(e => e.startsWith(item.symbol)),
+      newsCount: newsSettled[i].status === "fulfilled"
+        ? (newsSettled[i] as PromiseFulfilledResult<{ title: string }[]>).value.length
+        : 0,
+    }))
+  );
+
+  const topCandidate = ideaCandidates[0];
+  const ideaCandidatesBlock = ideaCandidates.slice(0, 3)
+    .map(c => `  ${c.symbol} (${c.name}): Score ${c.score} — ${c.reasons.join(", ")}`)
+    .join("\n");
+
+  // ── Market indices with pre-computed direction labels ─────────────────────
+  const indicesLine = (liveIndices as MarketIndex[]).length > 0
+    ? (liveIndices as MarketIndex[]).map(idx => {
+        if (idx.price == null) return `${idx.name}: keine Daten`;
+        const pct = idx.change_pct != null
+          ? ` (${idx.change_pct >= 0 ? "+" : ""}${idx.change_pct.toFixed(2)}%)`
+          : "";
+        const dir = idx.change_pct == null ? "unverändert"
+          : idx.change_pct > 0.1 ? "steigt"
+          : idx.change_pct < -0.1 ? "fällt"
+          : "nahezu unverändert";
+        return `${idx.name}: ${idx.price.toLocaleString("de-DE")}${pct} → RICHTUNG: ${dir}`;
+      }).join("\n")
+    : "Marktdaten nicht verfügbar";
 
   function formatAssetLine(symbol: string, name: string, d: AssetData | null): string {
     if (!d) return `${symbol} (${name}): Daten nicht verfügbar`;
@@ -190,74 +279,14 @@ export async function GET(request: NextRequest) {
   const notableLines = notable.length > 0
     ? notable.map(r => formatAssetLine(r.item.symbol, r.item.name, r.data))
     : ["Keine außergewöhnlichen Bewegungen heute"];
+  const restLines = rest.map(r => formatAssetLine(r.item.symbol, r.item.name, r.data));
 
-  const restLines = rest.length > 0
-    ? rest.map(r => formatAssetLine(r.item.symbol, r.item.name, r.data))
-    : [];
-
-  // News for top5 items (map by index in top5 order)
   const newsLines = top5.map((item, i) => {
     const r = newsSettled[i];
     if (r.status === "rejected" || !r.value.length) return "";
     const articles = r.value.slice(0, 2).map(n => `  · ${n.title}`).join("\n");
     return articles ? `${item.symbol}:\n${articles}` : "";
   }).filter(Boolean);
-
-  // Upcoming earnings in next 14 days
-  const earningsLines = top5.map((item, i) => {
-    const r = earningsSettled[i];
-    if (r.status === "rejected" || !r.value?.next_earnings_date) return null;
-    const days = daysUntil(r.value.next_earnings_date);
-    if (days == null || days < 0 || days > 14) return null;
-    const label = days === 0 ? "heute" : days === 1 ? "morgen" : `in ${days} Tagen`;
-    return `${item.symbol}: Earnings ${label} (${r.value.next_earnings_date})`;
-  }).filter((x): x is string => x !== null);
-
-  // Scores context — deduplicate by symbol (table has one row per analysis run)
-  const scoresRaw = scoresResult.data ?? [];
-  const scoresBySymbol = new Map<string, typeof scoresRaw[0]>();
-  for (const s of scoresRaw) {
-    if (!scoresBySymbol.has(s.symbol)) scoresBySymbol.set(s.symbol, s);
-  }
-  const scores = [...scoresBySymbol.values()];
-  const scoresLine = scores.length > 0
-    ? scores.map(s => `${s.symbol}: ${s.signal} (${s.total_score}/100)`).join(", ")
-    : "Keine Scores verfügbar";
-
-  // Protocol metadata (built from already-fetched data, no extra calls)
-  const newsFetchedFor = top5.map((item, i) => {
-    const r = newsSettled[i];
-    return (r.status === "fulfilled" && r.value.length > 0) ? item.symbol : null;
-  }).filter((x): x is string => x !== null);
-
-  const allNewsHeadlines = top5.flatMap((item, i) => {
-    const r = newsSettled[i];
-    if (r.status !== "fulfilled") return [];
-    return r.value.slice(0, 2).map(n => `${item.symbol}: ${n.title}`);
-  });
-
-  const protocol: BriefingProtocol = {
-    agent: "finn",
-    model: "claude-haiku-4-5-20251001",
-    watchlist_total: watchlist.length,
-    notable_symbols: notable.map(r => r.item.symbol),
-    news_fetched_for: newsFetchedFor,
-    news_headlines: allNewsHeadlines,
-    upcoming_earnings: earningsLines,
-    scores_used: scores.map(s => s.symbol),
-    indices_count: (liveIndices as MarketIndex[]).length,
-  };
-
-  // Market indices context
-  const indicesLine = (liveIndices as MarketIndex[]).length > 0
-    ? (liveIndices as MarketIndex[]).map(idx => {
-        if (idx.price == null) return `${idx.name}: keine Daten`;
-        const pct = idx.change_pct != null
-          ? ` (${idx.change_pct >= 0 ? "+" : ""}${idx.change_pct.toFixed(2)}%)`
-          : "";
-        return `${idx.name}: ${idx.price.toLocaleString("de-DE")}${pct}`;
-      }).join(" | ")
-    : "Marktdaten nicht verfügbar";
 
   const today = new Date().toLocaleDateString("de-DE", {
     weekday: "long", day: "2-digit", month: "long", year: "numeric",
@@ -266,7 +295,7 @@ export async function GET(request: NextRequest) {
 
   const prompt = `Morgen-Briefing für ${today}${isWeekend ? " (Wochenende — Märkte geschlossen, Wochenrückblick)" : ""}.
 
-MARKTINDIZES:
+MARKTINDIZES (mit vorberechneten Richtungsangaben — bindend):
 ${indicesLine}
 
 WATCHLIST — HEUTE AUFFÄLLIG (≥ 1,5 % Bewegung):
@@ -278,34 +307,40 @@ ${restLines.length > 0 ? restLines.join("\n") : "—"}
 ANALYSE-SCORES (gespeichert):
 ${scoresLine}
 
-NEWS-SCHLAGZEILEN (auffälligste Positionen):
+NEWS-SCHLAGZEILEN:
 ${newsLines.join("\n") || "Keine Schlagzeilen verfügbar"}
 
 EARNINGS-TERMINE (nächste 14 Tage in Watchlist):
 ${earningsLines.length > 0 ? earningsLines.join("\n") : "Keine bevorstehenden Earnings"}
 
+IDEE-KANDIDATEN (vorberechnet — wähle aus dieser Liste):
+${ideaCandidatesBlock || "Keine Kandidaten bewertet"}
+Empfohlener Fokus: ${topCandidate ? `${topCandidate.symbol} (${topCandidate.reasons.join(", ")})` : "—"}
+
 AUFGABE:
 Erstelle ein Morgen-Briefing auf Deutsch. Fokus:
-- 60 % Marktbild: Was bewegt die Märkte heute? Übergeordnetes Thema, Sektor-Kontext.
-- 25 % Watchlist-Relevanz: Nur Positionen erwähnen, die heute wirklich auffällig sind (Bewegung, Earnings, News). Stille Positionen nicht erwähnen.
-- 15 % Idee des Tages: Eine Aktie oder ein Thema, das heute research-würdig ist.
+- 60 % Marktbild: Was bewegt die Märkte heute? Beziehe dich auf die Indizes.
+- 25 % Watchlist-Relevanz: Nur Positionen nennen, die heute wirklich auffällig sind.
+- 15 % Idee des Tages: Wähle aus den IDEE-KANDIDATEN. Formuliere als Research-Frage.
 
-REGELN:
-- Keine Kauf- oder Verkaufsempfehlungen
-- Keine Kursversprechen, Kursziele oder Renditeerwartungen
-- Nur Aussagen, die aus den bereitgestellten Daten ableitbar sind
-- watchlist_highlights: maximal 3 Einträge, nur bei echten Signalen, sonst leeres Array
-- daily_opportunity ist eine Research-Idee/Hinweis, keine Empfehlung
+PFLICHT-REGELN:
+- Indexbewegungen: AUSSCHLIESSLICH die vorberechneten RICHTUNG-Labels verwenden. Keine eigenen Einschätzungen.
+- Keine Sektor-Aussagen ("Technologie-Sektor unter Druck") ohne echte Sektor-ETF-Daten. Nur konkrete Watchlist-Symbole nennen.
+- Keine Kauf-/Verkaufsempfehlungen, keine Renditeversprechen, keine Kursziele.
+- Beobachtend und research-orientiert formulieren: "beobachten", "prüfen", "auffällig", "research-würdig".
+- Keine erfundenen Fachbegriffe. Nur geläufiges Deutsch.
+- watchlist_highlights: maximal 3 Einträge, nur bei echten Signalen.
+- daily_opportunity.these: konkrete Research-Frage (z.B. "These: Prüfen, ob ... fundamental relevant ist.")
 
 JSON (exakt dieses Format):
-{"headline":"Eine prägnante Zeile was heute wichtig ist","market_overview":"2-3 Sätze zur Marktlage — marktgetrieben, nicht watchlist-getrieben","watchlist_highlights":["SYMBOL: kurze Beobachtung, nur wenn auffällig"],"daily_opportunity":{"symbol":"TICKER","name":"Unternehmensname","reason":"1-2 Sätze warum heute research-würdig"}}`;
+{"headline":"Eine prägnante Zeile was heute wichtig ist","market_overview":"2-3 Sätze zur Marktlage — nur Indizes und Fakten, keine Sektor-Verallgemeinerungen","watchlist_highlights":["SYMBOL: beobachtende Formulierung, nur wenn auffällig"],"daily_opportunity":{"symbol":"TICKER","name":"Unternehmensname","reason":"1-2 Sätze warum research-würdig","these":"These: Konkrete Frage die Research klären soll"}}`;
 
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 800,
-      system: "Du bist ein nüchterner Finanz-Assistent für ein privates Research-Dashboard. Erstelle faktenbasierte Morgen-Briefings auf Deutsch. Keine Kauf-/Verkaufsempfehlungen, keine Kursversprechen. Beziehe dich ausschließlich auf bereitgestellte Daten. Antworte ausschließlich mit validem JSON.",
+      max_tokens: 900,
+      system: "Du bist ein nüchterner Research-Assistent für ein privates Finanz-Dashboard. Erstelle faktenbasierte Morgen-Briefings auf Deutsch. Keine Kauf-/Verkaufsempfehlungen, keine Renditeversprechen, keine Kursziele. Verwende für Indexbewegungen ausschließlich die im Prompt vorberechneten RICHTUNG-Labels. Beziehe dich nur auf bereitgestellte Daten. Antworte ausschließlich mit validem JSON.",
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -313,17 +348,64 @@ JSON (exakt dieses Format):
       headline: string;
       market_overview: string;
       watchlist_highlights: string[];
-      daily_opportunity: { symbol: string; name: string; reason: string } | null;
+      daily_opportunity: { symbol: string; name: string; reason: string; these?: string } | null;
     }>(extractText(response.content));
+
+    // ── Post-generation validation + sanitizing ───────────────────────────
+    const allText = [
+      parsed.market_overview,
+      ...parsed.watchlist_highlights,
+      parsed.daily_opportunity?.reason ?? "",
+    ].join(" ");
+
+    const indexWarnings: IndexWarning[] = validateIndexClaims(allText, liveIndices as MarketIndex[]);
+    const sanitized = sanitizeText(allText, false); // no sector-ETF data available
+
+    // Apply sanitization to individual fields
+    const sanitizeField = (s: string) => sanitizeText(s, false).text;
+    const finalOverview    = sanitizeField(parsed.market_overview);
+    const finalHighlights  = parsed.watchlist_highlights.map(sanitizeField);
+    const finalOpportunity = parsed.daily_opportunity
+      ? {
+          ...parsed.daily_opportunity,
+          reason: sanitizeField(parsed.daily_opportunity.reason),
+          these: parsed.daily_opportunity.these
+            ? sanitizeField(parsed.daily_opportunity.these)
+            : undefined,
+        }
+      : null;
+
+    const allWarnings: string[] = [
+      ...indexWarnings.map(w => w.warning),
+      ...sanitized.changes,
+    ];
+
+    // ── Build extended protocol ───────────────────────────────────────────
+    const protocol: BriefingProtocol = {
+      agent: "finn",
+      model: "claude-haiku-4-5-20251001",
+      watchlist_total: watchlist.length,
+      notable_symbols: notable.map(r => r.item.symbol),
+      news_fetched_for: newsFetchedFor,
+      news_headlines: allNewsHeadlines,
+      upcoming_earnings: earningsLines,
+      scores_used: scores.map(s => s.symbol),
+      indices_count: (liveIndices as MarketIndex[]).length,
+      data_quality: dataQuality,
+      validation_warnings: allWarnings,
+      was_sanitized: sanitized.changes.length > 0,
+      sanitization_changes: sanitized.changes,
+      idea_selection_reasons: topCandidate?.reasons ?? [],
+    };
 
     const { data: saved } = await supabase
       .from("morning_briefings")
       .insert({
         user_id: user.id,
         headline: parsed.headline ?? "",
-        market_overview: parsed.market_overview ?? "",
-        watchlist_highlights: parsed.watchlist_highlights ?? [],
-        daily_opportunity: parsed.daily_opportunity ?? null,
+        market_overview: finalOverview,
+        watchlist_highlights: finalHighlights,
+        daily_opportunity: finalOpportunity ?? null,
         protocol: protocol as unknown as Json,
       })
       .select()
@@ -336,9 +418,9 @@ JSON (exakt dieses Format):
         generated_at: new Date().toISOString(),
       }),
       headline: parsed.headline,
-      market_overview: parsed.market_overview,
-      watchlist_highlights: parsed.watchlist_highlights,
-      daily_opportunity: parsed.daily_opportunity,
+      market_overview: finalOverview,
+      watchlist_highlights: finalHighlights,
+      daily_opportunity: finalOpportunity,
       protocol,
       indices: liveIndices,
       from_cache: false,

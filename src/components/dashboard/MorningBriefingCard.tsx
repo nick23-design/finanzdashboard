@@ -78,6 +78,45 @@ function ProtocolSection({ protocol }: { protocol: BriefingProtocol }) {
               </ul>
             </div>
           )}
+          {protocol.data_quality && (
+            <div className="flex justify-between items-center">
+              <span style={{ color: "var(--muted)" }}>Datenqualität</span>
+              <span
+                className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold"
+                style={{
+                  background: protocol.data_quality === "gut"
+                    ? "rgba(34,197,94,0.15)"
+                    : protocol.data_quality === "eingeschränkt"
+                    ? "rgba(251,146,60,0.15)"
+                    : "rgba(239,68,68,0.15)",
+                  color: protocol.data_quality === "gut" ? "#22c55e"
+                    : protocol.data_quality === "eingeschränkt" ? "#fb923c"
+                    : "#ef4444",
+                }}>
+                {protocol.data_quality}
+              </span>
+            </div>
+          )}
+          {protocol.was_sanitized && protocol.sanitization_changes.length > 0 && (
+            <div>
+              <span style={{ color: "#fb923c" }}>Aussagen automatisch abgeschwächt</span>
+              <ul className="mt-0.5 space-y-0.5">
+                {protocol.sanitization_changes.map((c, i) => (
+                  <li key={i} style={{ color: "var(--muted)" }}>· {c}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {protocol.validation_warnings && protocol.validation_warnings.length > 0 && (
+            <div>
+              <span style={{ color: "#ef4444" }}>Validierungs-Hinweise</span>
+              <ul className="mt-0.5 space-y-0.5">
+                {protocol.validation_warnings.map((w, i) => (
+                  <li key={i} style={{ color: "var(--muted)" }}>⚠ {w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -277,6 +316,11 @@ export function MorningBriefingCard() {
             <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--muted)" }}>
               {briefing.daily_opportunity.reason}
             </p>
+            {briefing.daily_opportunity.these && (
+              <p className="text-xs mt-1.5 leading-relaxed font-medium" style={{ color: "#818cf8" }}>
+                {briefing.daily_opportunity.these}
+              </p>
+            )}
           </div>
           <Link
             href={`/dashboard/asset/${briefing.daily_opportunity.symbol}`}
