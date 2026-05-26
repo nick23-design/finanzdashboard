@@ -696,12 +696,13 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             <div className="space-y-2 mt-2">
               {/* Agenten mit Aktivitätsstatus */}
               <div className="flex items-center gap-3 justify-center flex-wrap">
-                {(["diana","felix","nina","marco","vera"] as const).map(agent => {
+                {(["diana","felix","nina","marco","opus","vera"] as const).map(agent => {
                   const active =
                     (agent === "diana" && ["diana_check","run_agents","queued","fetch_data","enrich_news"].includes(aiCurrentStep)) ||
                     (agent === "felix" && ["run_agents","run_synthesis"].includes(aiCurrentStep)) ||
                     (agent === "nina"  && ["run_agents","run_synthesis"].includes(aiCurrentStep)) ||
                     (agent === "marco" && ["run_agents","run_synthesis"].includes(aiCurrentStep)) ||
+                    (agent === "opus"  && aiCurrentStep === "run_synthesis") ||
                     (agent === "vera"  && aiCurrentStep === "run_vera");
                   return <AgentAvatar key={agent} agent={agent} size="sm" showName working={active} />;
                 })}

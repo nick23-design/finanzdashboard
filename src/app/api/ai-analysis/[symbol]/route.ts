@@ -82,7 +82,7 @@ import { PEER_MAP } from "@/lib/peer-map";
 import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
 import type { AssetSnapshot, Database } from "@/types/database";
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 const ENRICH_MAX_ARTICLES = 6;
 const ENRICH_TIMEOUT_MS = 8_000;
@@ -494,6 +494,7 @@ async function runFactCheckAgent(
   analystData: AnalystData | null,
   googleNews: NewsItemWithDesc[],
   snapshot: AssetSnapshot,
+  skipArticleFetch = false,
 ): Promise<{ result: SynthesisResult; entry: ProtocolEntry; findings: StructuredFinding[] }> {
   const client = getClient();
 
@@ -597,14 +598,19 @@ Abschließendes JSON-Format:
   let fetchCount = 0;
   let factCheck: FactCheckResult | null = null;
 
+  // Im schnellen Modus (Background-Job): kein fetch_article → ein einziger Sonnet-Call
+  const activeTools = skipArticleFetch ? [] : [veraTool];
+  const maxTurns = skipArticleFetch ? 1 : VERA_MAX_TURNS;
+
   try {
-    for (let i = 0; i < VERA_MAX_TURNS; i++) {
+    for (let i = 0; i < maxTurns; i++) {
       const response = await client.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 4000,
         system: systemPrompt,
-        tools: [veraTool],
-        tool_choice: { type: "auto" } as Anthropic.Messages.ToolChoiceAuto,
+        ...(activeTools.length > 0
+          ? { tools: activeTools, tool_choice: { type: "auto" } as Anthropic.Messages.ToolChoiceAuto }
+          : {}),
         messages,
       });
 
@@ -1220,10 +1226,11 @@ async function runAnalysisPipeline(
 
   const cappedSynthesis = { ...rawSynthesis, conviction: cappedConviction };
 
-  // Vera (optional — Sonnet, max VERA_MAX_TURNS Runden)
+  // Vera — ein schneller Sonnet-Call ohne article-fetch (Excerpts aus Schritt 2 reichen)
   if (onVeraStart) await onVeraStart().catch(() => {});
   const { result: verified, entry: veraEntry, findings } = await runFactCheckAgent(
     symbol, cappedSynthesis, analystData, googleNews, snapshot,
+    true, // skipArticleFetch: Background-Job-Modus, kein Jina
   );
   protocol.push(veraEntry);
 
