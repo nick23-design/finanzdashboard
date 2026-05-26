@@ -2,7 +2,7 @@
 
 // Agent definitions – swap src to a local /public/agents/{id}.png for real AI-generated photos
 export const AGENTS = {
-  finn:           { name: "Finn",             description: "Autonomer Markt-Analyst",          seed: "FinnNHAgent",       color: "#f59e0b" },
+  finn:           { name: "Finn",             description: "Morning Briefing Agent",           seed: "FinnNHAgent",       color: "#f59e0b" },
   "us-scout":     { name: "US-Scout",         description: "US-Markt Analyst",                 seed: "USScoutNH",         color: "#3b82f6" },
   "de-scout":     { name: "DE-Scout",         description: "DE-Markt Analyst",                 seed: "DEScoutNH",         color: "#6ECF97" },
   "podcast-scout":{ name: "Podcast-Scout",    description: "Investment-Podcast Analyst",       seed: "PodcastScoutNH",    color: "#8b5cf6" },
