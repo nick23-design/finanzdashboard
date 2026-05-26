@@ -167,7 +167,8 @@ export function validateIndexClaims(text: string, indices: MarketIndex[]): Index
 
 /**
  * Patches direction-contradicting words in text based on actual index data.
- * Only replaces words found within proximity of the index name (same 70-char window).
+ * Only replaces the specific occurrence within the proximity window of the
+ * index name — not all global occurrences of the word.
  */
 export function patchIndexDirections(text: string, indices: MarketIndex[]): SanitizeResult {
   let result = text;
@@ -176,34 +177,34 @@ export function patchIndexDirections(text: string, indices: MarketIndex[]): Sani
   for (const idx of indices) {
     if (idx.change_pct == null) continue;
     const nameEsc = escapeRegex(idx.name);
-    const window = 70;
+    const win = 70;
+
+    const patchWords = (words: string[], map: Record<string, string>, sign: string) => {
+      for (const word of words) {
+        const wordEsc = escapeRegex(word);
+        // Capture groups: (pre)(word) for index-first, (word)(post) for word-first
+        const pattern = new RegExp(
+          `(${nameEsc}[\\s\\S]{0,${win}})(${wordEsc})|(${wordEsc})([\\s\\S]{0,${win}}${nameEsc})`,
+          "gi",
+        );
+        let matched = false;
+        const replacement = map[word.toLowerCase()] ?? "verändert sich";
+        const patched = result.replace(pattern, (_m, pre, w1, w2, post) => {
+          matched = true;
+          return pre !== undefined ? pre + replacement : replacement + post;
+        });
+        if (matched) {
+          result = patched;
+          changes.push(`Richtung korrigiert: "${word}" → "${replacement}" (${idx.name} ${sign})`);
+          break;
+        }
+      }
+    };
 
     if (idx.change_pct > 0.1) {
-      for (const neg of NEG_WORDS) {
-        const proximityPattern = new RegExp(
-          `(?:${nameEsc}.{0,${window}}${escapeRegex(neg)}|${escapeRegex(neg)}.{0,${window}}${nameEsc})`,
-          "i",
-        );
-        if (proximityPattern.test(result)) {
-          const replacement = NEG_TO_POS[neg.toLowerCase()] ?? "verändert sich";
-          result = result.replace(new RegExp(escapeRegex(neg), "gi"), replacement);
-          changes.push(`Richtung korrigiert: "${neg}" → "${replacement}" (${idx.name} ist +${idx.change_pct.toFixed(2)}%)`);
-          break;
-        }
-      }
+      patchWords(NEG_WORDS, NEG_TO_POS, `+${idx.change_pct.toFixed(2)}%`);
     } else if (idx.change_pct < -0.1) {
-      for (const pos of POS_WORDS) {
-        const proximityPattern = new RegExp(
-          `(?:${nameEsc}.{0,${window}}${escapeRegex(pos)}|${escapeRegex(pos)}.{0,${window}}${nameEsc})`,
-          "i",
-        );
-        if (proximityPattern.test(result)) {
-          const replacement = POS_TO_NEG[pos.toLowerCase()] ?? "verändert sich";
-          result = result.replace(new RegExp(escapeRegex(pos), "gi"), replacement);
-          changes.push(`Richtung korrigiert: "${pos}" → "${replacement}" (${idx.name} ist ${idx.change_pct.toFixed(2)}%)`);
-          break;
-        }
-      }
+      patchWords(POS_WORDS, POS_TO_NEG, `${idx.change_pct.toFixed(2)}%`);
     }
   }
 

@@ -141,12 +141,15 @@ describe("patchIndexDirections", () => {
     expect(changes).toHaveLength(0);
   });
 
-  it("korrigiert nur Wörter in Nähe des Index-Namens", () => {
-    // "gibt nach" steht weit weg vom Index-Namen — kein Match
-    const input = "Andere Werte geben nach. NASDAQ zeigt Stabilität.";
+  it("lässt Vorkommen außerhalb des Nähe-Fensters unverändert", () => {
+    // Erstes "gibt nach" nah an NASDAQ → wird ersetzt
+    // Zweites "gibt nach" > 70 Zeichen entfernt → bleibt
+    const far = " ".repeat(80);
+    const input = `NASDAQ gibt nach heute.${far}Ein anderer Wert gibt nach.`;
     const { text, changes } = patchIndexDirections(input, [makeIndex("NASDAQ", 0.5)]);
-    expect(changes).toHaveLength(0);
-    expect(text).toBe(input);
+    expect(changes).toHaveLength(1);
+    expect(text).toContain("gibt nach");   // fernes Vorkommen bleibt
+    expect(text).toContain("NASDAQ legt zu"); // nahes Vorkommen wurde ersetzt
   });
 });
 
