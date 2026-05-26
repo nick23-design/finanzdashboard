@@ -362,7 +362,7 @@ interface OrchestratorResult {
 // --- Helpers ---
 
 function getClient() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 25_000 });
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 55_000 });
 }
 
 function extractText(content: Anthropic.Messages.ContentBlock[]): string {
