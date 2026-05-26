@@ -37,6 +37,7 @@ import type { MarketIndex } from "@/lib/finance-client";
 import {
   sanitizeText,
   validateIndexClaims,
+  patchIndexDirections,
   assessDataQuality,
   scoreIdeaCandidates,
   type DataQuality,
@@ -361,23 +362,39 @@ JSON (exakt dieses Format):
     const indexWarnings: IndexWarning[] = validateIndexClaims(allText, liveIndices as MarketIndex[]);
     const sanitized = sanitizeText(allText, false); // no sector-ETF data available
 
-    // Apply sanitization to individual fields
-    const sanitizeField = (s: string) => sanitizeText(s, false).text;
-    const finalOverview    = sanitizeField(parsed.market_overview);
-    const finalHighlights  = parsed.watchlist_highlights.map(sanitizeField);
-    const finalOpportunity = parsed.daily_opportunity
+    // Apply direction patch + sanitization to individual fields
+    const processField = (s: string) => {
+      const patched = patchIndexDirections(s, liveIndices as MarketIndex[]);
+      const clean   = sanitizeText(patched.text, false);
+      return { text: clean.text, patchChanges: patched.changes, sanitizeChanges: clean.changes };
+    };
+
+    const overviewResult     = processField(parsed.market_overview);
+    const finalOverview      = overviewResult.text;
+    const finalHighlights    = parsed.watchlist_highlights.map(h => processField(h).text);
+    const finalOpportunity   = parsed.daily_opportunity
       ? {
           ...parsed.daily_opportunity,
-          reason: sanitizeField(parsed.daily_opportunity.reason),
+          reason: processField(parsed.daily_opportunity.reason).text,
           these: parsed.daily_opportunity.these
-            ? sanitizeField(parsed.daily_opportunity.these)
+            ? processField(parsed.daily_opportunity.these).text
             : undefined,
         }
       : null;
 
+    // Collect all patch + sanitize changes across fields
+    const allPatchChanges = [
+      ...overviewResult.patchChanges,
+      ...parsed.watchlist_highlights.flatMap(h => processField(h).patchChanges),
+    ];
+    const allSanitizeChanges = [
+      ...overviewResult.sanitizeChanges,
+      ...sanitized.changes,
+    ];
+
     const allWarnings: string[] = [
       ...indexWarnings.map(w => w.warning),
-      ...sanitized.changes,
+      ...allSanitizeChanges,
     ];
 
     // ── Build extended protocol ───────────────────────────────────────────
@@ -393,8 +410,8 @@ JSON (exakt dieses Format):
       indices_count: (liveIndices as MarketIndex[]).length,
       data_quality: dataQuality,
       validation_warnings: allWarnings,
-      was_sanitized: sanitized.changes.length > 0,
-      sanitization_changes: sanitized.changes,
+      was_sanitized: allPatchChanges.length > 0 || allSanitizeChanges.length > 0,
+      sanitization_changes: [...allPatchChanges, ...allSanitizeChanges],
       idea_selection_reasons: topCandidate?.reasons ?? [],
     };
 

@@ -1,6 +1,7 @@
 import {
   sanitizeText,
   validateIndexClaims,
+  patchIndexDirections,
   assessDataQuality,
   scoreIdeaCandidates,
 } from "../briefing-validator";
@@ -101,6 +102,51 @@ describe("validateIndexClaims", () => {
     const text = "Die Märkte zeigen gemischtes Bild.";
     const warnings = validateIndexClaims(text, [makeIndex("NASDAQ", -1.0)]);
     expect(warnings).toHaveLength(0);
+  });
+});
+
+// ─── patchIndexDirections ────────────────────────────────────────────────────
+
+describe("patchIndexDirections", () => {
+  it("ersetzt negatives Wort wenn Index positiv ist (NASDAQ-Fall)", () => {
+    const { text, changes } = patchIndexDirections(
+      "NASDAQ gibt nach und verliert an Boden.",
+      [makeIndex("NASDAQ", 0.19)],
+    );
+    expect(text).not.toContain("gibt nach");
+    expect(changes.length).toBeGreaterThan(0);
+    expect(changes[0]).toContain("NASDAQ");
+  });
+
+  it("ersetzt positives Wort wenn Index negativ ist", () => {
+    const { text, changes } = patchIndexDirections(
+      "Der DAX steigt heute deutlich.",
+      [makeIndex("DAX", -0.8)],
+    );
+    expect(text).not.toContain("steigt");
+    expect(changes.length).toBeGreaterThan(0);
+  });
+
+  it("verändert Text nicht bei korrekter Richtungsangabe", () => {
+    const input = "Der NASDAQ legt zu heute.";
+    const { text, changes } = patchIndexDirections(input, [makeIndex("NASDAQ", 0.19)]);
+    expect(text).toBe(input);
+    expect(changes).toHaveLength(0);
+  });
+
+  it("verändert Text nicht bei neutraler Bewegung (< 0.1 %)", () => {
+    const input = "Der S&P 500 gibt nach leicht.";
+    const { text, changes } = patchIndexDirections(input, [makeIndex("S&P 500", 0.05)]);
+    expect(text).toBe(input);
+    expect(changes).toHaveLength(0);
+  });
+
+  it("korrigiert nur Wörter in Nähe des Index-Namens", () => {
+    // "gibt nach" steht weit weg vom Index-Namen — kein Match
+    const input = "Andere Werte geben nach. NASDAQ zeigt Stabilität.";
+    const { text, changes } = patchIndexDirections(input, [makeIndex("NASDAQ", 0.5)]);
+    expect(changes).toHaveLength(0);
+    expect(text).toBe(input);
   });
 });
 

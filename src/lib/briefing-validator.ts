@@ -71,7 +71,7 @@ export function sanitizeText(text: string, hasSectorData: boolean): SanitizeResu
   return { text: result, changes };
 }
 
-// ─── Index direction validation ──────────────────────────────────────────────
+// ─── Index direction validation + patching ───────────────────────────────────
 
 const NEG_WORDS = [
   "gibt nach", "gab nach", "fällt", "fiel", "im Minus", "schwächer", "Verluste",
@@ -81,6 +81,35 @@ const POS_WORDS = [
   "steigt", "stieg", "legt zu", "legte zu", "im Plus", "Gewinne",
   "aufwärts", "gestiegen", "zulegen", "zulegte", "erholt",
 ];
+
+// Correction maps: wrong direction word → correct neutral alternative
+const NEG_TO_POS: Record<string, string> = {
+  "gibt nach": "legt zu",
+  "gab nach":  "legte zu",
+  "fällt":     "steigt",
+  "fiel":      "stieg",
+  "im minus":  "im Plus",
+  "schwächer": "fester",
+  "verluste":  "Gewinne",
+  "rückgang":  "Zuwachs",
+  "gesunken":  "gestiegen",
+  "abgegeben": "zugelegt",
+  "unter druck": "mit Aufwärtstendenz",
+  "verliert":  "gewinnt",
+};
+const POS_TO_NEG: Record<string, string> = {
+  "steigt":    "gibt nach",
+  "stieg":     "gab nach",
+  "legt zu":   "gibt nach",
+  "legte zu":  "gab nach",
+  "im plus":   "im Minus",
+  "gewinne":   "Verluste",
+  "aufwärts":  "abwärts",
+  "gestiegen": "gefallen",
+  "zulegen":   "nachgeben",
+  "zulegte":   "gab nach",
+  "erholt":    "unter Druck",
+};
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -98,7 +127,7 @@ export function validateIndexClaims(text: string, indices: MarketIndex[]): Index
   for (const idx of indices) {
     if (idx.change_pct == null) continue;
     const nameEsc = escapeRegex(idx.name);
-    const window = 70; // chars around the index name to check
+    const window = 70;
 
     if (idx.change_pct > 0.1) {
       for (const neg of NEG_WORDS) {
@@ -134,6 +163,51 @@ export function validateIndexClaims(text: string, indices: MarketIndex[]): Index
   }
 
   return warnings;
+}
+
+/**
+ * Patches direction-contradicting words in text based on actual index data.
+ * Only replaces words found within proximity of the index name (same 70-char window).
+ */
+export function patchIndexDirections(text: string, indices: MarketIndex[]): SanitizeResult {
+  let result = text;
+  const changes: string[] = [];
+
+  for (const idx of indices) {
+    if (idx.change_pct == null) continue;
+    const nameEsc = escapeRegex(idx.name);
+    const window = 70;
+
+    if (idx.change_pct > 0.1) {
+      for (const neg of NEG_WORDS) {
+        const proximityPattern = new RegExp(
+          `(?:${nameEsc}.{0,${window}}${escapeRegex(neg)}|${escapeRegex(neg)}.{0,${window}}${nameEsc})`,
+          "i",
+        );
+        if (proximityPattern.test(result)) {
+          const replacement = NEG_TO_POS[neg.toLowerCase()] ?? "verändert sich";
+          result = result.replace(new RegExp(escapeRegex(neg), "gi"), replacement);
+          changes.push(`Richtung korrigiert: "${neg}" → "${replacement}" (${idx.name} ist +${idx.change_pct.toFixed(2)}%)`);
+          break;
+        }
+      }
+    } else if (idx.change_pct < -0.1) {
+      for (const pos of POS_WORDS) {
+        const proximityPattern = new RegExp(
+          `(?:${nameEsc}.{0,${window}}${escapeRegex(pos)}|${escapeRegex(pos)}.{0,${window}}${nameEsc})`,
+          "i",
+        );
+        if (proximityPattern.test(result)) {
+          const replacement = POS_TO_NEG[pos.toLowerCase()] ?? "verändert sich";
+          result = result.replace(new RegExp(escapeRegex(pos), "gi"), replacement);
+          changes.push(`Richtung korrigiert: "${pos}" → "${replacement}" (${idx.name} ist ${idx.change_pct.toFixed(2)}%)`);
+          break;
+        }
+      }
+    }
+  }
+
+  return { text: result, changes };
 }
 
 // ─── Data quality ─────────────────────────────────────────────────────────────
