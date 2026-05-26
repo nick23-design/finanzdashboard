@@ -256,6 +256,7 @@ export interface Database {
           market_overview: string;
           watchlist_highlights: Json;
           daily_opportunity: Json | null;
+          protocol: Json | null;
           generated_at: string;
         };
         Insert: {
@@ -265,6 +266,7 @@ export interface Database {
           market_overview: string;
           watchlist_highlights: Json;
           daily_opportunity?: Json | null;
+          protocol?: Json | null;
           generated_at?: string;
         };
         Update: {
@@ -274,6 +276,7 @@ export interface Database {
           market_overview?: string;
           watchlist_highlights?: Json;
           daily_opportunity?: Json | null;
+          protocol?: Json | null;
           generated_at?: string;
         };
         Relationships: [];

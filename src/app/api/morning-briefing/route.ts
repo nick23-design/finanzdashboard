@@ -10,8 +10,11 @@
  *     market_overview TEXT NOT NULL DEFAULT '',
  *     watchlist_highlights JSONB NOT NULL DEFAULT '[]',
  *     daily_opportunity JSONB,
+ *     protocol JSONB,
  *     generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
  *   );
+ *   -- Falls Tabelle bereits existiert:
+ *   ALTER TABLE public.morning_briefings ADD COLUMN IF NOT EXISTS protocol JSONB;
  *   CREATE INDEX IF NOT EXISTS morning_briefings_user_generated
  *     ON public.morning_briefings(user_id, generated_at DESC);
  *   ALTER TABLE public.morning_briefings ENABLE ROW LEVEL SECURITY;
@@ -23,6 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
+import type { Json } from "@/types/database";
 import {
   fetchAssetData,
   fetchGoogleNews,
@@ -31,6 +35,17 @@ import {
 } from "@/lib/finance-client";
 import type { MarketIndex } from "@/lib/finance-client";
 
+export interface BriefingProtocol {
+  model: string;
+  watchlist_total: number;
+  notable_symbols: string[];
+  news_fetched_for: string[];
+  news_headlines: string[];
+  upcoming_earnings: string[];
+  scores_used: string[];
+  indices_count: number;
+}
+
 export interface MorningBriefing {
   id: string;
   user_id: string;
@@ -38,6 +53,7 @@ export interface MorningBriefing {
   market_overview: string;
   watchlist_highlights: string[];
   daily_opportunity: { symbol: string; name: string; reason: string } | null;
+  protocol: BriefingProtocol | null;
   indices: { symbol: string; name: string; price: number | null; change_pct: number | null }[];
   generated_at: string;
   from_cache: boolean;
@@ -102,6 +118,7 @@ export async function GET(request: NextRequest) {
         ...cached,
         watchlist_highlights: cached.watchlist_highlights as string[],
         daily_opportunity: cached.daily_opportunity as MorningBriefing["daily_opportunity"],
+        protocol: cached.protocol as BriefingProtocol | null,
         indices: liveIndices,
         from_cache: true,
       });
@@ -201,6 +218,29 @@ export async function GET(request: NextRequest) {
     ? scores.map(s => `${s.symbol}: ${s.signal} (${s.total_score}/100)`).join(", ")
     : "Keine Scores verfügbar";
 
+  // Protocol metadata (built from already-fetched data, no extra calls)
+  const newsFetchedFor = top5.map((item, i) => {
+    const r = newsSettled[i];
+    return (r.status === "fulfilled" && r.value.length > 0) ? item.symbol : null;
+  }).filter((x): x is string => x !== null);
+
+  const allNewsHeadlines = top5.flatMap((item, i) => {
+    const r = newsSettled[i];
+    if (r.status !== "fulfilled") return [];
+    return r.value.slice(0, 2).map(n => `${item.symbol}: ${n.title}`);
+  });
+
+  const protocol: BriefingProtocol = {
+    model: "claude-haiku-4-5-20251001",
+    watchlist_total: watchlist.length,
+    notable_symbols: notable.map(r => r.item.symbol),
+    news_fetched_for: newsFetchedFor,
+    news_headlines: allNewsHeadlines,
+    upcoming_earnings: earningsLines,
+    scores_used: scores?.map(s => s.symbol) ?? [],
+    indices_count: (liveIndices as MarketIndex[]).length,
+  };
+
   // Market indices context
   const indicesLine = (liveIndices as MarketIndex[]).length > 0
     ? (liveIndices as MarketIndex[]).map(idx => {
@@ -277,6 +317,7 @@ JSON (exakt dieses Format):
         market_overview: parsed.market_overview ?? "",
         watchlist_highlights: parsed.watchlist_highlights ?? [],
         daily_opportunity: parsed.daily_opportunity ?? null,
+        protocol: protocol as unknown as Json,
       })
       .select()
       .single();
@@ -291,6 +332,7 @@ JSON (exakt dieses Format):
       market_overview: parsed.market_overview,
       watchlist_highlights: parsed.watchlist_highlights,
       daily_opportunity: parsed.daily_opportunity,
+      protocol,
       indices: liveIndices,
       from_cache: false,
     });

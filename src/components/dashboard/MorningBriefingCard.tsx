@@ -2,8 +2,80 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { RefreshCw, Sunrise, ChevronDown, ChevronUp } from "lucide-react";
-import type { MorningBriefing } from "@/app/api/morning-briefing/route";
+import { RefreshCw, Sunrise, ChevronDown, ChevronUp, Info } from "lucide-react";
+import type { MorningBriefing, BriefingProtocol } from "@/app/api/morning-briefing/route";
+
+function ProtocolSection({ protocol }: { protocol: BriefingProtocol }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1 text-[10px]"
+        style={{ color: "var(--muted)" }}>
+        <Info size={10} />
+        Wie wurde dieses Briefing erstellt?
+        {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+      </button>
+      {open && (
+        <div className="mt-2 rounded-xl p-3 space-y-1.5 text-[10px]"
+          style={{ background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.15)" }}>
+          <div className="flex justify-between">
+            <span style={{ color: "var(--muted)" }}>KI-Modell</span>
+            <span className="text-white font-medium">Claude Haiku 4.5</span>
+          </div>
+          <div className="flex justify-between">
+            <span style={{ color: "var(--muted)" }}>Watchlist-Positionen</span>
+            <span className="text-white font-medium">{protocol.watchlist_total}</span>
+          </div>
+          <div className="flex justify-between">
+            <span style={{ color: "var(--muted)" }}>Marktindizes</span>
+            <span className="text-white font-medium">{protocol.indices_count}</span>
+          </div>
+          {protocol.notable_symbols.length > 0 && (
+            <div>
+              <span style={{ color: "var(--muted)" }}>Auffällig (≥ 1,5 %)</span>
+              <div className="flex flex-wrap gap-1 mt-0.5">
+                {protocol.notable_symbols.map(s => (
+                  <span key={s} className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold"
+                    style={{ background: "rgba(251,146,60,0.15)", color: "#fb923c" }}>
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {protocol.upcoming_earnings.length > 0 && (
+            <div>
+              <span style={{ color: "var(--muted)" }}>Earnings-Termine (14 Tage)</span>
+              <ul className="mt-0.5 space-y-0.5">
+                {protocol.upcoming_earnings.map((e, i) => (
+                  <li key={i} className="text-white">{e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {protocol.scores_used.length > 0 && (
+            <div className="flex justify-between">
+              <span style={{ color: "var(--muted)" }}>Scores einbezogen</span>
+              <span className="text-white font-medium">{protocol.scores_used.join(", ")}</span>
+            </div>
+          )}
+          {protocol.news_headlines.length > 0 && (
+            <div>
+              <span style={{ color: "var(--muted)" }}>Verwendete Schlagzeilen</span>
+              <ul className="mt-0.5 space-y-0.5">
+                {protocol.news_headlines.map((h, i) => (
+                  <li key={i} className="leading-relaxed" style={{ color: "var(--muted)" }}>· {h}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function MorningBriefingCard() {
   const [briefing, setBriefing] = useState<MorningBriefing | null>(null);
@@ -207,6 +279,9 @@ export function MorningBriefingCard() {
           </Link>
         </div>
       )}
+
+      {/* Protokoll */}
+      {briefing.protocol && <ProtocolSection protocol={briefing.protocol} />}
       </>}
     </div>
   );
