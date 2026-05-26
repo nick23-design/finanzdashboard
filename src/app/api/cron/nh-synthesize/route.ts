@@ -181,7 +181,7 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
   // 7. Send push notifications
   try {
     const webPush = await import("web-push");
-    const vapidPublic = process.env.VAPID_PUBLIC_KEY;
+    const vapidPublic = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? process.env.VAPID_PUBLIC_KEY;
     const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
     const vapidSubject = process.env.VAPID_SUBJECT ?? "mailto:nick.muetze@gmail.com";
 
