@@ -53,7 +53,7 @@
  *     FOR ALL TO authenticated USING (true) WITH CHECK (true);
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
@@ -76,12 +76,17 @@ import type {
   AnalystData,
 } from "@/lib/finance-client";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { rateLimit } from "@/lib/rate-limit";
 import { PEER_MAP } from "@/lib/peer-map";
 import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
 import type { AssetSnapshot, Database } from "@/types/database";
 
-export const maxDuration = 120;
+export const maxDuration = 60;
+
+const ENRICH_MAX_ARTICLES = 6;
+const ENRICH_TIMEOUT_MS = 8_000;
+const VERA_MAX_TURNS = 3;
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
@@ -111,13 +116,15 @@ type CompleteAnalysisInput = z.infer<typeof CompleteAnalysisSchema>;
 
 // --- Peer context ---
 
-async function fetchPeerContext(symbol: string): Promise<string> {
+type SbClient = Awaited<ReturnType<typeof createClient>> | ReturnType<typeof createServiceClient>;
+
+async function fetchPeerContext(symbol: string, client?: SbClient): Promise<string> {
   // Strip exchange suffix so "VOW3.DE" → "VOW3" matches the peer map
   const baseSymbol = symbol.split(".")[0].toUpperCase();
   const peers = PEER_MAP[symbol] ?? PEER_MAP[baseSymbol];
   if (!peers?.length) return "";
 
-  const supabase = await createClient();
+  const supabase = client ?? await createClient();
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   const { data } = await supabase
@@ -454,9 +461,8 @@ Themen: ${sentiment.key_themes.join(", ")}
 ${sentiment.sentiment_summary}${marketIntelSection}`;
 
   const response = await client.messages.create({
-    model: "claude-opus-4-7",
+    model: "claude-sonnet-4-6",
     max_tokens: 1200,
-    thinking: { type: "adaptive" },
     system: "Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Investmentempfehlung auf Deutsch. WICHTIG: Beziehe dich ausschließlich auf die bereitgestellten Daten. Erwähne keine Firmennamen, Deals, Produkte oder Ereignisse, die nicht explizit in den Daten enthalten sind. Berechne konkrete Kursziele (price_levels): entry als idealen Einstieg (nahe MA50 oder -3% bei RSI>50), target als Kursziel (Analysten-Konsens bevorzugt, sonst +15-25%), stop_loss als -8-12% unter entry. Nutze null wenn Datenlage unklar. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
     messages: [
       {
@@ -592,7 +598,7 @@ Abschließendes JSON-Format:
   let factCheck: FactCheckResult | null = null;
 
   try {
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < VERA_MAX_TURNS; i++) {
       const response = await client.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 4000,
@@ -770,9 +776,9 @@ async function runMarketIntelAgent(
 
 // --- Guardrails & Feedback Dataset ---
 
-async function fetchGuardrails(symbol: string): Promise<string> {
+async function fetchGuardrails(symbol: string, client?: SbClient): Promise<string> {
   try {
-    const supabase = await createClient();
+    const supabase = client ?? await createClient();
     const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
 
     const [{ data: symbolData }, { data: globalData }] = await Promise.all([
@@ -814,10 +820,11 @@ async function saveFactCheckFindings(
   analysisId: string | null,
   symbol: string,
   findings: StructuredFinding[],
+  client?: SbClient,
 ): Promise<void> {
   if (!findings.length || !analysisId) return;
   try {
-    const supabase = await createClient();
+    const supabase = client ?? await createClient();
     await supabase.from("fact_check_findings").insert(
       findings.map(f => ({
         analysis_id: analysisId,
@@ -1169,6 +1176,201 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
 
 // --- Cache & Persistence ---
 
+// ─── Optimierte Pipeline (ersetzt runOrchestrator) ───────────────────────────
+
+async function runAnalysisPipeline(
+  symbol: string,
+  snapshot: AssetSnapshot,
+  googleNews: NewsItemWithDesc[],
+  edgarFacts: EdgarFacts | null,
+  insiderTrades: InsiderTrade[],
+  trends: TrendPoint[],
+  institutional: InstitutionalData | null,
+  analystData: AnalystData | null,
+  confidenceCap: number,
+  peerContext: string,
+  serviceClient: SbClient,
+  onSynthesisStart?: () => Promise<void>,
+  onVeraStart?: () => Promise<void>,
+): Promise<OrchestratorResult> {
+  const protocol: ProtocolEntry[] = [];
+  const guardrails = await fetchGuardrails(symbol, serviceClient).catch(() => "");
+
+  // Felix + Nina + Marco parallel (alle Haiku — schnell)
+  const [fundamental, sentiment, marketIntel] = await Promise.all([
+    runFundamentalAgent(snapshot, edgarFacts, peerContext),
+    runSentimentAgent(googleNews),
+    runMarketIntelAgent(insiderTrades, trends, institutional),
+  ]);
+
+  const withExcerpts = googleNews.filter(n => n.description).length;
+  const noMarcoData = marketIntel.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar";
+
+  protocol.push({ agent: "Felix", status: "ok", detail: `Wachstumsbewertung ${fundamental.growth_rating}/10 · ${fundamental.key_positives.length} Stärken, ${fundamental.key_risks.length} Risiken${peerContext ? " · Peer-Kontext vorhanden" : ""}` });
+  protocol.push({ agent: "Nina", status: "ok", detail: `Sentiment: ${sentiment.sentiment} · ${sentiment.key_themes.length} Themen · ${withExcerpts}/${googleNews.length} Artikel mit Jina-Excerpt` });
+  protocol.push({ agent: "Marco", status: noMarcoData ? "skipped" : "ok", detail: noMarcoData ? "Keine Daten verfügbar (nur für US-Aktien)" : `Insider: ${marketIntel.insider_signal} · Institutionen: ${marketIntel.institutional_trend} · Trends: ${marketIntel.trends_momentum}` });
+
+  // Synthese (Sonnet — deutlich schneller als Opus mit Adaptive Thinking)
+  if (onSynthesisStart) await onSynthesisStart().catch(() => {});
+  const rawSynthesis = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData);
+  const rawConviction = clampConviction(rawSynthesis.conviction);
+  const cappedConviction = Math.min(rawConviction, confidenceCap);
+  const capNote = rawConviction > confidenceCap ? ` · Conviction ${rawConviction}→${cappedConviction} (Diana-Cap)` : "";
+  protocol.push({ agent: "Opus", status: "ok", detail: `Synthese: ${rawSynthesis.recommendation} · Conviction ${cappedConviction}/10${capNote}${guardrails ? " · Guardrails aktiv" : ""}` });
+
+  const cappedSynthesis = { ...rawSynthesis, conviction: cappedConviction };
+
+  // Vera (optional — Sonnet, max VERA_MAX_TURNS Runden)
+  if (onVeraStart) await onVeraStart().catch(() => {});
+  const { result: verified, entry: veraEntry, findings } = await runFactCheckAgent(
+    symbol, cappedSynthesis, analystData, googleNews, snapshot,
+  );
+  protocol.push(veraEntry);
+
+  return {
+    ...verified,
+    conviction: Math.min(verified.conviction, confidenceCap),
+    price_levels: verified.price_levels ?? null,
+    fundamental,
+    sentiment,
+    market_intel: marketIntel,
+    protocol,
+    findings,
+  };
+}
+
+// ─── Background Job ───────────────────────────────────────────────────────────
+
+async function runAnalysisJob(
+  jobId: string,
+  symbol: string,
+  userId: string,
+  serviceClient: ReturnType<typeof createServiceClient>,
+): Promise<void> {
+  const ts = () => new Date().toISOString();
+
+  const updateStep = async (step: string, progress: number) => {
+    await serviceClient.from("analysis_jobs").update({
+      status: "running",
+      current_step: step,
+      progress,
+      updated_at: ts(),
+    }).eq("id", jobId).eq("user_id", userId);
+  };
+
+  try {
+    await updateStep("fetch_data", 10);
+
+    const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData] =
+      await Promise.all([
+        fetchAssetData(symbol),
+        fetchGoogleNews(symbol).catch(() => [] as GoogleNewsItem[]),
+        fetchEdgarFacts(symbol).catch(() => null),
+        fetchInsiderTrades(symbol).catch(() => [] as InsiderTrade[]),
+        fetchTrends(symbol).catch(() => [] as TrendPoint[]),
+        fetchInstitutional(symbol).catch(() => null),
+        fetchAnalystData(symbol).catch(() => null as AnalystData | null),
+      ]);
+
+    const snapshot: AssetSnapshot = {
+      id: "",
+      symbol: assetData.symbol,
+      price: assetData.price,
+      currency: assetData.currency,
+      isin: assetData.isin ?? null,
+      description: assetData.description ?? null,
+      pe_ratio: assetData.pe_ratio,
+      market_cap: assetData.market_cap,
+      debt_to_equity: assetData.debt_to_equity,
+      revenue_growth: assetData.revenue_growth,
+      free_cashflow: assetData.free_cashflow,
+      rsi: assetData.rsi,
+      moving_average_50: assetData.moving_average_50,
+      moving_average_200: assetData.moving_average_200,
+      fetched_at: assetData.fetched_at,
+    };
+
+    await updateStep("enrich_news", 20);
+
+    const googleNewsLimited = googleNews.slice(0, ENRICH_MAX_ARTICLES);
+    const googleNewsEnriched = await Promise.race([
+      enrichWithDescriptions(googleNewsLimited),
+      new Promise<typeof googleNewsLimited>(resolve =>
+        setTimeout(() => resolve(googleNewsLimited), ENRICH_TIMEOUT_MS),
+      ),
+    ]).catch(() => googleNewsLimited);
+
+    const peerContext = await fetchPeerContext(symbol, serviceClient).catch(() => "");
+
+    await updateStep("diana_check", 30);
+
+    const diana = runDianaCheck(snapshot, googleNewsEnriched, edgarFacts, analystData, peerContext);
+    const dianaEntry: ProtocolEntry = {
+      agent: "Diana",
+      status: diana.completeness_score >= 70 ? "ok" : "warning",
+      detail: [
+        `Datenbasis ${diana.completeness_score}/100`,
+        `Cap ${diana.analysis_confidence_cap}/10`,
+        ...(diana.missing_fields.length ? [`Fehlend: ${diana.missing_fields.slice(0, 4).join(", ")}`] : []),
+        ...(diana.stale_fields.length ? [`Veraltet: ${diana.stale_fields.join(", ")}`] : []),
+        ...(diana.warnings.length ? diana.warnings.slice(0, 2) : []),
+      ].join(" · "),
+    };
+
+    await updateStep("run_agents", 45);
+
+    const orchestrated = await runAnalysisPipeline(
+      symbol, snapshot, googleNewsEnriched, edgarFacts, insiderTrades, trends, institutional, analystData,
+      diana.analysis_confidence_cap, peerContext, serviceClient,
+      () => updateStep("run_synthesis", 65),
+      () => updateStep("run_vera", 80),
+    );
+
+    await updateStep("save_result", 95);
+
+    const result: AIAnalysisResult = {
+      symbol,
+      recommendation: orchestrated.recommendation,
+      conviction: orchestrated.conviction,
+      summary: orchestrated.summary,
+      bull_case: orchestrated.bull_case,
+      bear_case: orchestrated.bear_case,
+      growth_outlook: orchestrated.growth_outlook,
+      fundamental: orchestrated.fundamental,
+      sentiment: orchestrated.sentiment,
+      market_intel: orchestrated.market_intel,
+      price_levels: orchestrated.price_levels,
+      data_quality: diana,
+      protocol: [dianaEntry, ...orchestrated.protocol],
+      analyzed_at: new Date().toISOString(),
+      from_cache: false,
+    };
+
+    const analysisId = await saveAnalysis(result, serviceClient);
+    if (analysisId && orchestrated.findings.length) {
+      void saveFactCheckFindings(analysisId, symbol, orchestrated.findings, serviceClient);
+    }
+    void saveOutcome(result, serviceClient);
+
+    await serviceClient.from("analysis_jobs").update({
+      status: "completed",
+      current_step: "completed",
+      progress: 100,
+      result: result as unknown as import("@/types/database").Json,
+      updated_at: ts(),
+    }).eq("id", jobId).eq("user_id", userId);
+
+  } catch (err) {
+    await serviceClient.from("analysis_jobs").update({
+      status: "failed",
+      error: err instanceof Error ? err.message : "Unbekannter Fehler",
+      updated_at: ts(),
+    }).eq("id", jobId).eq("user_id", userId);
+  }
+}
+
+// ─── Cache & Persistence ──────────────────────────────────────────────────────
+
 async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
   try {
     const supabase = await createClient();
@@ -1216,9 +1418,9 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
   }
 }
 
-async function saveOutcome(result: AIAnalysisResult): Promise<void> {
+async function saveOutcome(result: AIAnalysisResult, client?: SbClient): Promise<void> {
   try {
-    const supabase = await createClient();
+    const supabase = client ?? await createClient();
     const checkAt = new Date(result.analyzed_at);
     checkAt.setDate(checkAt.getDate() + 30);
 
@@ -1237,10 +1439,10 @@ async function saveOutcome(result: AIAnalysisResult): Promise<void> {
   }
 }
 
-async function saveAnalysis(result: AIAnalysisResult): Promise<string | null> {
+async function saveAnalysis(result: AIAnalysisResult, client?: SbClient): Promise<string | null> {
   if (!validateBeforeSave(result)) return null;
   try {
-    const supabase = await createClient();
+    const supabase = client ?? await createClient();
     const payload: AIAnalysisInsert = {
       symbol: result.symbol,
       recommendation: result.recommendation,
@@ -1303,7 +1505,7 @@ export async function POST(
 
   const auth = await requireAuth();
   if (isNextResponse(auth)) return auth;
-  const { user } = auth;
+  const { user, supabase } = auth;
 
   // 5 live analyses per 10 minutes per user (expensive API calls)
   const rl = rateLimit({ key: `ai-analysis:${user.id}`, limit: 5, windowSecs: 600 });
@@ -1327,92 +1529,23 @@ export async function POST(
   const cached = await getCached(symbol);
   if (cached) return NextResponse.json(cached);
 
-  try {
-    const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData] =
-      await Promise.all([
-        fetchAssetData(symbol),
-        fetchGoogleNews(symbol).catch(() => [] as GoogleNewsItem[]),
-        fetchEdgarFacts(symbol).catch(() => null),
-        fetchInsiderTrades(symbol).catch(() => [] as InsiderTrade[]),
-        fetchTrends(symbol).catch(() => [] as TrendPoint[]),
-        fetchInstitutional(symbol).catch(() => null),
-        fetchAnalystData(symbol).catch(() => null as AnalystData | null),
-      ]);
+  // Job anlegen
+  const { data: job, error: jobErr } = await supabase
+    .from("analysis_jobs")
+    .insert({ user_id: user.id, symbol, status: "queued", current_step: "queued", progress: 0 })
+    .select("id")
+    .single();
 
-    const snapshot: AssetSnapshot = {
-      id: "",
-      symbol: assetData.symbol,
-      price: assetData.price,
-      currency: assetData.currency,
-      isin: assetData.isin ?? null,
-      description: assetData.description ?? null,
-      pe_ratio: assetData.pe_ratio,
-      market_cap: assetData.market_cap,
-      debt_to_equity: assetData.debt_to_equity,
-      revenue_growth: assetData.revenue_growth,
-      free_cashflow: assetData.free_cashflow,
-      rsi: assetData.rsi,
-      moving_average_50: assetData.moving_average_50,
-      moving_average_200: assetData.moving_average_200,
-      fetched_at: assetData.fetched_at,
-    };
-
-    // Enrich news with Jina excerpts for Nina + Vera
-    const googleNewsEnriched = await Promise.race([
-      enrichWithDescriptions(googleNews),
-      new Promise<typeof googleNews>(resolve => setTimeout(() => resolve(googleNews), 8000)),
-    ]).catch(() => googleNews);
-
-    const peerContext = await fetchPeerContext(symbol).catch(() => "");
-
-    // Diana — Datenqualitäts-Check (regelbasiert, kein LLM)
-    const diana = runDianaCheck(snapshot, googleNewsEnriched, edgarFacts, analystData, peerContext);
-    const dianaEntry: ProtocolEntry = {
-      agent: "Diana",
-      status: diana.completeness_score >= 70 ? "ok" : "warning",
-      detail: [
-        `Datenbasis ${diana.completeness_score}/100`,
-        `Cap ${diana.analysis_confidence_cap}/10`,
-        ...(diana.missing_fields.length ? [`Fehlend: ${diana.missing_fields.slice(0, 4).join(", ")}`] : []),
-        ...(diana.stale_fields.length ? [`Veraltet: ${diana.stale_fields.join(", ")}`] : []),
-        ...(diana.warnings.length ? diana.warnings.slice(0, 2) : []),
-      ].join(" · "),
-    };
-
-    const orchestrated = await runOrchestrator(
-      symbol, snapshot, googleNewsEnriched, edgarFacts, insiderTrades, trends, institutional, analystData, diana.analysis_confidence_cap, peerContext,
-    );
-
-    const result: AIAnalysisResult = {
-      symbol,
-      recommendation: orchestrated.recommendation,
-      conviction: orchestrated.conviction,
-      summary: orchestrated.summary,
-      bull_case: orchestrated.bull_case,
-      bear_case: orchestrated.bear_case,
-      growth_outlook: orchestrated.growth_outlook,
-      fundamental: orchestrated.fundamental,
-      sentiment: orchestrated.sentiment,
-      market_intel: orchestrated.market_intel,
-      price_levels: orchestrated.price_levels,
-      data_quality: diana,
-      protocol: [dianaEntry, ...orchestrated.protocol],
-      analyzed_at: new Date().toISOString(),
-      from_cache: false,
-    };
-
-    const analysisId = await saveAnalysis(result);
-    if (analysisId && orchestrated.findings.length) {
-      void saveFactCheckFindings(analysisId, symbol, orchestrated.findings);
-    }
-    void saveOutcome(result);
-
-    return NextResponse.json(result);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unbekannter Fehler";
-    return NextResponse.json(
-      { error: `KI-Analyse fehlgeschlagen: ${message}` },
-      { status: 503 },
-    );
+  if (jobErr || !job) {
+    return NextResponse.json({ error: "Job konnte nicht erstellt werden" }, { status: 500 });
   }
+
+  const serviceClient = createServiceClient();
+
+  // Analyse läuft asynchron nach dem Response — kein Timeout-Risiko mehr
+  after(async () => {
+    await runAnalysisJob(job.id, symbol, user.id, serviceClient);
+  });
+
+  return NextResponse.json({ status: "queued", job_id: job.id, symbol });
 }

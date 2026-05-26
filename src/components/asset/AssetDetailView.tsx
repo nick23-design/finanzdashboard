@@ -283,20 +283,17 @@ function QuickAlertSection({ symbol, name, currentPrice }: QuickAlertProps) {
   );
 }
 
-const AI_STEPS = [
-  "Marktdaten werden geladen…",
-  "Fundamental-Analyse läuft…",
-  "Technische Analyse läuft…",
-  "Risikobewertung läuft…",
-  "Synthese der Ergebnisse…",
-];
-function aiStep(p: number) {
-  if (p < 18) return AI_STEPS[0];
-  if (p < 40) return AI_STEPS[1];
-  if (p < 62) return AI_STEPS[2];
-  if (p < 82) return AI_STEPS[3];
-  return AI_STEPS[4];
-}
+const JOB_STEP_LABELS: Record<string, string> = {
+  queued:       "Analyse wird gestartet…",
+  fetch_data:   "Marktdaten werden geladen…",
+  enrich_news:  "Nachrichten werden angereichert…",
+  diana_check:  "Datenqualität wird bewertet…",
+  run_agents:   "Felix, Nina & Marco analysieren…",
+  run_synthesis:"Synthese wird erstellt…",
+  run_vera:     "Vera prüft Fakten…",
+  save_result:  "Ergebnis wird gespeichert…",
+  completed:    "Analyse abgeschlossen",
+};
 
 interface AssetDetailViewProps {
   symbol: string;
@@ -317,6 +314,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiProgress, setAiProgress] = useState(0);
   const [aiPolling, setAiPolling] = useState(false);
+  const [aiCurrentStep, setAiCurrentStep] = useState<string>("");
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [earnings, setEarnings] = useState<EarningsCalendar | null>(null);
@@ -393,13 +391,8 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     return () => clearInterval(id);
   }, []);
 
-  // AI progress animation
-  useEffect(() => {
-    if (!aiLoading) { setAiProgress(0); return; }
-    setAiProgress(0);
-    const id = setInterval(() => setAiProgress(p => Math.min(p + 0.45, 90)), 100);
-    return () => clearInterval(id);
-  }, [aiLoading]);
+  // Progress kommt vom Server (analysis_jobs.progress) — keine Animation nötig
+  useEffect(() => { if (!aiLoading) setAiProgress(0); }, [aiLoading]);
 
   // Cleanup polling on unmount
   useEffect(() => () => stopPolling(), []);
@@ -424,58 +417,82 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     setAiPolling(false);
   }
 
-  function startPolling() {
+  function startJobPolling(jobId: string) {
     setAiPolling(true);
+    setAiCurrentStep("queued");
+
     pollingRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`/api/ai-analysis/${symbol}`);
+        const res = await fetch(`/api/ai-analysis/jobs/${jobId}`);
         const text = await res.text();
-        let data: unknown;
-        try { data = JSON.parse(text); } catch { return; /* Nicht-JSON → weiter pollen */ }
-        if (res.ok && data !== null && typeof data === "object" && "recommendation" in data) {
+        let job: Record<string, unknown>;
+        try { job = JSON.parse(text) as Record<string, unknown>; } catch { return; }
+
+        if (!res.ok) {
           stopPolling();
-          setAiAnalysis(data as AIAnalysisResult);
+          setAiError("Analyse konnte nicht geladen werden.");
+          setAiLoading(false);
+          return;
+        }
+
+        const progress = typeof job.progress === "number" ? job.progress : 0;
+        const step = typeof job.current_step === "string" ? job.current_step : "";
+        setAiProgress(progress);
+        setAiCurrentStep(step);
+
+        if (job.status === "completed" && job.result) {
+          stopPolling();
+          setAiAnalysis(job.result as unknown as AIAnalysisResult);
+          setAiLoading(false);
+        } else if (job.status === "failed") {
+          stopPolling();
+          setAiError(typeof job.error === "string" ? job.error : "Analyse fehlgeschlagen.");
           setAiLoading(false);
         }
       } catch { /* Netzwerkfehler → weiter pollen */ }
-    }, 4000);
+    }, 3000);
+
     pollingTimeoutRef.current = setTimeout(() => {
       stopPolling();
       setAiLoading(false);
-      setAiError("Analyse hat zu lange gedauert. Bitte erneut versuchen.");
-    }, 180_000);
+      setAiError("Analyse dauerte zu lange. Bitte erneut versuchen.");
+    }, 300_000);
   }
 
   async function runAIAnalysis() {
     setAiLoading(true);
     setAiError(null);
+    setAiProgress(0);
+    setAiCurrentStep("queued");
+
     try {
       const res = await fetch(`/api/ai-analysis/${symbol}`, { method: "POST" });
       const rawText = await res.text();
-      let data: unknown;
-      try { data = JSON.parse(rawText); }
-      catch { throw new Error(`Server-Fehler ${res.status} – Analyse konnte nicht geladen werden`); }
+      let data: Record<string, unknown>;
+      try { data = JSON.parse(rawText) as Record<string, unknown>; }
+      catch { throw new Error(`Server-Fehler ${res.status} – Analyse konnte nicht gestartet werden`); }
+
       if (!res.ok) {
-        const errMsg = data !== null && typeof data === "object" && "error" in data
-          ? (data as { error: string }).error
-          : "KI-Analyse fehlgeschlagen";
-        throw new Error(errMsg);
+        throw new Error(typeof data.error === "string" ? data.error : "KI-Analyse fehlgeschlagen");
       }
-      const parsed = data as Record<string, unknown>;
-      if ("status" in parsed && parsed.status === "analyzing") {
-        startPolling();
+
+      // Cache-Treffer: direkt anzeigen
+      if ("recommendation" in data) {
+        setAiAnalysis(data as unknown as AIAnalysisResult);
+        setAiLoading(false);
         return;
       }
-      setAiAnalysis(parsed as unknown as AIAnalysisResult);
-      setAiLoading(false);
-    } catch (err) {
-      if (err instanceof TypeError) {
-        // Netzwerkfehler (z.B. iOS-Bildschirmsperre) → Server läuft weiter → pollen
-        startPolling();
-      } else {
-        setAiError(err instanceof Error ? err.message : "Unbekannter Fehler");
-        setAiLoading(false);
+
+      // Job gestartet: pollen
+      if (data.status === "queued" && typeof data.job_id === "string") {
+        startJobPolling(data.job_id);
+        return;
       }
+
+      throw new Error("Unerwartete Server-Antwort");
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : "Unbekannter Fehler");
+      setAiLoading(false);
     }
   }
 
@@ -673,28 +690,31 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             disabled={aiLoading}
             className="w-full py-2.5 rounded-xl text-sm font-semibold transition-opacity disabled:opacity-60"
             style={{ background: "var(--primary)", color: "#000" }}>
-            {aiPolling ? "Warte auf Ergebnis…" : aiLoading ? "Analysiere…" : "KI-Analyse starten"}
+            {aiLoading ? (JOB_STEP_LABELS[aiCurrentStep] ?? "Analyse läuft…") : "KI-Analyse starten"}
           </button>
           {aiLoading && (
             <div className="space-y-2 mt-2">
-              {/* Active agents */}
+              {/* Agenten mit Aktivitätsstatus */}
               <div className="flex items-center gap-3 justify-center flex-wrap">
-                <AgentAvatar agent="diana" size="sm" showName working />
-                <AgentAvatar agent="opus" size="sm" showName working />
-                <AgentAvatar agent="felix" size="sm" showName working />
-                <AgentAvatar agent="nina" size="sm" showName working />
-                <AgentAvatar agent="marco" size="sm" showName working />
-                <AgentAvatar agent="vera" size="sm" showName working />
+                {(["diana","felix","nina","marco","vera"] as const).map(agent => {
+                  const active =
+                    (agent === "diana" && ["diana_check","run_agents","queued","fetch_data","enrich_news"].includes(aiCurrentStep)) ||
+                    (agent === "felix" && ["run_agents","run_synthesis"].includes(aiCurrentStep)) ||
+                    (agent === "nina"  && ["run_agents","run_synthesis"].includes(aiCurrentStep)) ||
+                    (agent === "marco" && ["run_agents","run_synthesis"].includes(aiCurrentStep)) ||
+                    (agent === "vera"  && aiCurrentStep === "run_vera");
+                  return <AgentAvatar key={agent} agent={agent} size="sm" showName working={active} />;
+                })}
               </div>
-              {/* Progress bar */}
+              {/* Echter Fortschrittsbalken vom Server */}
               <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: "var(--card-border)" }}>
                 <div
-                  className="h-full rounded-full transition-all duration-100"
+                  className="h-full rounded-full transition-all duration-500"
                   style={{ width: `${aiProgress}%`, background: "var(--primary)" }}
                 />
               </div>
               <p className="text-xs text-center" style={{ color: "var(--muted)" }}>
-                {aiPolling ? "Analyse läuft im Hintergrund — Bildschirm sperren ist okay" : aiStep(aiProgress)}
+                {JOB_STEP_LABELS[aiCurrentStep] ?? "Analyse läuft…"}
               </p>
             </div>
           )}

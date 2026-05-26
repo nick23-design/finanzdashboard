@@ -467,6 +467,45 @@ export interface Database {
         };
         Relationships: [];
       };
+      analysis_jobs: {
+        Row: {
+          id: string;
+          user_id: string;
+          symbol: string;
+          status: string;
+          current_step: string | null;
+          progress: number;
+          result: Json | null;
+          error: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          symbol: string;
+          status?: string;
+          current_step?: string | null;
+          progress?: number;
+          result?: Json | null;
+          error?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          symbol?: string;
+          status?: string;
+          current_step?: string | null;
+          progress?: number;
+          result?: Json | null;
+          error?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       nh_select_daily: {
         Row: {
           id: string;
@@ -524,3 +563,4 @@ export type FactCheckFinding = Database["public"]["Tables"]["fact_check_findings
 export type AnalysisOutcome = Database["public"]["Tables"]["analysis_outcomes"]["Row"];
 export type RadarSignal = Database["public"]["Tables"]["radar_signals"]["Row"];
 export type NHSelectDaily = Database["public"]["Tables"]["nh_select_daily"]["Row"];
+export type AnalysisJob = Database["public"]["Tables"]["analysis_jobs"]["Row"];
