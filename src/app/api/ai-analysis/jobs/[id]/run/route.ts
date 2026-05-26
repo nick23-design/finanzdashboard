@@ -3,7 +3,7 @@ import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { runAnalysisJob } from "@/app/api/ai-analysis/[symbol]/route";
 
-export const maxDuration = 90;
+export const maxDuration = 180;
 
 export async function POST(
   _request: NextRequest,

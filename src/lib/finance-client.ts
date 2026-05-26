@@ -6,8 +6,9 @@
 const FINANCE_API_URL =
   process.env.FINANCE_API_URL || "http://localhost:8000";
 
-const PRIMARY_TIMEOUT_MS = 12_000;
-const SECONDARY_TIMEOUT_MS = 10_000;
+const PRIMARY_TIMEOUT_MS = 20_000;
+const IMPORTANT_TIMEOUT_MS = 15_000;
+const SECONDARY_TIMEOUT_MS = 12_000;
 
 function apiSignal(ms: number) {
   return AbortSignal.timeout(ms);
@@ -137,7 +138,7 @@ export async function fetchInstitutional(symbol: string): Promise<InstitutionalD
 export async function fetchGoogleNews(symbol: string): Promise<GoogleNewsItem[]> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/google-news`, {
     next: { revalidate: 0 },
-    signal: apiSignal(SECONDARY_TIMEOUT_MS),
+    signal: apiSignal(IMPORTANT_TIMEOUT_MS),
   });
   if (!res.ok) return [];
   return res.json();
@@ -146,7 +147,7 @@ export async function fetchGoogleNews(symbol: string): Promise<GoogleNewsItem[]>
 export async function fetchEdgarFacts(symbol: string): Promise<EdgarFacts | null> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/edgar-facts`, {
     next: { revalidate: 0 },
-    signal: apiSignal(SECONDARY_TIMEOUT_MS),
+    signal: apiSignal(IMPORTANT_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   return res.json();
@@ -181,7 +182,7 @@ export async function fetchEarningsCalendar(symbol: string): Promise<EarningsCal
 export async function fetchAnalystData(symbol: string): Promise<AnalystData | null> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/analyst-data`, {
     next: { revalidate: 0 },
-    signal: apiSignal(SECONDARY_TIMEOUT_MS),
+    signal: apiSignal(IMPORTANT_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   return res.json();
