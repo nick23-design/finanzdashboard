@@ -47,17 +47,12 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
-  const { data: pending } = await (supabase as any)
+  const { data: pending } = await supabase
     .from("analysis_outcomes")
     .select("id, symbol, recommendation, price_at_analysis")
     .eq("outcome", "pending")
     .lte("check_at", new Date().toISOString())
-    .limit(50) as { data: {
-      id: string;
-      symbol: string;
-      recommendation: string;
-      price_at_analysis: number | null;
-    }[] | null };
+    .limit(50);
 
   if (!pending?.length) return NextResponse.json({ checked: 0, updated: 0 });
 
@@ -90,7 +85,7 @@ export async function GET(request: NextRequest) {
       row.recommendation as Recommendation,
       returnPct,
     );
-    await (supabase as any)
+    await supabase
       .from("analysis_outcomes")
       .update({
         price_at_check: currentPrice,

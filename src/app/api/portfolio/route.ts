@@ -109,7 +109,7 @@ export async function GET(_request: NextRequest) {
   // Fetch FX rates for cross-currency positions (e.g. USD asset bought in EUR)
   const fxRates: Record<string, number> = {}; // e.g. "EURUSD" -> 1.08 (1 EUR = 1.08 USD)
   const needsEurUsd = positions.some(p => {
-    const pc = (p as any).purchase_currency as string | null;
+    const pc = p.purchase_currency;
     const ac = priceMap[p.symbol]?.currency;
     return pc && ac && pc !== ac && ((pc === "EUR" && ac === "USD") || (pc === "USD" && ac === "EUR"));
   });
@@ -150,7 +150,7 @@ export async function GET(_request: NextRequest) {
     const { price: currentPrice, change_pct: dayChangePct, currency: assetCurrency } = priceMap[symbol];
 
     // Use the purchase_currency of the first lot (if set) as the group display currency
-    const purchaseCurrency = (lots[0] as any).purchase_currency as string | null | undefined;
+    const purchaseCurrency = lots[0].purchase_currency;
     const displayCurrency = purchaseCurrency ?? assetCurrency;
 
     // Convert current price to display currency if they differ
@@ -170,7 +170,7 @@ export async function GET(_request: NextRequest) {
     const weightPct = totalCurrent > 0 && currentValue != null ? (currentValue / totalCurrent) * 100 : null;
 
     const lotDetails: PortfolioLot[] = lots.map(p => {
-      const lotPurchaseCurrency = (p as any).purchase_currency as string | null | undefined;
+      const lotPurchaseCurrency = p.purchase_currency;
       const lotDisplayCurrency = lotPurchaseCurrency ?? assetCurrency;
       const lotCurrentPrice = currentPrice != null && assetCurrency && lotDisplayCurrency && assetCurrency !== lotDisplayCurrency
         ? convertToTargetCurrency(currentPrice, assetCurrency, lotDisplayCurrency)
@@ -250,7 +250,7 @@ export async function POST(request: NextRequest) {
       purchase_date: parsed.data.purchase_date,
       broker: parsed.data.broker ?? null,
       purchase_currency: parsed.data.purchase_currency ?? null,
-    } as any)
+    })
     .select()
     .single();
 

@@ -77,23 +77,14 @@ export async function GET() {
 
   // Fetch all Synthesizer picks with a price (last 90 days)
   const since = new Date(Date.now() - 90 * 24 * 3_600_000).toISOString();
-  const { data: picks } = await (supabase as any)
+  const { data: picks } = await supabase
     .from("nh_select_daily")
     .select("symbol, name, recommendation, conviction, price_at_pick, created_at")
     .eq("agent", "Synthesizer")
     .not("price_at_pick", "is", null)
     .gte("created_at", since)
     .order("created_at", { ascending: false })
-    .limit(60) as {
-      data: {
-        symbol: string;
-        name: string | null;
-        recommendation: string;
-        conviction: number;
-        price_at_pick: number;
-        created_at: string;
-      }[] | null;
-    };
+    .limit(60);
 
   if (!picks || picks.length === 0) {
     return NextResponse.json({

@@ -775,9 +775,8 @@ async function fetchGuardrails(symbol: string): Promise<string> {
     const supabase = await createClient();
     const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
 
-    const db = supabase as any;
     const [{ data: symbolData }, { data: globalData }] = await Promise.all([
-      db.from("fact_check_findings")
+      supabase.from("fact_check_findings")
         .select("correction, issue_type")
         .eq("symbol", symbol)
         .gte("created_at", cutoff)
@@ -785,7 +784,7 @@ async function fetchGuardrails(symbol: string): Promise<string> {
         .gte("confidence", 7)
         .order("created_at", { ascending: false })
         .limit(5),
-      db.from("fact_check_findings")
+      supabase.from("fact_check_findings")
         .select("correction, issue_type")
         .gte("created_at", cutoff)
         .neq("review_status", "rejected")
@@ -819,7 +818,7 @@ async function saveFactCheckFindings(
   if (!findings.length || !analysisId) return;
   try {
     const supabase = await createClient();
-    await (supabase as any).from("fact_check_findings").insert(
+    await supabase.from("fact_check_findings").insert(
       findings.map(f => ({
         analysis_id: analysisId,
         symbol,
@@ -1223,7 +1222,7 @@ async function saveOutcome(result: AIAnalysisResult): Promise<void> {
     const checkAt = new Date(result.analyzed_at);
     checkAt.setDate(checkAt.getDate() + 30);
 
-    await (supabase as any).from("analysis_outcomes").insert({
+    await supabase.from("analysis_outcomes").insert({
       symbol: result.symbol,
       recommendation: result.recommendation,
       conviction: result.conviction,

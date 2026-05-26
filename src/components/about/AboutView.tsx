@@ -133,7 +133,7 @@ const SECTIONS: Section[] = [
           <p>• <strong className="text-white">Nina (Haiku 4.5):</strong> Bewertet angereicherte Nachrichtenartikel (Titel + Excerpts aus Jina AI) und bestimmt Marktstimmung sowie Nachrichtenthemen.</p>
           <p>• <strong className="text-white">Marco (Haiku 4.5):</strong> Analysiert Insider-Transaktionen (SEC Form 4), institutionelle Positionen und Google Trends als Marktsignale.</p>
           <p>• <strong className="text-white">Opus 4.7 (Adaptive Thinking):</strong> Orchestriert alle Agenten — koordiniert Felix, Nina und Marco, fasst die Ergebnisse zusammen und erstellt Empfehlung, Conviction-Score (1–10, gedeckelt durch Diana), Kursziele, Bull/Bear-Case und Wachstumsausblick.</p>
-          <p>• <strong className="text-white">Vera (Sonnet 4.6):</strong> Prüft Opus' Aussagen gegen authoritative Finance-API-Daten (Kurs, MAs, RSI, KGV, FCF u.a.), Analysten-Konsens und Artikel-Aktualität. Kann bis zu 3 Artikel aus der News-Whitelist nachladen. Korrigiert belegte Fehler und passt den Conviction-Score an.</p>
+          <p>• <strong className="text-white">Vera (Sonnet 4.6):</strong> Prüft Opus&apos; Aussagen gegen authoritative Finance-API-Daten (Kurs, MAs, RSI, KGV, FCF u.a.), Analysten-Konsens und Artikel-Aktualität. Kann bis zu 3 Artikel aus der News-Whitelist nachladen. Korrigiert belegte Fehler und passt den Conviction-Score an.</p>
           <p className="mt-1">Ergebnis wird 6 Stunden gecacht. Kursziele werden aus MA50-Abstand und Analysten-Konsens berechnet — modellbasierte Orientierungsmarken, kein Ersatz für professionelle Analysten-Kursziele.</p>
         </Block>
         <Block label="Konkurrenten">

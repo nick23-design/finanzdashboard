@@ -12,7 +12,7 @@ export async function GET() {
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
     // Synthesizer picks of the last 7 days
-    const { data: history } = await (supabase as any)
+    const { data: history } = await supabase
       .from("nh_select_daily")
       .select("symbol, name, recommendation, conviction, rationale, sources, agent, created_at")
       .eq("agent", "Synthesizer")
@@ -21,7 +21,7 @@ export async function GET() {
       .limit(14);
 
     // Today's scout findings
-    const { data: scouts } = await (supabase as any)
+    const { data: scouts } = await supabase
       .from("nh_select_daily")
       .select("symbol, name, recommendation, conviction, rationale, sources, agent, created_at")
       .neq("agent", "Synthesizer")

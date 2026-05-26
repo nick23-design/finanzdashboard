@@ -219,6 +219,7 @@ export interface Database {
           purchase_price: number;
           purchase_date: string;
           broker: string | null;
+          purchase_currency: string | null;
           created_at: string;
         };
         Insert: {
@@ -230,6 +231,7 @@ export interface Database {
           purchase_price: number;
           purchase_date: string;
           broker?: string | null;
+          purchase_currency?: string | null;
           created_at?: string;
         };
         Update: {
@@ -240,6 +242,8 @@ export interface Database {
           shares?: number;
           purchase_price?: number;
           purchase_date?: string;
+          broker?: string | null;
+          purchase_currency?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -346,6 +350,195 @@ export interface Database {
         };
         Relationships: [];
       };
+      push_subscriptions: {
+        Row: {
+          id: string;
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          endpoint?: string;
+          p256dh?: string;
+          auth?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      fact_check_findings: {
+        Row: {
+          id: string;
+          analysis_id: string | null;
+          symbol: string;
+          claim: string;
+          issue_type: string;
+          correction: string;
+          severity: "low" | "medium" | "high";
+          evidence_urls: Json;
+          confidence: number;
+          review_status: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          analysis_id?: string | null;
+          symbol: string;
+          claim: string;
+          issue_type: string;
+          correction: string;
+          severity: "low" | "medium" | "high";
+          evidence_urls?: Json;
+          confidence: number;
+          review_status?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          analysis_id?: string | null;
+          symbol?: string;
+          claim?: string;
+          issue_type?: string;
+          correction?: string;
+          severity?: "low" | "medium" | "high";
+          evidence_urls?: Json;
+          confidence?: number;
+          review_status?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      analysis_outcomes: {
+        Row: {
+          id: string;
+          symbol: string;
+          recommendation: string;
+          conviction: number;
+          price_at_analysis: number | null;
+          price_target: number | null;
+          stop_loss: number | null;
+          analyzed_at: string;
+          check_at: string;
+          outcome: string;
+          price_at_check: number | null;
+          return_pct: number | null;
+          checked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          symbol: string;
+          recommendation: string;
+          conviction: number;
+          price_at_analysis?: number | null;
+          price_target?: number | null;
+          stop_loss?: number | null;
+          analyzed_at: string;
+          check_at: string;
+          outcome?: string;
+          price_at_check?: number | null;
+          return_pct?: number | null;
+          checked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          symbol?: string;
+          recommendation?: string;
+          conviction?: number;
+          price_at_analysis?: number | null;
+          price_target?: number | null;
+          stop_loss?: number | null;
+          analyzed_at?: string;
+          check_at?: string;
+          outcome?: string;
+          price_at_check?: number | null;
+          return_pct?: number | null;
+          checked_at?: string | null;
+        };
+        Relationships: [];
+      };
+      radar_signals: {
+        Row: {
+          id: string;
+          symbol: string;
+          signal_type: string;
+          description: string;
+          confidence: number;
+          source: string;
+          found_at: string;
+          used_in_select: boolean;
+        };
+        Insert: {
+          id?: string;
+          symbol: string;
+          signal_type: string;
+          description: string;
+          confidence: number;
+          source: string;
+          found_at?: string;
+          used_in_select?: boolean;
+        };
+        Update: {
+          id?: string;
+          symbol?: string;
+          signal_type?: string;
+          description?: string;
+          confidence?: number;
+          source?: string;
+          found_at?: string;
+          used_in_select?: boolean;
+        };
+        Relationships: [];
+      };
+      nh_select_daily: {
+        Row: {
+          id: string;
+          symbol: string;
+          name: string | null;
+          recommendation: string;
+          conviction: number;
+          rationale: string;
+          sources: Json;
+          agent: string;
+          price_at_pick: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          symbol: string;
+          name?: string | null;
+          recommendation: string;
+          conviction: number;
+          rationale: string;
+          sources?: Json;
+          agent: string;
+          price_at_pick?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          symbol?: string;
+          name?: string | null;
+          recommendation?: string;
+          conviction?: number;
+          rationale?: string;
+          sources?: Json;
+          agent?: string;
+          price_at_pick?: number | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -360,3 +553,8 @@ export type Profile = Database["public"]["Tables"]["profiles"]["Row"];
 export type WatchlistItem = Database["public"]["Tables"]["watchlist_items"]["Row"];
 export type AssetSnapshot = Database["public"]["Tables"]["asset_snapshots"]["Row"];
 export type AnalysisScore = Database["public"]["Tables"]["analysis_scores"]["Row"];
+export type PushSubscription = Database["public"]["Tables"]["push_subscriptions"]["Row"];
+export type FactCheckFinding = Database["public"]["Tables"]["fact_check_findings"]["Row"];
+export type AnalysisOutcome = Database["public"]["Tables"]["analysis_outcomes"]["Row"];
+export type RadarSignal = Database["public"]["Tables"]["radar_signals"]["Row"];
+export type NHSelectDaily = Database["public"]["Tables"]["nh_select_daily"]["Row"];

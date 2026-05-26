@@ -24,19 +24,11 @@ export async function GET() {
   if (isNextResponse(auth)) return auth;
 
   const supabase = createServiceClient();
-  const { data: rows } = await (supabase as any)
+  const { data: rows } = await supabase
     .from("analysis_outcomes")
     .select("symbol, recommendation, return_pct, outcome, checked_at")
     .order("checked_at", { ascending: false })
-    .limit(200) as {
-      data: {
-        symbol: string;
-        recommendation: string;
-        return_pct: number | null;
-        outcome: string;
-        checked_at: string | null;
-      }[] | null;
-    };
+    .limit(200);
 
   if (!rows) return NextResponse.json({ total: 0, pending: 0, closed: 0, correct: 0, neutral: 0, incorrect: 0, accuracy_rate: null, recent: [] });
 

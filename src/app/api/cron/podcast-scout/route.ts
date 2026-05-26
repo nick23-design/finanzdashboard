@@ -160,7 +160,7 @@ export async function GET(request: NextRequest) {
     agent: "Podcast-Scout",
     created_at: new Date().toISOString(),
   }));
-  await (supabase as any).from("nh_select_daily").insert(rows);
+  await supabase.from("nh_select_daily").insert(rows);
 
   return NextResponse.json({ picks: validPicks.length, symbols: validPicks.map(p => p.symbol), filtered });
 }

@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
     const notifUrl = `/dashboard/asset/${alert.symbol}`;
 
     // Send Web Push notification
-    const { data: subs } = await (supabase as any)
+    const { data: subs } = await supabase
       .from("push_subscriptions")
       .select("endpoint, p256dh, auth")
       .eq("user_id", alert.user_id);

@@ -34,21 +34,21 @@ export async function GET(request: NextRequest) {
 
   // 1. Fetch recent radar signals (last 48h)
   const since = new Date(Date.now() - 48 * 3_600_000).toISOString();
-  const { data: radarSignals } = await (supabase as any)
+  const { data: radarSignals } = await supabase
     .from("radar_signals")
     .select("symbol, signal_type, description, confidence, source, found_at")
     .gte("found_at", since)
     .order("confidence", { ascending: false })
-    .limit(20) as { data: RadarSignalRow[] | null };
+    .limit(20);
 
   // 2. Fetch recent scout sources (last 48h)
-  const { data: scoutSources } = await (supabase as any)
+  const { data: scoutSources } = await supabase
     .from("nh_select_daily")
     .select("symbol, recommendation, rationale, agent, created_at")
     .gte("created_at", since)
     .neq("agent", "Synthesizer")
     .order("created_at", { ascending: false })
-    .limit(15) as { data: { symbol: string; recommendation: string; rationale: string; agent: string; created_at: string }[] | null };
+    .limit(15);
 
   const radarText = radarSignals?.length
     ? radarSignals.map(s =>
@@ -158,7 +158,7 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
     created_at: new Date().toISOString(),
     price_at_pick: priceAtPick,
   };
-  const { error } = await (supabase as any).from("nh_select_daily").insert(row);
+  const { error } = await supabase.from("nh_select_daily").insert(row);
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -166,7 +166,7 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
   // 6. Mark used radar signals
   if (radarSignals?.length) {
     const usedSymbols = [pick.symbol];
-    await (supabase as any)
+    await supabase
       .from("radar_signals")
       .update({ used_in_select: true })
       .in("symbol", usedSymbols)
@@ -182,7 +182,7 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
 
     if (vapidPublic && vapidPrivate) {
       webPush.default.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
-      const { data: subs } = await (supabase as any)
+      const { data: subs } = await supabase
         .from("push_subscriptions")
         .select("endpoint, p256dh, auth")
         .limit(500);

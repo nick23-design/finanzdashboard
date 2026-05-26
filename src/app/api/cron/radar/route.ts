@@ -243,7 +243,7 @@ export async function GET(request: NextRequest) {
   if (!signals.length) return NextResponse.json({ signals: 0, reason: "no signals" });
 
   // 9. Save to Supabase
-  await (supabase as any).from("radar_signals").insert(
+  await supabase.from("radar_signals").insert(
     signals.map(s => ({
       symbol: s.symbol,
       signal_type: s.signal_type,

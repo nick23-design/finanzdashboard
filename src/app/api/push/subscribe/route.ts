@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
-  await (supabase as any)
+  await supabase
     .from("push_subscriptions")
     .upsert(
       {
@@ -38,7 +38,7 @@ export async function DELETE(request: NextRequest) {
   if (!endpoint) return NextResponse.json({ ok: true });
 
   const supabase = createServiceClient();
-  await (supabase as any).from("push_subscriptions").delete().eq("endpoint", endpoint);
+  await supabase.from("push_subscriptions").delete().eq("endpoint", endpoint);
 
   return NextResponse.json({ ok: true });
 }
