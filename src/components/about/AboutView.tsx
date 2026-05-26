@@ -127,12 +127,13 @@ const SECTIONS: Section[] = [
           <p className="mt-1">Signale: ≥80 Bullish · ≥60 Slightly Bullish · ≥40 Neutral · ≥20 Caution · &lt;20 High Risk</p>
         </Block>
         <Block label="KI-Vollanalyse (Multi-Agenten-Pipeline)">
-          <p>Die Analyse läuft in fünf Stufen:</p>
+          <p>Die Analyse läuft in sechs Stufen:</p>
           <p className="mt-1">• <strong className="text-white">Diana (regelbasiert):</strong> Prüft vor der Analyse die Datenlage — bewertet Vollständigkeit von Kennzahlen, News, EDGAR-Daten und Analysten-Konsens. Gibt einen Datenbasis-Score (0–100) aus und setzt die maximale Conviction, die Opus vergeben darf.</p>
-          <p>• <strong className="text-white">Felix (Haiku 4.5):</strong> Sammelt aktuelle News-Titel via Google News RSS</p>
-          <p>• <strong className="text-white">Nina (Haiku 4.5):</strong> Ruft über Jina AI Reader Artikel-Auszüge ab — auch bei schwer zugänglichen Quellen häufig möglich, aber nicht garantiert</p>
-          <p>• <strong className="text-white">Opus 4.7 (Extended Thinking):</strong> Orchestriert die Analyse — wertet Fundamentals, Technicals und News-Kontext aus, liefert Empfehlung, Conviction-Score (1–10, gedeckelt durch Diana), Kursziele, Bull/Bear-Case und Wachstumsausblick</p>
-          <p>• <strong className="text-white">Vera (Sonnet 4.6):</strong> Fact-Checks Opus-Aussagen anhand der News-Quellen und ergänzt das Analyse-Protokoll mit Korrekturen und Einschränkungen</p>
+          <p>• <strong className="text-white">Felix (Haiku 4.5):</strong> Bewertet Finanzkennzahlen und SEC EDGAR Quartalsdaten auf Wachstum, Profitabilität und Verschuldung. Liefert eine Wachstumsbewertung (1–10) mit Stärken und Risiken.</p>
+          <p>• <strong className="text-white">Nina (Haiku 4.5):</strong> Bewertet angereicherte Nachrichtenartikel (Titel + Excerpts aus Jina AI) und bestimmt Marktstimmung sowie Nachrichtenthemen.</p>
+          <p>• <strong className="text-white">Marco (Haiku 4.5):</strong> Analysiert Insider-Transaktionen (SEC Form 4), institutionelle Positionen und Google Trends als Marktsignale.</p>
+          <p>• <strong className="text-white">Opus 4.7 (Adaptive Thinking):</strong> Orchestriert alle Agenten — koordiniert Felix, Nina und Marco, fasst die Ergebnisse zusammen und erstellt Empfehlung, Conviction-Score (1–10, gedeckelt durch Diana), Kursziele, Bull/Bear-Case und Wachstumsausblick.</p>
+          <p>• <strong className="text-white">Vera (Sonnet 4.6):</strong> Prüft Opus' Aussagen gegen authoritative Finance-API-Daten (Kurs, MAs, RSI, KGV, FCF u.a.), Analysten-Konsens und Artikel-Aktualität. Kann bis zu 3 Artikel aus der News-Whitelist nachladen. Korrigiert belegte Fehler und passt den Conviction-Score an.</p>
           <p className="mt-1">Ergebnis wird 6 Stunden gecacht. Kursziele werden aus MA50-Abstand und Analysten-Konsens berechnet — modellbasierte Orientierungsmarken, kein Ersatz für professionelle Analysten-Kursziele.</p>
         </Block>
         <Block label="Konkurrenten">
@@ -143,13 +144,13 @@ const SECTIONS: Section[] = [
           <Pill label="Diana (Datenqualitäts-Modul)" />
           <Pill label="Claude Opus 4.7 (Analyse)" />
           <Pill label="Claude Sonnet 4.6 (Vera)" />
-          <Pill label="Claude Haiku 4.5 (Felix / Nina / Peers)" />
+          <Pill label="Claude Haiku 4.5 (Felix / Nina / Marco / Peers)" />
           <Pill label="Google News RSS" />
           <Pill label="Jina AI Reader" />
         </Block>
         <RiskBox items={[
           "Der Score basiert auf wenigen Datenpunkten — kein DCF, kein Branchen-Kontext, keine Zukunftsprognosen.",
-          "Vera prüft nur Artikel, die Nina bereits abgerufen hat (max. 3 Fetches pro Analyse, gesicherte Whitelist) — kein freier Internetzugang.",
+          "Vera kann bis zu 3 Artikel aus der News-Whitelist nachladen (fetch_article). Authoritative Kennzahlen aus der Finance API (Kurs, MAs, RSI etc.) gelten immer als belegt und können nicht durch Artikel überschrieben werden.",
           "KGV, Cashflow und Wachstum können von Yahoo Finance fehlen oder veraltet sein — besonders bei europäischen Aktien. Diana zeigt fehlende Felder transparent an.",
           "Ein hoher Score ist kein Kaufsignal, sondern ein Indikator auf Basis historischer Kennzahlen.",
         ]} />
@@ -197,7 +198,7 @@ const SECTIONS: Section[] = [
           <p>Pro Watchlist-Aktie werden bis zu 5 aktuelle Artikel über Google News RSS geladen (max. 8 Aktien gleichzeitig). Anzeige nach Wichtigkeit, Datum oder Symbol filterbar.</p>
         </Block>
         <Block label="Agent Lisa (Claude Haiku)">
-          <p>Klassifiziert jeden Artikel nach Relevanz und übersetzt den Titel ins Deutsche:</p>
+          <p>Klassifiziert jeden Artikel nach Relevanz anhand von Titel und Artikel-Excerpt und übersetzt ins Deutsche:</p>
           <p className="mt-1">• <strong className="text-white">Wichtig:</strong> Direkte Unternehmensnews (Quartalszahlen, Übernahmen, CEO-Wechsel)</p>
           <p>• <strong className="text-white">Mittel:</strong> Analysten-Ratings, Sektor- oder Wettbewerbsnews</p>
           <p>• <strong className="text-white">Gering:</strong> Allgemeine Markt- oder Wirtschaftsnews</p>
@@ -211,9 +212,8 @@ const SECTIONS: Section[] = [
         </Block>
         <RiskBox items={[
           "Google News RSS ist keine offizielle API — Verfügbarkeit und Vollständigkeit nicht garantiert.",
-          "Lisa liest nur den Titel, nicht den Artikeltext — Klassifizierung kann falsch sein.",
+          "Lisa bewertet Titel und Artikel-Excerpt — bei kurzen oder fehlenden Excerpts kann die Klassifizierung ungenau sein.",
           "Übersetzungen sind maschinell und inhaltlich nicht geprüft.",
-          "Viele Artikel liegen hinter Paywalls.",
         ]} />
       </div>
     ),
@@ -275,8 +275,8 @@ const SECTIONS: Section[] = [
           <Pill label="Yahoo Finance (Kursvalidierung)" />
         </Block>
         <RiskBox items={[
-          "Scouts lesen nur RSS-Titel, keinen Artikel-Volltext — Kontext kann fehlen.",
-          "Opus kennt keine Kursdaten zum Zeitpunkt der Analyse, nur die Nachrichtenlage.",
+          "Scouts lesen RSS-Feeds — kein Zugriff auf vollständige Artikeltexte hinter Paywalls.",
+          "Opus bezieht aktuelle Kursdaten aller Kandidaten vor der Entscheidung, aber keine Echtzeit-Orderbook-Daten.",
           "Trefferquote misst nur Kursrichtung nach 7 Tagen — kein Risiko-adjustiertes Ergebnis.",
           "Keine Garantie auf tägliche Ausführung (abhängig von Cron-Verfügbarkeit).",
           "NH Select ist keine Anlageberatung — alle Empfehlungen dienen nur zu Research-Zwecken.",
@@ -299,16 +299,16 @@ const SECTIONS: Section[] = [
         <Block label="Fundamentaldaten-Tabelle">
           <p>KGV, Marktkapitalisierung, Umsatzwachstum, Debt/Equity und RSI beider Aktien nebeneinander.</p>
         </Block>
-        <Block label="Agent Kai (Claude Haiku)">
-          <p>Analysiert beide Aktien und liefert Gewinner, Stärken und Schwächen beider Titel sowie ein abschließendes Verdict. Nutzt gecachte Snapshot-Daten — falls keine vorhanden, übergibt das Frontend die bereits geladenen Daten direkt.</p>
+        <Block label="Agent Kai (Claude Opus 4.7)">
+          <p>Vergleicht beide Aktien mit Adaptive Thinking — bezieht Fundamentaldaten, Peer-Kontext und News-Excerpts ein. Liefert Stärken, Schwächen und ein begründetes Verdict. Nutzt gecachte Snapshot-Daten — falls keine vorhanden, übergibt das Frontend die bereits geladenen Daten direkt.</p>
         </Block>
         <Block label="Datenquellen">
           <Pill label="Yahoo Finance (inoffiziell)" />
-          <Pill label="Claude Haiku (Kai)" />
+          <Pill label="Claude Opus 4.7 (Kai)" />
         </Block>
         <RiskBox items={[
           "Der normierte Chart hängt stark vom gewählten Startpunkt ab — kurze Zeiträume können irreführend sein.",
-          "Kai vergleicht nur Fundamentaldaten — kein Branchen- oder Makro-Kontext.",
+          "Kai vergleicht die verfügbaren Kennzahlen beider Titel — Branchen- oder Makro-Kontext nur wenn in Peer-Daten vorhanden.",
           "Dividenden und andere Ausschüttungen werden nicht berücksichtigt.",
         ]} />
       </div>
