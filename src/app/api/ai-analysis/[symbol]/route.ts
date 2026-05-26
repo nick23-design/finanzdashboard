@@ -90,6 +90,7 @@ const VERA_MAX_TURNS = 3;
 const DEFERRED_VERA_TIMEOUT_MS = 25_000;
 const VERA_FAST_NEWS_LIMIT = 5;
 const VERA_FULL_NEWS_LIMIT = 10;
+const EUR_USD_FALLBACK = 1.08;
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
@@ -101,6 +102,23 @@ const ALLOWED_RECOMMENDATIONS = [
   "Kaufen", "Leicht kaufen", "Halten", "Leicht verkaufen", "Verkaufen",
 ] as const;
 type AllowedRecommendation = typeof ALLOWED_RECOMMENDATIONS[number];
+
+const THESIS_TYPES = [
+  "Quality Compounder", "Story Growth", "Turnaround", "Cyclical", "Momentum", "Speculative",
+] as const;
+
+const ENTRY_QUALITY_LABELS = [
+  "attraktiv", "fair", "überhitzt", "Rücksetzer abwarten", "nicht hinterherrennen", "nur spekulativ",
+] as const;
+
+const VALUATION_CONFIDENCE = ["high", "medium", "low"] as const;
+
+const ClaimSchema = z.object({
+  claim: z.string().min(1),
+  evidence: z.string().min(1),
+  source_type: z.enum(["metrics", "news", "analyst", "market_intel", "inference"]),
+  confidence: z.number().min(1).max(10),
+});
 
 const CompleteAnalysisSchema = z.object({
   recommendation: z.enum(["Kaufen", "Leicht kaufen", "Halten", "Leicht verkaufen", "Verkaufen"]),
@@ -114,6 +132,26 @@ const CompleteAnalysisSchema = z.object({
   stop_loss: z.number().nullable().optional(),
   entry_rationale: z.string().optional(),
   target_rationale: z.string().optional(),
+  thesis_type: z.enum(THESIS_TYPES).optional(),
+  time_horizon_view: z.object({
+    short_term: z.string().min(1),
+    medium_term: z.string().min(1),
+    long_term: z.string().min(1),
+  }).optional(),
+  entry_quality: z.object({
+    label: z.enum(ENTRY_QUALITY_LABELS),
+    rationale: z.string().min(1),
+  }).optional(),
+  valuation_confidence: z.enum(VALUATION_CONFIDENCE).optional(),
+  valuation_range: z.object({
+    currency: z.string().length(3).optional(),
+    bear: z.number().nullable(),
+    base: z.number().nullable(),
+    bull: z.number().nullable(),
+    rationale: z.string().min(1),
+  }).nullable().optional(),
+  data_quality_guardrails: z.array(z.string()).optional(),
+  claims: z.array(ClaimSchema).max(6).optional(),
 });
 type CompleteAnalysisInput = z.infer<typeof CompleteAnalysisSchema>;
 
@@ -185,6 +223,44 @@ export interface PriceLevels {
   target_rationale: string;
 }
 
+export type ThesisType = typeof THESIS_TYPES[number];
+export type EntryQualityLabel = typeof ENTRY_QUALITY_LABELS[number];
+export type ValuationConfidence = typeof VALUATION_CONFIDENCE[number];
+
+export interface TimeHorizonView {
+  short_term: string;
+  medium_term: string;
+  long_term: string;
+}
+
+export interface EntryQuality {
+  label: EntryQualityLabel;
+  rationale: string;
+}
+
+export interface MoneyRange {
+  bear: number | null;
+  base: number | null;
+  bull: number | null;
+}
+
+export interface ValuationRange extends MoneyRange {
+  currency: string;
+  rationale: string;
+  usd?: MoneyRange | null;
+  eur?: MoneyRange | null;
+  fx_rate_eur_usd?: number | null;
+  fx_rate_source?: "finance_api" | "fallback" | null;
+  fx_rate_as_of?: string | null;
+}
+
+export interface AnalysisClaim {
+  claim: string;
+  evidence: string;
+  source_type: "metrics" | "news" | "analyst" | "market_intel" | "inference";
+  confidence: number;
+}
+
 interface SynthesisResult {
   recommendation: string;
   conviction: number;
@@ -193,6 +269,13 @@ interface SynthesisResult {
   bear_case: string[];
   growth_outlook: string;
   price_levels?: PriceLevels | null;
+  thesis_type?: ThesisType | null;
+  time_horizon_view?: TimeHorizonView | null;
+  entry_quality?: EntryQuality | null;
+  valuation_confidence?: ValuationConfidence | null;
+  valuation_range?: ValuationRange | null;
+  data_quality_guardrails?: string[];
+  claims?: AnalysisClaim[];
 }
 
 export interface StructuredFinding {
@@ -241,6 +324,13 @@ export interface AIAnalysisResult extends SynthesisResult {
   sentiment: SentimentAnalysis;
   market_intel: MarketIntelAnalysis | null;
   price_levels: PriceLevels | null;
+  thesis_type?: ThesisType | null;
+  time_horizon_view?: TimeHorizonView | null;
+  entry_quality?: EntryQuality | null;
+  valuation_confidence?: ValuationConfidence | null;
+  valuation_range?: ValuationRange | null;
+  data_quality_guardrails?: string[];
+  claims?: AnalysisClaim[];
   data_quality: DianaQualityReport | null;
   analyzed_at: string;
   from_cache: boolean;
@@ -255,6 +345,13 @@ interface OrchestratorResult {
   bear_case: string[];
   growth_outlook: string;
   price_levels: PriceLevels | null;
+  thesis_type?: ThesisType | null;
+  time_horizon_view?: TimeHorizonView | null;
+  entry_quality?: EntryQuality | null;
+  valuation_confidence?: ValuationConfidence | null;
+  valuation_range?: ValuationRange | null;
+  data_quality_guardrails?: string[];
+  claims?: AnalysisClaim[];
   fundamental: FundamentalAnalysis;
   sentiment: SentimentAnalysis;
   market_intel: MarketIntelAnalysis | null;
@@ -295,6 +392,282 @@ function validateRecommendation(r: string): AllowedRecommendation {
 
 function validateBeforeSave(r: AIAnalysisResult): boolean {
   return !!(r.symbol?.trim() && r.summary?.trim() && r.recommendation?.trim());
+}
+
+function roundMoney(value: number | null): number | null {
+  return value == null || !Number.isFinite(value) ? null : Math.round(value * 100) / 100;
+}
+
+function normalizeCurrency(currency: string | null | undefined): string {
+  return (currency || "USD").toUpperCase();
+}
+
+function convertMoney(value: number | null, from: string, to: string, eurUsd: number): number | null {
+  if (value == null) return null;
+  const src = normalizeCurrency(from);
+  const dst = normalizeCurrency(to);
+  if (src === dst) return roundMoney(value);
+  if (src === "USD" && dst === "EUR") return roundMoney(value / eurUsd);
+  if (src === "EUR" && dst === "USD") return roundMoney(value * eurUsd);
+  return null;
+}
+
+function convertRange(range: MoneyRange, from: string, to: string, eurUsd: number): MoneyRange | null {
+  const converted = {
+    bear: convertMoney(range.bear, from, to, eurUsd),
+    base: convertMoney(range.base, from, to, eurUsd),
+    bull: convertMoney(range.bull, from, to, eurUsd),
+  };
+  return converted.bear != null || converted.base != null || converted.bull != null ? converted : null;
+}
+
+function hasAnyRangeValue(range: MoneyRange | null | undefined): boolean {
+  return !!range && (range.bear != null || range.base != null || range.bull != null);
+}
+
+function inferThesisType(s: AssetSnapshot, marketIntel: MarketIntelAnalysis | null): ThesisType {
+  const revenueGrowth = s.revenue_growth ?? 0;
+  const freeCashflow = s.free_cashflow ?? 0;
+  const rsi = s.rsi ?? 50;
+  const aboveMa50 = s.price != null && s.moving_average_50 != null && s.price > s.moving_average_50 * 1.12;
+
+  if (freeCashflow > 0 && revenueGrowth > 0.05 && (s.debt_to_equity == null || s.debt_to_equity < 120)) {
+    return "Quality Compounder";
+  }
+  if (revenueGrowth > 0.15 && freeCashflow <= 0) return "Story Growth";
+  if (revenueGrowth < 0 && freeCashflow <= 0) return "Turnaround";
+  if (rsi >= 70 || aboveMa50 || marketIntel?.trends_momentum === "rising") return "Momentum";
+  if (s.debt_to_equity != null && s.debt_to_equity > 180) return "Speculative";
+  return "Cyclical";
+}
+
+function inferEntryQuality(s: AssetSnapshot): EntryQuality {
+  const rsi = s.rsi;
+  const price = s.price;
+  const ma50 = s.moving_average_50;
+  const ma200 = s.moving_average_200;
+  const dist50 = price != null && ma50 != null ? (price - ma50) / ma50 : null;
+  const dist200 = price != null && ma200 != null ? (price - ma200) / ma200 : null;
+
+  if ((rsi != null && rsi >= 78) || (dist50 != null && dist50 > 0.18)) {
+    return { label: "nicht hinterherrennen", rationale: "Kurzfristig deutlich überkauft oder weit über dem 50-Tage-Durchschnitt." };
+  }
+  if ((rsi != null && rsi >= 70) || (dist50 != null && dist50 > 0.10)) {
+    return { label: "Rücksetzer abwarten", rationale: "Momentum ist stark, aber das Chance/Risiko für Neueinstiege wirkt kurzfristig angespannt." };
+  }
+  if (rsi != null && rsi >= 45 && rsi <= 62 && dist50 != null && Math.abs(dist50) <= 0.06) {
+    return { label: "attraktiv", rationale: "Timing wirkt ausgewogen: moderater RSI und Nähe zum 50-Tage-Durchschnitt." };
+  }
+  if (dist200 != null && dist200 < -0.20) {
+    return { label: "nur spekulativ", rationale: "Der Kurs liegt klar unter dem langfristigen Trend; Einstieg nur mit erhöhtem Risiko." };
+  }
+  return { label: "fair", rationale: "Kein extremes Timing-Signal; Einstieg hängt stärker von These und Risikotoleranz ab." };
+}
+
+function inferValuationConfidence(
+  s: AssetSnapshot,
+  analystData: AnalystData | null,
+  dataQuality: DianaQualityReport | null | undefined,
+): ValuationConfidence {
+  if ((dataQuality?.completeness_score ?? 100) < 60) return "low";
+  if (s.pe_ratio == null && s.free_cashflow == null && analystData?.mean_target == null) return "low";
+  if (analystData?.mean_target != null && s.pe_ratio != null && s.free_cashflow != null) return "high";
+  return "medium";
+}
+
+function buildDataQualityGuardrails(
+  dataQuality: DianaQualityReport | null | undefined,
+  valuationConfidence: ValuationConfidence,
+): string[] {
+  const guardrails: string[] = [];
+  if (!dataQuality) return guardrails;
+
+  if (dataQuality.analysis_confidence_cap < 10) {
+    guardrails.push(`Conviction auf maximal ${dataQuality.analysis_confidence_cap}/10 begrenzt.`);
+  }
+  if (dataQuality.completeness_score < 70) {
+    guardrails.push("Datenbasis lückenhaft: präzise Kursziele vermeiden und nur Szenario-Spannen verwenden.");
+  }
+  if (dataQuality.missing_fields.length) {
+    guardrails.push(`Fehlende Daten: ${dataQuality.missing_fields.slice(0, 4).join(", ")}.`);
+  }
+  if (valuationConfidence === "low") {
+    guardrails.push("Bewertungskonfidenz niedrig: Kursbereich nur als grobe Orientierung interpretieren.");
+  }
+  return guardrails;
+}
+
+function buildDefaultTimeHorizonView(s: AssetSnapshot, entry: EntryQuality, thesis: ThesisType): TimeHorizonView {
+  const rsiText = s.rsi != null ? `RSI ${s.rsi.toFixed(0)}` : "begrenzten technischen Daten";
+  return {
+    short_term: `${entry.label === "attraktiv" ? "Kurzfristig ist das Timing konstruktiv" : "Kurzfristig bleibt das Timing selektiv"} (${rsiText}). ${entry.rationale}`,
+    medium_term: "Mittelfristig hängt die Entwicklung davon ab, ob Wachstum, Margen und Nachrichtenlage die aktuelle Bewertung stützen.",
+    long_term: `Langfristig ist die Aktie vor allem als ${thesis}-These zu bewerten; entscheidend sind belastbare Fundamentaldaten und Execution.`,
+  };
+}
+
+function buildDefaultClaims(
+  s: AssetSnapshot,
+  result: SynthesisResult,
+  entry: EntryQuality,
+  valuationConfidence: ValuationConfidence,
+): AnalysisClaim[] {
+  const claims: AnalysisClaim[] = [
+    {
+      claim: `Empfehlung ${result.recommendation} mit Conviction ${result.conviction}/10`,
+      evidence: "Abgeleitet aus Fundamentalbewertung, News-Sentiment, Markt-Intelligenz und Diana-Datenqualitätscap.",
+      source_type: "inference",
+      confidence: Math.min(8, result.conviction),
+    },
+    {
+      claim: `Entry Quality: ${entry.label}`,
+      evidence: `RSI ${s.rsi?.toFixed(1) ?? "N/A"}, Kurs ${s.price?.toFixed(2) ?? "N/A"}, MA50 ${s.moving_average_50?.toFixed(2) ?? "N/A"}, MA200 ${s.moving_average_200?.toFixed(2) ?? "N/A"}.`,
+      source_type: "metrics",
+      confidence: 8,
+    },
+    {
+      claim: `Bewertungskonfidenz: ${valuationConfidence}`,
+      evidence: "Ergibt sich aus Datenvollständigkeit, Analysten-Konsens und verfügbaren Bewertungskennzahlen.",
+      source_type: "inference",
+      confidence: valuationConfidence === "high" ? 8 : valuationConfidence === "medium" ? 6 : 4,
+    },
+  ];
+  return claims;
+}
+
+function buildValuationRange(
+  rawRange: ValuationRange | null | undefined,
+  s: AssetSnapshot,
+  analystData: AnalystData | null,
+  priceLevels: PriceLevels | null | undefined,
+  valuationConfidence: ValuationConfidence,
+  fx: FxContext,
+): ValuationRange | null {
+  const quoteCurrency = normalizeCurrency(rawRange?.currency ?? s.currency ?? "USD");
+  let baseRange: ValuationRange | null = rawRange && hasAnyRangeValue(rawRange)
+    ? {
+        currency: quoteCurrency,
+        bear: roundMoney(rawRange.bear),
+        base: roundMoney(rawRange.base),
+        bull: roundMoney(rawRange.bull),
+        rationale: rawRange.rationale || "Szenario-Spanne aus KI-Analyse.",
+      }
+    : null;
+
+  if (!baseRange && analystData?.mean_target != null) {
+    baseRange = {
+      currency: "USD",
+      bear: roundMoney(analystData.low_target ?? analystData.mean_target * 0.85),
+      base: roundMoney(analystData.mean_target),
+      bull: roundMoney(analystData.high_target ?? analystData.mean_target * 1.15),
+      rationale: "Analystenkonsens als grobe Szenario-Spanne; keine Garantie und kein Bewertungsmodell.",
+    };
+  }
+
+  if (!baseRange && priceLevels?.target != null) {
+    const target = priceLevels.target;
+    const spread = valuationConfidence === "low" ? 0.25 : 0.15;
+    baseRange = {
+      currency: normalizeCurrency(s.currency ?? "USD"),
+      bear: roundMoney(target * (1 - spread)),
+      base: roundMoney(target),
+      bull: roundMoney(target * (1 + spread)),
+      rationale: "Grobe Szenario-Spanne um das KI-Ziel; wegen begrenzter Daten nicht als präzises Kursziel verstehen.",
+    };
+  }
+
+  if (!baseRange) return null;
+
+  const native = {
+    bear: baseRange.bear,
+    base: baseRange.base,
+    bull: baseRange.bull,
+  };
+
+  return {
+    ...baseRange,
+    usd: convertRange(native, baseRange.currency, "USD", fx.eurUsd),
+    eur: convertRange(native, baseRange.currency, "EUR", fx.eurUsd),
+    fx_rate_eur_usd: fx.eurUsd,
+    fx_rate_source: fx.source,
+    fx_rate_as_of: fx.asOf,
+  };
+}
+
+interface FxContext {
+  eurUsd: number;
+  source: "finance_api" | "fallback";
+  asOf: string;
+}
+
+async function fetchFxContext(): Promise<FxContext> {
+  try {
+    const fx = await fetchAssetData("EURUSD=X");
+    const price = typeof fx.price === "number" && Number.isFinite(fx.price) ? fx.price : null;
+    if (price && price > 0) {
+      return { eurUsd: price, source: "finance_api", asOf: fx.fetched_at ?? new Date().toISOString() };
+    }
+  } catch {
+    // Fallback below keeps the UI usable if the FX ticker is unavailable.
+  }
+  return { eurUsd: EUR_USD_FALLBACK, source: "fallback", asOf: new Date().toISOString() };
+}
+
+function completeResearchFields(
+  raw: SynthesisResult,
+  s: AssetSnapshot,
+  marketIntel: MarketIntelAnalysis | null,
+  analystData: AnalystData | null,
+  dataQuality: DianaQualityReport | null | undefined,
+  fx: FxContext,
+): SynthesisResult {
+  const thesis = raw.thesis_type ?? inferThesisType(s, marketIntel);
+  const entry = raw.entry_quality ?? inferEntryQuality(s);
+  const valuationConfidence = raw.valuation_confidence ?? inferValuationConfidence(s, analystData, dataQuality);
+  const guardrails = [
+    ...(raw.data_quality_guardrails ?? []),
+    ...buildDataQualityGuardrails(dataQuality, valuationConfidence),
+  ].filter((item, index, arr) => item.trim() && arr.indexOf(item) === index);
+
+  const timeHorizon = raw.time_horizon_view ?? buildDefaultTimeHorizonView(s, entry, thesis);
+  const valuationRange = buildValuationRange(
+    raw.valuation_range ?? null,
+    s,
+    analystData,
+    raw.price_levels ?? null,
+    valuationConfidence,
+    fx,
+  );
+
+  const confidenceIsLow = valuationConfidence === "low" || (dataQuality?.completeness_score ?? 100) < 70;
+  const priceLevels = confidenceIsLow && raw.price_levels
+    ? {
+        ...raw.price_levels,
+        target: null,
+        target_rationale: "Kein präzises Kursziel wegen eingeschränkter Datenbasis",
+      }
+    : raw.price_levels ?? null;
+
+  const claims = (raw.claims?.length ? raw.claims : buildDefaultClaims(s, raw, entry, valuationConfidence))
+    .slice(0, 6)
+    .map(claim => ({
+      claim: String(claim.claim ?? "").trim() || "Unbenannte Behauptung",
+      evidence: String(claim.evidence ?? "").trim() || "Keine Evidenz angegeben.",
+      source_type: claim.source_type ?? "inference",
+      confidence: clampConviction(Number.isFinite(claim.confidence) ? claim.confidence : 5),
+    }));
+
+  return {
+    ...raw,
+    thesis_type: thesis,
+    time_horizon_view: timeHorizon,
+    entry_quality: entry,
+    valuation_confidence: valuationConfidence,
+    valuation_range: valuationRange,
+    data_quality_guardrails: guardrails,
+    claims,
+    price_levels: priceLevels,
+  };
 }
 
 function formatMetrics(s: AssetSnapshot): string {
@@ -436,6 +809,7 @@ async function runSynthesisAgent(
   sentiment: SentimentAnalysis,
   marketIntel: MarketIntelAnalysis | null,
   analystData: AnalystData | null,
+  dataQuality?: DianaQualityReport | null,
 ): Promise<SynthesisResult> {
   const client = getClient();
 
@@ -444,7 +818,8 @@ async function runSynthesisAgent(
 Insider-Signal: ${marketIntel.insider_signal.toUpperCase()}
 Institutioneller Trend: ${marketIntel.institutional_trend.toUpperCase()}
 Google Trends: ${marketIntel.trends_momentum.toUpperCase()}
-Beobachtungen: ${marketIntel.key_observations.join(" | ")}`
+Beobachtungen: ${marketIntel.key_observations.join(" | ")}
+Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kernargument.`
     : "";
 
   const analystSection = formatAnalystData(analystData);
@@ -461,16 +836,29 @@ Bewertungskommentar: ${fundamental.valuation_comment}
 
 NACHRICHTENSTIMMUNG: ${sentiment.sentiment.toUpperCase()}
 Themen: ${sentiment.key_themes.join(", ")}
-${sentiment.sentiment_summary}${marketIntelSection}`;
+${sentiment.sentiment_summary}${marketIntelSection}
+${dataQuality ? `\nDATENQUALITÄT: ${dataQuality.completeness_score}/100 · Conviction-Cap ${dataQuality.analysis_confidence_cap}/10 · Fehlend: ${dataQuality.missing_fields.join(", ") || "keine"}\n` : ""}`;
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 1200,
-    system: "Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Investmentempfehlung auf Deutsch. WICHTIG: Beziehe dich ausschließlich auf die bereitgestellten Daten. Erwähne keine Firmennamen, Deals, Produkte oder Ereignisse, die nicht explizit in den Daten enthalten sind. Berechne konkrete Kursziele (price_levels): entry als idealen Einstieg (nahe MA50 oder -3% bei RSI>50), target als Kursziel (Analysten-Konsens bevorzugt, sonst +15-25%), stop_loss als -8-12% unter entry. Nutze null wenn Datenlage unklar. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
+    max_tokens: 2200,
+    system: `Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Research-Einschätzung auf Deutsch.
+
+WICHTIG:
+- Trenne langfristige Investment-These, kurzfristiges Timing, Entry-Qualität und Datenqualität.
+- Beziehe dich ausschließlich auf die bereitgestellten Daten. Erfinde keine Deals, Produkte, Margen oder Ereignisse.
+- Google Trends ist nur ein schwaches Retail-Sentiment-Signal. Verwende es nie als Kernargument.
+- Wenn Datenqualität lückenhaft ist: Conviction begrenzen, valuation_confidence niedrig/mittel setzen und keine pseudo-präzisen Kursziele formulieren.
+- Valuation bitte als Szenario-Spanne (bear/base/bull), nicht als punktgenaues Versprechen. Nutze null, wenn keine belastbare Grundlage vorhanden ist.
+- price_levels.entry und stop_loss dürfen als Timing-/Risikomarken gesetzt werden; price_levels.target nur wenn valuation_confidence nicht low ist.
+- claims müssen konkrete, prüfbare Aussagen sein, jeweils mit Evidenz aus Kennzahlen, News, Analysten oder Inferenz.
+- Keine Anlageberatung, keine Garantien.
+
+Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.`,
     messages: [
       {
         role: "user",
-        content: `Erstelle eine Investmentempfehlung:\n\n${context}\n\nJSON-Format:\n{"recommendation":"Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen","conviction":<1-10>,"summary":"2-3 Sätze","bull_case":["...","...","..."],"bear_case":["...","..."],"growth_outlook":"Ausblick","price_levels":{"entry":<Zahl|null>,"target":<Zahl|null>,"stop_loss":<Zahl|null>,"entry_rationale":"Kurzbegründung","target_rationale":"Kurzbegründung"}}`,
+        content: `Erstelle eine strukturierte Research-Analyse:\n\n${context}\n\nJSON-Format:\n{"recommendation":"Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen","conviction":<1-10>,"summary":"2-3 Sätze","bull_case":["...","...","..."],"bear_case":["...","..."],"growth_outlook":"Ausblick","price_levels":{"entry":<Zahl|null>,"target":<Zahl|null>,"stop_loss":<Zahl|null>,"entry_rationale":"Kurzbegründung","target_rationale":"Kurzbegründung"},"thesis_type":"Quality Compounder"|"Story Growth"|"Turnaround"|"Cyclical"|"Momentum"|"Speculative","time_horizon_view":{"short_term":"...","medium_term":"...","long_term":"..."},"entry_quality":{"label":"attraktiv"|"fair"|"überhitzt"|"Rücksetzer abwarten"|"nicht hinterherrennen"|"nur spekulativ","rationale":"..."},"valuation_confidence":"high"|"medium"|"low","valuation_range":null|{"currency":"${s.currency ?? "USD"}","bear":<Zahl|null>,"base":<Zahl|null>,"bull":<Zahl|null>,"rationale":"Warum diese Spanne belastbar oder unsicher ist"},"data_quality_guardrails":["..."],"claims":[{"claim":"konkrete prüfbare Aussage","evidence":"konkreter Datenbeleg","source_type":"metrics"|"news"|"analyst"|"market_intel"|"inference","confidence":<1-10>}]}`,
       },
     ],
   });
@@ -482,6 +870,17 @@ ${sentiment.sentiment_summary}${marketIntelSection}`;
     bull_case: [],
     bear_case: [],
     growth_outlook: "Nicht verfügbar",
+    thesis_type: "Speculative",
+    time_horizon_view: {
+      short_term: "Kurzfristige Einschätzung nicht verfügbar.",
+      medium_term: "Mittelfristige Einschätzung nicht verfügbar.",
+      long_term: "Langfristige Einschätzung nicht verfügbar.",
+    },
+    entry_quality: { label: "fair", rationale: "Keine ausreichenden Timing-Daten verfügbar." },
+    valuation_confidence: "low",
+    valuation_range: null,
+    data_quality_guardrails: ["Analyse konnte nicht vollständig erstellt werden."],
+    claims: [],
   };
 
   try {
@@ -544,7 +943,16 @@ async function runFactCheckAgent(
 Zusammenfassung: ${synthesis.summary}
 Bull-Case: ${synthesis.bull_case.join(" | ")}
 Bear-Case: ${synthesis.bear_case.join(" | ")}
-Wachstumsausblick: ${synthesis.growth_outlook}`;
+Wachstumsausblick: ${synthesis.growth_outlook}
+Thesis Type: ${synthesis.thesis_type ?? "N/A"}
+Kurzfristig: ${synthesis.time_horizon_view?.short_term ?? "N/A"}
+Mittelfristig: ${synthesis.time_horizon_view?.medium_term ?? "N/A"}
+Langfristig: ${synthesis.time_horizon_view?.long_term ?? "N/A"}
+Entry Quality: ${synthesis.entry_quality?.label ?? "N/A"} — ${synthesis.entry_quality?.rationale ?? "N/A"}
+Valuation Confidence: ${synthesis.valuation_confidence ?? "N/A"}
+Valuation Range: ${synthesis.valuation_range ? `${synthesis.valuation_range.currency} Bear ${synthesis.valuation_range.bear ?? "N/A"} / Base ${synthesis.valuation_range.base ?? "N/A"} / Bull ${synthesis.valuation_range.bull ?? "N/A"} — ${synthesis.valuation_range.rationale}` : "N/A"}
+Claims:
+${(synthesis.claims ?? []).map(c => `- ${c.claim} | Evidence: ${c.evidence} | Confidence ${c.confidence}/10`).join("\n") || "- Keine strukturierten Claims"}`;
 
   const fmtBigAuth = (n: number | null) => {
     if (n == null) return null;
@@ -584,7 +992,10 @@ REGELN — Autoritative Daten & Artikel-Freshness:
    - Bei zu alten Artikeln: KEINE Korrektur — ggf. als findings-Eintrag mit confidence ≤ 4 und Hinweis "Artikel möglicherweise veraltet (vor X Tagen)"
 3. Prozentzahlen in Artikeln (z.B. "51% Rally vom März-Tief") sind historische Kursbewegungen, keine MA-Abstände — nicht als MA-Korrektur verwenden.
 4. Umsatzwachstum (TTM, YoY) ist der korrekte Jahresvergleich — einzelne positive Quartale widerlegen einen negativen TTM-Wert nicht.
-5. Währungsumrechnung bei Analysten-Kurszielen: Finance API liefert Kursziele immer in USD. Bei Aktien die nicht in USD notieren darf Opus diese in die lokale Notierungswährung umrechnen. Eine solche Umrechnung ist KEIN Fehler — auch wenn der umgerechnete Wert vom USD-Betrag in den autoritativen Daten abweicht.`;
+5. Währungsumrechnung bei Analysten-Kurszielen: Finance API liefert Kursziele immer in USD. Bei Aktien die nicht in USD notieren darf Opus diese in die lokale Notierungswährung umrechnen — das ist kein Fehler.
+6. Konsistenzprüfung: Prüfe, ob Empfehlung, RSI, Abstand zu MA50/MA200, Datenqualität, Entry Quality und valuation_range logisch zusammenpassen.
+7. Wenn die Datenbasis lückenhaft ist, sind hohe Conviction und präzise Kursziele verdächtig. Eine breite Szenario-Spanne ist dagegen zulässig.
+8. Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf keine Kernthese stützen.`;
 
   const fetchArticleLine = skipArticleFetch
     ? "Kein Artikel-Nachladen in diesem Lauf. Prüfe nur gegen die gelieferten Excerpts und autoritativen Daten."
@@ -607,7 +1018,7 @@ ${draftText}
 ${fetchArticleLine}
 
 Abschließendes JSON-Format:
-{"corrections":["max. 3 kurze Korrekturen, oder leeres Array"],"verified_claims":["max. 3 verifizierte Aussagen"],"confidence_adjustment":<-3 bis 0>,"corrected_summary":"<nur bei Faktenfehler, sonst null>","corrected_bull_case":["<korrigierte Liste>"],"corrected_bear_case":["<korrigierte Liste>"],"findings":[{"claim":"<betroffene Behauptung>","issue_type":"unbelegt_guidance|uebertriebener_konsens|falsche_zahl|erfundenes_event|fehlende_evidenz|sonstiges","correction":"<Korrektur>","severity":"low|medium|high","evidence_urls":["<URL>"],"confidence":<1-10>}]}`;
+{"corrections":["max. 3 kurze Korrekturen, oder leeres Array"],"verified_claims":["max. 3 verifizierte Claims"],"confidence_adjustment":<-3 bis 0>,"corrected_summary":"<nur bei Faktenfehler, sonst null>","corrected_bull_case":["<korrigierte Liste>"],"corrected_bear_case":["<korrigierte Liste>"],"findings":[{"claim":"<betroffene konkrete Behauptung>","issue_type":"unbelegt_guidance|uebertriebener_konsens|falsche_zahl|erfundenes_event|fehlende_evidenz|sonstiges","correction":"<Korrektur>","severity":"low|medium|high","evidence_urls":["<URL>"],"confidence":<1-10>}]}`;
 
   const messages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: userContent }];
   const fallbackEntry: ProtocolEntry = { agent: "Vera", status: "skipped", detail: "Fact-Check nicht verfügbar" };
@@ -777,7 +1188,7 @@ async function runMarketIntelAgent(
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
-    system: "Du bist ein Marktanalyse-Experte. Bewerte Insider-Aktivität, institutionelle Positionierung und Suchtrends als Investmentsignale. Antworte ausschließlich mit validem JSON.",
+    system: "Du bist ein Marktanalyse-Experte. Bewerte Insider-Aktivität und institutionelle Positionierung als primäre Marktsignale. Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf nie als Kernargument gewertet werden. Antworte ausschließlich mit validem JSON.",
     messages: [
       {
         role: "user",
@@ -1212,8 +1623,10 @@ async function runAnalysisPipeline(
   institutional: InstitutionalData | null,
   analystData: AnalystData | null,
   confidenceCap: number,
+  dataQuality: DianaQualityReport | null,
   peerContext: string,
   serviceClient: SbClient,
+  fxContext: FxContext,
   onSynthesisStart?: () => Promise<void>,
   _onVeraStart?: () => Promise<void>,
 ): Promise<OrchestratorResult> {
@@ -1236,7 +1649,8 @@ async function runAnalysisPipeline(
 
   // Synthese (Sonnet — deutlich schneller als Opus mit Adaptive Thinking)
   if (onSynthesisStart) await onSynthesisStart().catch(() => {});
-  const rawSynthesis = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData);
+  const rawSynthesisBase = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality);
+  const rawSynthesis = completeResearchFields(rawSynthesisBase, snapshot, marketIntel, analystData, dataQuality, fxContext);
   const rawConviction = clampConviction(rawSynthesis.conviction);
   const cappedConviction = Math.min(rawConviction, confidenceCap);
   const capNote = rawConviction > confidenceCap ? ` · Conviction ${rawConviction}→${cappedConviction} (Diana-Cap)` : "";
@@ -1253,6 +1667,13 @@ async function runAnalysisPipeline(
     ...cappedSynthesis,
     conviction: Math.min(cappedSynthesis.conviction, confidenceCap),
     price_levels: cappedSynthesis.price_levels ?? null,
+    thesis_type: cappedSynthesis.thesis_type ?? null,
+    time_horizon_view: cappedSynthesis.time_horizon_view ?? null,
+    entry_quality: cappedSynthesis.entry_quality ?? null,
+    valuation_confidence: cappedSynthesis.valuation_confidence ?? null,
+    valuation_range: cappedSynthesis.valuation_range ?? null,
+    data_quality_guardrails: cappedSynthesis.data_quality_guardrails ?? [],
+    claims: cappedSynthesis.claims ?? [],
     fundamental,
     sentiment,
     market_intel: marketIntel,
@@ -1273,6 +1694,13 @@ function buildAnalysisExtraData(result: AIAnalysisResult): import("@/types/datab
   return ({
     ...(result.market_intel ? { market_intel: result.market_intel } : {}),
     ...(result.price_levels ? { price_levels: result.price_levels } : {}),
+    ...(result.thesis_type ? { thesis_type: result.thesis_type } : {}),
+    ...(result.time_horizon_view ? { time_horizon_view: result.time_horizon_view } : {}),
+    ...(result.entry_quality ? { entry_quality: result.entry_quality } : {}),
+    ...(result.valuation_confidence ? { valuation_confidence: result.valuation_confidence } : {}),
+    ...(result.valuation_range ? { valuation_range: result.valuation_range } : {}),
+    ...(result.data_quality_guardrails ? { data_quality_guardrails: result.data_quality_guardrails } : {}),
+    ...(result.claims ? { claims: result.claims } : {}),
     ...(result.data_quality ? { data_quality: result.data_quality } : {}),
     protocol: result.protocol,
   }) as unknown as import("@/types/database").Json;
@@ -1359,6 +1787,13 @@ async function runDeferredVeraCheck({
     bear_case: factCheck.result.bear_case,
     growth_outlook: factCheck.result.growth_outlook,
     price_levels: factCheck.result.price_levels ?? result.price_levels,
+    thesis_type: factCheck.result.thesis_type ?? result.thesis_type,
+    time_horizon_view: factCheck.result.time_horizon_view ?? result.time_horizon_view,
+    entry_quality: factCheck.result.entry_quality ?? result.entry_quality,
+    valuation_confidence: factCheck.result.valuation_confidence ?? result.valuation_confidence,
+    valuation_range: factCheck.result.valuation_range ?? result.valuation_range,
+    data_quality_guardrails: factCheck.result.data_quality_guardrails ?? result.data_quality_guardrails,
+    claims: factCheck.result.claims ?? result.claims,
     protocol: replaceVeraProtocolEntry(result.protocol, factCheck.entry),
   };
 
@@ -1391,7 +1826,7 @@ export async function runAnalysisJob(
   try {
     await updateStep("fetch_data", 10);
 
-    const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData] =
+    const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData, fxContext] =
       await Promise.all([
         fetchAssetData(symbol),
         fetchGoogleNews(symbol).catch(() => [] as GoogleNewsItem[]),
@@ -1400,6 +1835,7 @@ export async function runAnalysisJob(
         fetchTrends(symbol).catch(() => [] as TrendPoint[]),
         fetchInstitutional(symbol).catch(() => null),
         fetchAnalystData(symbol).catch(() => null as AnalystData | null),
+        fetchFxContext().catch(() => ({ eurUsd: EUR_USD_FALLBACK, source: "fallback" as const, asOf: new Date().toISOString() })),
       ]);
 
     const snapshot: AssetSnapshot = {
@@ -1451,7 +1887,7 @@ export async function runAnalysisJob(
 
     const orchestrated = await runAnalysisPipeline(
       symbol, snapshot, googleNewsEnriched, edgarFacts, insiderTrades, trends, institutional, analystData,
-      diana.analysis_confidence_cap, peerContext, serviceClient,
+      diana.analysis_confidence_cap, diana, peerContext, serviceClient, fxContext,
       () => updateStep("run_synthesis", 65),
       () => updateStep("run_vera", 80),
     );
@@ -1470,6 +1906,13 @@ export async function runAnalysisJob(
       sentiment: orchestrated.sentiment,
       market_intel: orchestrated.market_intel,
       price_levels: orchestrated.price_levels,
+      thesis_type: orchestrated.thesis_type ?? null,
+      time_horizon_view: orchestrated.time_horizon_view ?? null,
+      entry_quality: orchestrated.entry_quality ?? null,
+      valuation_confidence: orchestrated.valuation_confidence ?? null,
+      valuation_range: orchestrated.valuation_range ?? null,
+      data_quality_guardrails: orchestrated.data_quality_guardrails ?? [],
+      claims: orchestrated.claims ?? [],
       data_quality: diana,
       protocol: [dianaEntry, ...orchestrated.protocol],
       analyzed_at: new Date().toISOString(),
@@ -1548,6 +1991,8 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
 
     if (!data) return null;
 
+    const extra = (data.extra_data as Record<string, unknown>) ?? {};
+
     return {
       symbol: data.symbol,
       recommendation: data.recommendation,
@@ -1567,10 +2012,17 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
         key_themes: data.news_themes as string[],
         sentiment_summary: data.sentiment_summary,
       },
-      market_intel: (data.extra_data as Record<string, unknown>)?.market_intel as MarketIntelAnalysis | null ?? null,
-      price_levels: (data.extra_data as Record<string, unknown>)?.price_levels as PriceLevels | null ?? null,
-      data_quality: (data.extra_data as Record<string, unknown>)?.data_quality as DianaQualityReport | null ?? null,
-      protocol: (data.extra_data as Record<string, unknown>)?.protocol as ProtocolEntry[] ?? [],
+      market_intel: extra.market_intel as MarketIntelAnalysis | null ?? null,
+      price_levels: extra.price_levels as PriceLevels | null ?? null,
+      thesis_type: extra.thesis_type as ThesisType | null ?? null,
+      time_horizon_view: extra.time_horizon_view as TimeHorizonView | null ?? null,
+      entry_quality: extra.entry_quality as EntryQuality | null ?? null,
+      valuation_confidence: extra.valuation_confidence as ValuationConfidence | null ?? null,
+      valuation_range: extra.valuation_range as ValuationRange | null ?? null,
+      data_quality_guardrails: extra.data_quality_guardrails as string[] ?? [],
+      claims: extra.claims as AnalysisClaim[] ?? [],
+      data_quality: extra.data_quality as DianaQualityReport | null ?? null,
+      protocol: extra.protocol as ProtocolEntry[] ?? [],
       analyzed_at: data.analyzed_at,
       from_cache: true,
     };

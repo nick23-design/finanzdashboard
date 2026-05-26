@@ -40,6 +40,32 @@ const TREND_STYLES: Record<string, { label: string; color: string }> = {
   declining:{ label: "Trends fallen",  color: "#ef4444" },
 };
 
+const ENTRY_QUALITY_STYLES: Record<string, { color: string }> = {
+  attraktiv: { color: "#22c55e" },
+  fair: { color: "#38bdf8" },
+  überhitzt: { color: "#f97316" },
+  "Rücksetzer abwarten": { color: "#f59e0b" },
+  "nicht hinterherrennen": { color: "#ef4444" },
+  "nur spekulativ": { color: "#ef4444" },
+};
+
+const VALUATION_CONFIDENCE_LABELS: Record<string, { label: string; color: string }> = {
+  high: { label: "hoch", color: "#22c55e" },
+  medium: { label: "mittel", color: "#f59e0b" },
+  low: { label: "niedrig", color: "#ef4444" },
+};
+
+function currencySymbol(currency: string) {
+  if (currency === "EUR") return "€";
+  if (currency === "USD") return "$";
+  return `${currency} `;
+}
+
+function formatMoney(value: number | null | undefined, currency: string) {
+  if (value == null) return "—";
+  return `${currencySymbol(currency)}${value.toFixed(2)}`;
+}
+
 function PriceLevelSection({ levels }: { levels: PriceLevels }) {
   const fmt = (n: number | null) => n != null ? `$${n.toFixed(2)}` : "—";
   return (
@@ -74,6 +100,148 @@ function PriceLevelSection({ levels }: { levels: PriceLevels }) {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ResearchStructureSection({ analysis }: { analysis: AIAnalysisResult }) {
+  const entry = analysis.entry_quality;
+  const entryStyle = entry ? ENTRY_QUALITY_STYLES[entry.label] ?? ENTRY_QUALITY_STYLES.fair : null;
+  const valuation = analysis.valuation_confidence
+    ? VALUATION_CONFIDENCE_LABELS[analysis.valuation_confidence] ?? VALUATION_CONFIDENCE_LABELS.low
+    : null;
+
+  if (!analysis.thesis_type && !entry && !valuation) return null;
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+      {analysis.thesis_type && (
+        <div className="rounded-xl p-3" style={{ background: "rgba(100,116,139,0.08)", border: "1px solid var(--card-border)" }}>
+          <p className="text-[10px] uppercase font-semibold" style={{ color: "var(--muted)" }}>These</p>
+          <p className="text-sm font-semibold text-white mt-1">{analysis.thesis_type}</p>
+        </div>
+      )}
+      {entry && entryStyle && (
+        <div className="rounded-xl p-3" style={{ background: `${entryStyle.color}12`, border: `1px solid ${entryStyle.color}35` }}>
+          <p className="text-[10px] uppercase font-semibold" style={{ color: "var(--muted)" }}>Entry Quality</p>
+          <p className="text-sm font-semibold mt-1" style={{ color: entryStyle.color }}>{entry.label}</p>
+          <p className="text-[11px] mt-1 leading-relaxed" style={{ color: "var(--muted)" }}>{entry.rationale}</p>
+        </div>
+      )}
+      {valuation && (
+        <div className="rounded-xl p-3" style={{ background: `${valuation.color}12`, border: `1px solid ${valuation.color}35` }}>
+          <p className="text-[10px] uppercase font-semibold" style={{ color: "var(--muted)" }}>Bewertung</p>
+          <p className="text-sm font-semibold mt-1" style={{ color: valuation.color }}>Konfidenz {valuation.label}</p>
+          <p className="text-[11px] mt-1 leading-relaxed" style={{ color: "var(--muted)" }}>
+            Szenario-Spanne statt punktgenauem Ziel.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimeHorizonSection({ view }: { view: NonNullable<AIAnalysisResult["time_horizon_view"]> }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold text-white mb-2">Zeithorizont</p>
+      <div className="space-y-2">
+        {[
+          ["Kurzfristig", view.short_term],
+          ["Mittelfristig", view.medium_term],
+          ["Langfristig", view.long_term],
+        ].map(([label, text]) => (
+          <div key={label} className="rounded-xl p-3" style={{ background: "rgba(100,116,139,0.06)", border: "1px solid var(--card-border)" }}>
+            <p className="text-[10px] uppercase font-semibold" style={{ color: "var(--muted)" }}>{label}</p>
+            <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--muted)" }}>{text}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ValuationRangeSection({
+  range,
+  levels,
+}: {
+  range: NonNullable<AIAnalysisResult["valuation_range"]>;
+  levels?: PriceLevels | null;
+}) {
+  const [currency, setCurrency] = useState<"USD" | "EUR">("USD");
+  const selected = currency === "USD" ? range.usd : range.eur;
+  const display = selected ?? (currency === range.currency ? range : null);
+  const fxNote = range.fx_rate_source === "fallback"
+    ? "FX-Fallback genutzt"
+    : range.fx_rate_eur_usd
+    ? `FX EUR/USD ${range.fx_rate_eur_usd.toFixed(4)}`
+    : null;
+
+  return (
+    <div
+      className="rounded-xl p-3 space-y-3"
+      style={{ background: "rgba(100,116,139,0.08)", border: "1px solid var(--card-border)" }}>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold text-white">Bewertungsspanne</p>
+          <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
+            Bear / Base / Bull Case
+          </p>
+        </div>
+        <div className="flex rounded-full p-0.5" style={{ background: "var(--card-border)" }}>
+          {(["USD", "EUR"] as const).map(c => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setCurrency(c)}
+              className="px-2.5 py-1 rounded-full text-xs font-semibold"
+              style={{
+                background: currency === c ? "var(--primary)" : "transparent",
+                color: currency === c ? "#000" : "var(--muted)",
+              }}>
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 text-center">
+        {[
+          ["Bear", display?.bear ?? null, "#ef4444"],
+          ["Base", display?.base ?? null, "#f59e0b"],
+          ["Bull", display?.bull ?? null, "#22c55e"],
+        ].map(([label, value, color]) => (
+          <div key={label}>
+            <p className="text-sm font-bold" style={{ color: String(color) }}>
+              {formatMoney(value as number | null, currency)}
+            </p>
+            <p className="text-xs font-medium" style={{ color: String(color) }}>{label}</p>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
+        {range.rationale}
+      </p>
+
+      {levels && (levels.entry != null || levels.stop_loss != null) && (
+        <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t" style={{ borderColor: "var(--card-border)" }}>
+          <div>
+            <p style={{ color: "var(--muted)" }}>Timing-Einstieg</p>
+            <p className="font-semibold text-white">{levels.entry != null ? levels.entry.toFixed(2) : "—"} {range.currency}</p>
+          </div>
+          <div>
+            <p style={{ color: "var(--muted)" }}>Stop-Loss</p>
+            <p className="font-semibold text-white">{levels.stop_loss != null ? levels.stop_loss.toFixed(2) : "—"} {range.currency}</p>
+          </div>
+        </div>
+      )}
+
+      {fxNote && (
+        <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+          {fxNote}. Umrechnung ist nur Orientierung, kein Börsenkurs in dieser Währung.
+        </p>
+      )}
     </div>
   );
 }
@@ -118,6 +286,22 @@ function DataQualityBar({ dq }: { dq: DianaQualityReport }) {
   );
 }
 
+function DataQualityGuardrails({ items }: { items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="rounded-xl p-3" style={{ background: "#f59e0b12", border: "1px solid #f59e0b35" }}>
+      <p className="text-xs font-semibold mb-1.5" style={{ color: "#f59e0b" }}>Daten-Guardrails</p>
+      <ul className="space-y-1">
+        {items.slice(0, 4).map((item, i) => (
+          <li key={i} className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+            · {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 const PROTOCOL_STATUS: Record<ProtocolEntry["status"], { icon: string; color: string }> = {
   ok:      { icon: "✓", color: "#22c55e" },
   warning: { icon: "⚠", color: "#f59e0b" },
@@ -157,6 +341,37 @@ function AnalysisProtocol({ entries }: { entries: ProtocolEntry[] }) {
               </li>
             );
           })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ClaimsSection({ claims }: { claims: NonNullable<AIAnalysisResult["claims"]> }) {
+  const [open, setOpen] = useState(false);
+  if (!claims.length) return null;
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--card-border)" }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-left"
+        style={{ background: "rgba(100,116,139,0.06)" }}>
+        <span className="text-xs font-semibold" style={{ color: "var(--muted)" }}>
+          Geprüfte Claims
+        </span>
+        <span className="text-xs" style={{ color: "var(--muted)" }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <ul className="px-3 py-2 space-y-2">
+          {claims.slice(0, 6).map((claim, i) => (
+            <li key={i} className="text-xs leading-relaxed">
+              <p className="font-semibold text-white">{claim.claim}</p>
+              <p style={{ color: "var(--muted)" }}>{claim.evidence}</p>
+              <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
+                {claim.source_type} · Confidence {claim.confidence}/10
+              </p>
+            </li>
+          ))}
         </ul>
       )}
     </div>
@@ -296,15 +511,27 @@ export function AIAnalysisCard({ analysis }: Props) {
         {analysis.data_quality && <DataQualityBar dq={analysis.data_quality} />}
       </div>
 
-      {/* Price Levels */}
-      {analysis.price_levels && (
-        <PriceLevelSection levels={analysis.price_levels} />
+      <ResearchStructureSection analysis={analysis} />
+
+      {analysis.data_quality_guardrails && (
+        <DataQualityGuardrails items={analysis.data_quality_guardrails} />
       )}
+
+      {/* Valuation */}
+      {analysis.valuation_range ? (
+        <ValuationRangeSection range={analysis.valuation_range} levels={analysis.price_levels} />
+      ) : analysis.price_levels ? (
+        <PriceLevelSection levels={analysis.price_levels} />
+      ) : null}
 
       {/* Summary */}
       <p className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
         {analysis.summary}
       </p>
+
+      {analysis.time_horizon_view && (
+        <TimeHorizonSection view={analysis.time_horizon_view} />
+      )}
 
       {/* Bull / Bear */}
       <div className="grid grid-cols-2 gap-3">
@@ -394,6 +621,8 @@ export function AIAnalysisCard({ analysis }: Props) {
       {analysis.protocol?.length > 0 && (
         <AnalysisProtocol entries={analysis.protocol} />
       )}
+
+      {analysis.claims && <ClaimsSection claims={analysis.claims} />}
 
       <VeraReviewCard entries={analysis.protocol ?? []} />
 
