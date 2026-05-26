@@ -182,14 +182,14 @@ export function MorningBriefingCard() {
         </div>
       )}
 
-      {/* Beobachtung des Tages */}
+      {/* Idee des Tages */}
       {briefing.daily_opportunity && (
         <div
           className="rounded-xl p-3 flex items-center justify-between gap-3"
           style={{ background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)" }}>
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-wider mb-0.5" style={{ color: "#818cf8" }}>
-              Beobachtung des Tages
+              Idee des Tages
             </p>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-sm font-bold text-white">{briefing.daily_opportunity.symbol}</span>

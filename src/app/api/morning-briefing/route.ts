@@ -241,14 +241,14 @@ AUFGABE:
 Erstelle ein Morgen-Briefing auf Deutsch. Fokus:
 - 60 % Marktbild: Was bewegt die Märkte heute? Übergeordnetes Thema, Sektor-Kontext.
 - 25 % Watchlist-Relevanz: Nur Positionen erwähnen, die heute wirklich auffällig sind (Bewegung, Earnings, News). Stille Positionen nicht erwähnen.
-- 15 % Beobachtung des Tages: Eine Aktie oder ein Thema, das heute research-würdig ist.
+- 15 % Idee des Tages: Eine Aktie oder ein Thema, das heute research-würdig ist.
 
 REGELN:
 - Keine Kauf- oder Verkaufsempfehlungen
 - Keine Kursversprechen, Kursziele oder Renditeerwartungen
 - Nur Aussagen, die aus den bereitgestellten Daten ableitbar sind
 - watchlist_highlights: maximal 3 Einträge, nur bei echten Signalen, sonst leeres Array
-- daily_opportunity ist eine Beobachtung/Research-Hinweis, keine Empfehlung
+- daily_opportunity ist eine Research-Idee/Hinweis, keine Empfehlung
 
 JSON (exakt dieses Format):
 {"headline":"Eine prägnante Zeile was heute wichtig ist","market_overview":"2-3 Sätze zur Marktlage — marktgetrieben, nicht watchlist-getrieben","watchlist_highlights":["SYMBOL: kurze Beobachtung, nur wenn auffällig"],"daily_opportunity":{"symbol":"TICKER","name":"Unternehmensname","reason":"1-2 Sätze warum heute research-würdig"}}`;
