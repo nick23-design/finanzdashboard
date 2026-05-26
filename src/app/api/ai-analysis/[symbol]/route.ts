@@ -87,7 +87,9 @@ export const maxDuration = 10;
 const ENRICH_MAX_ARTICLES = 6;
 const ENRICH_TIMEOUT_MS = 8_000;
 const VERA_MAX_TURNS = 3;
-const DEFERRED_VERA_TIMEOUT_MS = 18_000;
+const DEFERRED_VERA_TIMEOUT_MS = 25_000;
+const VERA_FAST_NEWS_LIMIT = 5;
+const VERA_FULL_NEWS_LIMIT = 10;
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
@@ -524,10 +526,15 @@ async function runFactCheckAgent(
     } catch { return null; }
   }
 
-  const newsSection = googleNews.slice(0, 10).map(n => {
+  const newsLimit = skipArticleFetch ? VERA_FAST_NEWS_LIMIT : VERA_FULL_NEWS_LIMIT;
+  const maxExcerptLength = skipArticleFetch ? 450 : 900;
+  const newsSection = googleNews.slice(0, newsLimit).map(n => {
     const days = articleAgeDays(n.published);
     const ageLabel = days === null ? "" : days === 0 ? " (heute)" : days === 1 ? " (gestern)" : ` (vor ${days} Tagen)`;
-    const excerpt = n.description ? `\n   Excerpt: ${n.description}` : "";
+    const desc = n.description && n.description.length > maxExcerptLength
+      ? `${n.description.slice(0, maxExcerptLength)}...`
+      : n.description;
+    const excerpt = desc ? `\n   Excerpt: ${desc}` : "";
     return `- [${n.url ?? "keine URL"}] ${n.title} (${n.source}${ageLabel})${excerpt}`;
   }).join("\n") || "Keine Schlagzeilen verfügbar";
 
@@ -561,7 +568,11 @@ Wachstumsausblick: ${synthesis.growth_outlook}`;
       : null,
   ].filter(Boolean).join("\n");
 
-  const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren. Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit validem JSON.
+  const toolInstruction = skipArticleFetch
+    ? "Du hast in diesem Lauf kein fetch_article Tool. Nutze nur die gelieferten Finance-API-Daten, Analysten-Daten und News-Excerpts. Wenn ein Claim damit nicht belegbar ist, korrigiere ihn nur bei klarem Widerspruch; sonst vermerke höchstens niedrige Evidenz."
+    : "Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren.";
+
+  const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. ${toolInstruction} Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit kompaktem validem JSON.
 
 REGELN — Autoritative Daten & Artikel-Freshness:
 1. AUTORITATIVE MARKTDATEN (Finance API, live) haben immer Vorrang — alle Werte in diesem Abschnitt (Kurs, MAs, KGV, FCF, D/E, Marktkapitalisierung, Umsatzwachstum, RSI) dürfen NICHT durch Artikelangaben überschrieben oder als "unbelegt" markiert werden. Sie stammen direkt von der Finance API und sind per Definition belegt.
@@ -574,6 +585,10 @@ REGELN — Autoritative Daten & Artikel-Freshness:
 3. Prozentzahlen in Artikeln (z.B. "51% Rally vom März-Tief") sind historische Kursbewegungen, keine MA-Abstände — nicht als MA-Korrektur verwenden.
 4. Umsatzwachstum (TTM, YoY) ist der korrekte Jahresvergleich — einzelne positive Quartale widerlegen einen negativen TTM-Wert nicht.
 5. Währungsumrechnung bei Analysten-Kurszielen: Finance API liefert Kursziele immer in USD. Bei Aktien die nicht in USD notieren darf Opus diese in die lokale Notierungswährung umrechnen. Eine solche Umrechnung ist KEIN Fehler — auch wenn der umgerechnete Wert vom USD-Betrag in den autoritativen Daten abweicht.`;
+
+  const fetchArticleLine = skipArticleFetch
+    ? "Kein Artikel-Nachladen in diesem Lauf. Prüfe nur gegen die gelieferten Excerpts und autoritativen Daten."
+    : "Wenn ein Excerpt zu kurz ist um eine Behauptung zu verifizieren: nutze fetch_article für den relevantesten Artikel.";
 
   const userContent = `Prüfe diese KI-Analyse für ${symbol} auf Faktengenauigkeit.
 
@@ -589,10 +604,10 @@ ${newsSection}
 ZU PRÜFENDE ANALYSE:
 ${draftText}
 
-Wenn ein Excerpt zu kurz ist um eine Behauptung zu verifizieren: nutze fetch_article für den relevantesten Artikel.
+${fetchArticleLine}
 
 Abschließendes JSON-Format:
-{"corrections":["konkrete Korrektur, oder leeres Array"],"verified_claims":["verifizierte Aussagen"],"confidence_adjustment":<-3 bis 0>,"corrected_summary":"<nur bei Faktenfehler, sonst null>","corrected_bull_case":["<korrigierte Liste>"],"corrected_bear_case":["<korrigierte Liste>"],"findings":[{"claim":"<betroffene Behauptung>","issue_type":"unbelegt_guidance|uebertriebener_konsens|falsche_zahl|erfundenes_event|fehlende_evidenz|sonstiges","correction":"<Korrektur>","severity":"low|medium|high","evidence_urls":["<URL>"],"confidence":<1-10>}]}`;
+{"corrections":["max. 3 kurze Korrekturen, oder leeres Array"],"verified_claims":["max. 3 verifizierte Aussagen"],"confidence_adjustment":<-3 bis 0>,"corrected_summary":"<nur bei Faktenfehler, sonst null>","corrected_bull_case":["<korrigierte Liste>"],"corrected_bear_case":["<korrigierte Liste>"],"findings":[{"claim":"<betroffene Behauptung>","issue_type":"unbelegt_guidance|uebertriebener_konsens|falsche_zahl|erfundenes_event|fehlende_evidenz|sonstiges","correction":"<Korrektur>","severity":"low|medium|high","evidence_urls":["<URL>"],"confidence":<1-10>}]}`;
 
   const messages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: userContent }];
   const fallbackEntry: ProtocolEntry = { agent: "Vera", status: "skipped", detail: "Fact-Check nicht verfügbar" };
@@ -603,7 +618,7 @@ Abschließendes JSON-Format:
   const activeTools = skipArticleFetch ? [] : [veraTool];
   const maxTurns = skipArticleFetch ? 1 : VERA_MAX_TURNS;
   const veraModel = skipArticleFetch ? "claude-haiku-4-5-20251001" : "claude-sonnet-4-6";
-  const veraMaxTokens = skipArticleFetch ? 1500 : 4000;
+  const veraMaxTokens = skipArticleFetch ? 900 : 4000;
 
   try {
     for (let i = 0; i < maxTurns; i++) {
@@ -1466,7 +1481,7 @@ export async function runAnalysisJob(
 
     await serviceClient.from("analysis_jobs").update({
       status: "reviewing",
-      current_step: "run_vera",
+      current_step: "vera_pending",
       progress: 100,
       result: result as unknown as import("@/types/database").Json,
       updated_at: ts(),

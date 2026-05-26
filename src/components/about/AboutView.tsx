@@ -133,7 +133,7 @@ const SECTIONS: Section[] = [
           <p>• <strong className="text-white">Nina (Haiku 4.5):</strong> Bewertet angereicherte Nachrichtenartikel (Titel + Excerpts aus Jina AI) und bestimmt Marktstimmung sowie Nachrichtenthemen.</p>
           <p>• <strong className="text-white">Marco (Haiku 4.5):</strong> Analysiert Insider-Transaktionen (SEC Form 4), institutionelle Positionen und Google Trends als Marktsignale.</p>
           <p>• <strong className="text-white">Opus 4.7 (Adaptive Thinking):</strong> Orchestriert alle Agenten — koordiniert Felix, Nina und Marco, fasst die Ergebnisse zusammen und erstellt Empfehlung, Conviction-Score (1–10, gedeckelt durch Diana), Kursziele, Bull/Bear-Case und Wachstumsausblick.</p>
-          <p>• <strong className="text-white">Vera (Sonnet 4.6):</strong> Prüft Opus&apos; Aussagen gegen authoritative Finance-API-Daten (Kurs, MAs, RSI, KGV, FCF u.a.), Analysten-Konsens und Artikel-Aktualität. Kann bis zu 3 Artikel aus der News-Whitelist nachladen. Korrigiert belegte Fehler und passt den Conviction-Score an.</p>
+          <p>• <strong className="text-white">Vera (Haiku 4.5):</strong> Prüft die fertige Analyse nachgelagert gegen authoritative Finance-API-Daten (Kurs, MAs, RSI, KGV, FCF u.a.), Analysten-Konsens und vorhandene News-Excerpts. Der Fact-Check blockiert die Hauptanalyse nicht; belegte Fehler können den Conviction-Score nachträglich senken.</p>
           <p className="mt-1">Ergebnis wird 6 Stunden gecacht. Kursziele werden aus MA50-Abstand und Analysten-Konsens berechnet — modellbasierte Orientierungsmarken, kein Ersatz für professionelle Analysten-Kursziele.</p>
         </Block>
         <Block label="Konkurrenten">
@@ -143,14 +143,14 @@ const SECTIONS: Section[] = [
           <Pill label="Yahoo Finance (inoffiziell)" />
           <Pill label="Diana (Datenqualitäts-Modul)" />
           <Pill label="Claude Opus 4.7 (Analyse)" />
-          <Pill label="Claude Sonnet 4.6 (Vera)" />
+          <Pill label="Claude Haiku 4.5 (Vera)" />
           <Pill label="Claude Haiku 4.5 (Felix / Nina / Marco / Peers)" />
           <Pill label="Google News RSS" />
           <Pill label="Jina AI Reader" />
         </Block>
         <RiskBox items={[
           "Der Score basiert auf wenigen Datenpunkten — kein DCF, kein Branchen-Kontext, keine Zukunftsprognosen.",
-          "Vera kann bis zu 3 Artikel aus der News-Whitelist nachladen (fetch_article). Authoritative Kennzahlen aus der Finance API (Kurs, MAs, RSI etc.) gelten immer als belegt und können nicht durch Artikel überschrieben werden.",
+          "Vera arbeitet im stabilen Hauptpfad nachgelagert mit vorhandenen News-Excerpts. Authoritative Kennzahlen aus der Finance API (Kurs, MAs, RSI etc.) gelten immer als belegt und können nicht durch Artikel überschrieben werden.",
           "KGV, Cashflow und Wachstum können von Yahoo Finance fehlen oder veraltet sein — besonders bei europäischen Aktien. Diana zeigt fehlende Felder transparent an.",
           "Ein hoher Score ist kein Kaufsignal, sondern ein Indikator auf Basis historischer Kennzahlen.",
         ]} />

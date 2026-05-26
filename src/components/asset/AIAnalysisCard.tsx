@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { AIAnalysisResult, DianaQualityReport, PriceLevels, ProtocolEntry } from "@/app/api/ai-analysis/[symbol]/route";
-import { AgentAvatarGroup } from "@/components/ui/AgentAvatar";
+import { AgentAvatar, AgentAvatarGroup } from "@/components/ui/AgentAvatar";
 
 interface Props {
   analysis: AIAnalysisResult;
@@ -163,6 +163,88 @@ function AnalysisProtocol({ entries }: { entries: ProtocolEntry[] }) {
   );
 }
 
+type VeraReviewStatus = "running" | "failed" | "changed" | "verified";
+
+const VERA_REVIEW_STATUS: Record<VeraReviewStatus, { label: string; detail: string; color: string }> = {
+  running: {
+    label: "Faktencheck läuft",
+    detail: "Vera prüft die Analyse im Nachgang.",
+    color: "#f59e0b",
+  },
+  failed: {
+    label: "Faktencheck fehlgeschlagen",
+    detail: "Die Hauptanalyse bleibt sichtbar; Vera konnte den Check nicht abschließen.",
+    color: "#ef4444",
+  },
+  changed: {
+    label: "Faktencheck durchgeführt",
+    detail: "Vera hat Änderungen vorgenommen oder Fehler gefunden.",
+    color: "#f97316",
+  },
+  verified: {
+    label: "Faktencheck durchgeführt",
+    detail: "Vera hat keine belegten Fehler gefunden.",
+    color: "#22c55e",
+  },
+};
+
+function getVeraReview(entries: ProtocolEntry[]): { status: VeraReviewStatus; entry: ProtocolEntry | null } {
+  const entry = [...entries].reverse().find(e => e.agent === "Vera") ?? null;
+  const detail = entry?.detail.toLowerCase() ?? "";
+
+  if (!entry) {
+    return { status: "failed", entry };
+  }
+
+  if (detail.includes("nachgelagert") || detail.includes("läuft")) {
+    return { status: "running", entry };
+  }
+
+  if (entry.status === "warning" || detail.includes("korrektur") || detail.includes("fehler")) {
+    return { status: "changed", entry };
+  }
+
+  if (entry.status === "ok") {
+    return { status: "verified", entry };
+  }
+
+  return { status: "failed", entry };
+}
+
+function VeraReviewCard({ entries }: { entries: ProtocolEntry[] }) {
+  const review = getVeraReview(entries);
+  const cfg = VERA_REVIEW_STATUS[review.status];
+  const isRunning = review.status === "running";
+
+  return (
+    <div
+      className="rounded-xl p-3 flex items-start gap-3"
+      style={{ background: `${cfg.color}12`, border: `1px solid ${cfg.color}40` }}>
+      <div className="relative shrink-0">
+        <AgentAvatar agent="vera" size="sm" working={isRunning} />
+        <span
+          className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full"
+          style={{ background: cfg.color, border: "2px solid var(--card)" }}
+          aria-label={cfg.label}
+        />
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-xs font-semibold text-white">Vera</p>
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+            style={{ color: cfg.color, background: `${cfg.color}22` }}>
+            {cfg.label}
+          </span>
+        </div>
+        <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--muted)" }}>
+          {review.entry?.detail ?? cfg.detail}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function AIAnalysisCard({ analysis }: Props) {
   const recStyle = RECOMMENDATION_STYLES[analysis.recommendation] ?? {
     bg: "#6b7280",
@@ -308,10 +390,12 @@ export function AIAnalysisCard({ analysis }: Props) {
         <AnalysisProtocol entries={analysis.protocol} />
       )}
 
+      <VeraReviewCard entries={analysis.protocol ?? []} />
+
       {/* Footer – KI-Team */}
       <div className="pt-2 border-t" style={{ borderColor: "var(--card-border)" }}>
         <AgentAvatarGroup
-          agents={["diana", "opus", "felix", "nina", "marco", "vera"]}
+          agents={["diana", "opus", "felix", "nina", "marco"]}
           size="xs"
           label={`Analysiert von Opus & Team · ${dateStr}${analysis.from_cache ? " · Gecacht" : ""}`}
         />
