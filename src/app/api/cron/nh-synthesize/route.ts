@@ -34,7 +34,6 @@ export async function GET(request: NextRequest) {
 
   // 1. Fetch recent radar signals (last 48h)
   const since = new Date(Date.now() - 48 * 3_600_000).toISOString();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: radarSignals } = await (supabase as any)
     .from("radar_signals")
     .select("symbol, signal_type, description, confidence, source, found_at")
@@ -43,7 +42,6 @@ export async function GET(request: NextRequest) {
     .limit(20) as { data: RadarSignalRow[] | null };
 
   // 2. Fetch recent scout sources (last 48h)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: scoutSources } = await (supabase as any)
     .from("nh_select_daily")
     .select("symbol, recommendation, rationale, agent, created_at")
@@ -160,8 +158,6 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
     created_at: new Date().toISOString(),
     price_at_pick: priceAtPick,
   };
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (supabase as any).from("nh_select_daily").insert(row);
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -170,7 +166,6 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
   // 6. Mark used radar signals
   if (radarSignals?.length) {
     const usedSymbols = [pick.symbol];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any)
       .from("radar_signals")
       .update({ used_in_select: true })
@@ -187,8 +182,6 @@ Wähle die eine beste Aktie als NH Select für heute. Format:
 
     if (vapidPublic && vapidPrivate) {
       webPush.default.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: subs } = await (supabase as any)
         .from("push_subscriptions")
         .select("endpoint, p256dh, auth")

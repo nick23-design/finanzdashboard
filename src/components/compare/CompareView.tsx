@@ -391,15 +391,6 @@ export function CompareView() {
 
   const [symbolA, setSymbolA] = useState(params.get("a")?.toUpperCase() ?? "");
   const [symbolB, setSymbolB] = useState(params.get("b")?.toUpperCase() ?? "");
-
-  // Sync state when URL params change (e.g. navigating from asset page with both symbols)
-  useEffect(() => {
-    const a = params.get("a")?.toUpperCase() ?? "";
-    const b = params.get("b")?.toUpperCase() ?? "";
-    if (a && a !== symbolA) { setSymbolA(a); setAssetA(null); setScoreA(null); setHistA([]); }
-    if (b && b !== symbolB) { setSymbolB(b); setAssetB(null); setScoreB(null); setHistB([]); }
-  }, [params]);
-
   const [assetA, setAssetA] = useState<AssetData | null>(null);
   const [assetB, setAssetB] = useState<AssetData | null>(null);
   const [scoreA, setScoreA] = useState<ScoreData | null>(null);
@@ -409,6 +400,14 @@ export function CompareView() {
   const [period, setPeriod] = useState<Period>("1M");
   const [loadingA, setLoadingA] = useState(false);
   const [loadingB, setLoadingB] = useState(false);
+
+  // Sync state when URL params change (e.g. navigating from asset page with both symbols)
+  useEffect(() => {
+    const a = params.get("a")?.toUpperCase() ?? "";
+    const b = params.get("b")?.toUpperCase() ?? "";
+    if (a && a !== symbolA) { setSymbolA(a); setAssetA(null); setScoreA(null); setHistA([]); }
+    if (b && b !== symbolB) { setSymbolB(b); setAssetB(null); setScoreB(null); setHistB([]); }
+  }, [params]);
 
   async function loadAsset(symbol: string, side: "a" | "b") {
     const setLoading = side === "a" ? setLoadingA : setLoadingB;

@@ -202,8 +202,6 @@ export async function GET(request: NextRequest) {
     agent: "DE-Scout",
     created_at: new Date().toISOString(),
   }));
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (supabase as any).from("nh_select_daily").insert(rows);
 
   return NextResponse.json({ picks: validPicks.length, symbols: validPicks.map(p => p.symbol), filtered });

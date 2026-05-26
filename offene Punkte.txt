@@ -12,3 +12,41 @@
 
   Meine Empfehlung: Zuerst den Score-Trend — er nutzt vorhandene Infrastruktur, erfordert keine neue KI-Logik und macht das Herzstück der App (den Score) deutlich wertvoller.
    Danach das Morgen-Briefing, weil es die App vom passiven Tool zum aktiven Assistenten macht.
+
+
+Status 2026-05-25:
+
+Technischer Stand:
+- git status war sauber.
+- npm test erfolgreich: 21/21 Tests gruen.
+- npm run build erfolgreich mit Next.js 16.2.6.
+- npm run lint ist aktuell kaputt, weil "next lint" unter Next 16 nicht mehr sauber passt. Script auf "eslint ." umstellen.
+
+Aktueller App-Zustand:
+- App ist deutlich ueber MVP hinaus: Watchlist, Detailseiten, Portfolio, Alerts, Screener, Marktuebersicht, News, NH Select, Cronjobs, Push, KI-Pipeline.
+- KI-Pipeline: Opus orchestriert, Felix/Fundamental, Nina/Sentiment, Marco/Market Intelligence, Vera/Fact-Check, Kai/Vergleich, Radar/Trending, Scouts, Synthesizer.
+- Vera laeuft im Hauptpfad nach complete_analysis, prueft mit Excerpts und kann bis zu 3 whitelisted Artikel via fetch_article nachladen.
+- Vera-Findings koennen als Guardrails fuer spaetere Opus-Laeufe genutzt werden.
+
+Wichtigste offene Punkte:
+1. Supabase-Schema aktualisieren:
+   supabase/schema.sql enthaelt nur die urspruenglichen Tabellen. Code nutzt inzwischen zusaetzlich ai_analyses, fact_check_findings, portfolio_positions, price_alerts, nh_select_daily, radar_signals, analysis_outcomes, push_subscriptions, morning_briefings usw.
+
+2. .env.local.example aktualisieren:
+   Fehlen u.a. ANTHROPIC_API_KEY, CRON_SECRET, NEXT_PUBLIC_APP_URL, JINA_API_KEY, VAPID Keys, RESEND_API_KEY, ALERT_FROM_EMAIL.
+
+3. Oeffentliche API-Routen pruefen:
+   /api/nh-select und /api/nh-select/history sind ohne Auth erreichbar. history nutzt Service Role. Entscheiden: bewusst oeffentlich oder absichern.
+
+4. Supabase-Typisierung aufraeumen:
+   Viele "(supabase as any)"-Stellen durch unvollstaendige DB-Typen/Schema-Drift. Nach Schema-Update Typen nachziehen.
+
+5. Tests ausbauen:
+   Aktuell nur Scoring/Validation. Naechste Tests fuer API-Routen, AI-Output-Schema, Vera/Guardrails, Cronjobs, Portfolio/Alerts.
+
+Empfohlene Reihenfolge:
+1. Supabase-Migration/schema.sql komplett machen.
+2. Env-Beispiel + README Deployment/Secrets aktualisieren.
+3. Lint-Script fixen.
+4. Oeffentliche Routen bewusst entscheiden.
+5. Danach erst neue Features/Agenten.

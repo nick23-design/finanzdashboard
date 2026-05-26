@@ -24,8 +24,6 @@ export async function GET() {
   if (isNextResponse(auth)) return auth;
 
   const supabase = createServiceClient();
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: rows } = await (supabase as any)
     .from("analysis_outcomes")
     .select("symbol, recommendation, return_pct, outcome, checked_at")

@@ -243,7 +243,6 @@ export async function GET(request: NextRequest) {
   if (!signals.length) return NextResponse.json({ signals: 0, reason: "no signals" });
 
   // 9. Save to Supabase
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (supabase as any).from("radar_signals").insert(
     signals.map(s => ({
       symbol: s.symbol,

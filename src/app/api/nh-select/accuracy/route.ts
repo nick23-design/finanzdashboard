@@ -77,7 +77,6 @@ export async function GET() {
 
   // Fetch all Synthesizer picks with a price (last 90 days)
   const since = new Date(Date.now() - 90 * 24 * 3_600_000).toISOString();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: picks } = await (supabase as any)
     .from("nh_select_daily")
     .select("symbol, name, recommendation, conviction, price_at_pick, created_at")

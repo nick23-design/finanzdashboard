@@ -73,7 +73,6 @@ export async function GET(request: NextRequest) {
     const notifUrl = `/dashboard/asset/${alert.symbol}`;
 
     // Send Web Push notification
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: subs } = await (supabase as any)
       .from("push_subscriptions")
       .select("endpoint, p256dh, auth")

@@ -55,8 +55,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-
-export const maxDuration = 60;
 import { z } from "zod";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
@@ -82,6 +80,8 @@ import { rateLimit } from "@/lib/rate-limit";
 import { PEER_MAP } from "@/lib/peer-map";
 import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
 import type { AssetSnapshot, Database } from "@/types/database";
+
+export const maxDuration = 60;
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
@@ -775,7 +775,6 @@ async function fetchGuardrails(symbol: string): Promise<string> {
     const supabase = await createClient();
     const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = supabase as any;
     const [{ data: symbolData }, { data: globalData }] = await Promise.all([
       db.from("fact_check_findings")
@@ -820,7 +819,6 @@ async function saveFactCheckFindings(
   if (!findings.length || !analysisId) return;
   try {
     const supabase = await createClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("fact_check_findings").insert(
       findings.map(f => ({
         analysis_id: analysisId,
@@ -1225,7 +1223,6 @@ async function saveOutcome(result: AIAnalysisResult): Promise<void> {
     const checkAt = new Date(result.analyzed_at);
     checkAt.setDate(checkAt.getDate() + 30);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("analysis_outcomes").insert({
       symbol: result.symbol,
       recommendation: result.recommendation,

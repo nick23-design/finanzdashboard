@@ -47,8 +47,6 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: pending } = await (supabase as any)
     .from("analysis_outcomes")
     .select("id, symbol, recommendation, price_at_analysis")
@@ -92,8 +90,6 @@ export async function GET(request: NextRequest) {
       row.recommendation as Recommendation,
       returnPct,
     );
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any)
       .from("analysis_outcomes")
       .update({

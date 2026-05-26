@@ -12,7 +12,6 @@ export async function GET() {
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
     // Synthesizer picks of the last 7 days
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: history } = await (supabase as any)
       .from("nh_select_daily")
       .select("symbol, name, recommendation, conviction, rationale, sources, agent, created_at")
@@ -22,7 +21,6 @@ export async function GET() {
       .limit(14);
 
     // Today's scout findings
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: scouts } = await (supabase as any)
       .from("nh_select_daily")
       .select("symbol, name, recommendation, conviction, rationale, sources, agent, created_at")

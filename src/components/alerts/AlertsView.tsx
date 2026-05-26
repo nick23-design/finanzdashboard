@@ -307,7 +307,7 @@ export function AlertsView() {
             {filterSymbol ? `Keine Alarme für ${filterSymbol}` : "Keine aktiven Alarme"}
           </p>
           <p className="text-xs" style={{ color: "var(--muted)" }}>
-            Setze Alarme direkt auf der Aktien-Seite oder über „+ Alarm".
+            Setze Alarme direkt auf der Aktien-Seite oder über &bdquo;+ Alarm&ldquo;.
           </p>
         </div>
       )}

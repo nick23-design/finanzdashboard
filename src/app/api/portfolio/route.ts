@@ -109,7 +109,6 @@ export async function GET(_request: NextRequest) {
   // Fetch FX rates for cross-currency positions (e.g. USD asset bought in EUR)
   const fxRates: Record<string, number> = {}; // e.g. "EURUSD" -> 1.08 (1 EUR = 1.08 USD)
   const needsEurUsd = positions.some(p => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pc = (p as any).purchase_currency as string | null;
     const ac = priceMap[p.symbol]?.currency;
     return pc && ac && pc !== ac && ((pc === "EUR" && ac === "USD") || (pc === "USD" && ac === "EUR"));
@@ -151,7 +150,6 @@ export async function GET(_request: NextRequest) {
     const { price: currentPrice, change_pct: dayChangePct, currency: assetCurrency } = priceMap[symbol];
 
     // Use the purchase_currency of the first lot (if set) as the group display currency
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const purchaseCurrency = (lots[0] as any).purchase_currency as string | null | undefined;
     const displayCurrency = purchaseCurrency ?? assetCurrency;
 
@@ -172,7 +170,6 @@ export async function GET(_request: NextRequest) {
     const weightPct = totalCurrent > 0 && currentValue != null ? (currentValue / totalCurrent) * 100 : null;
 
     const lotDetails: PortfolioLot[] = lots.map(p => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const lotPurchaseCurrency = (p as any).purchase_currency as string | null | undefined;
       const lotDisplayCurrency = lotPurchaseCurrency ?? assetCurrency;
       const lotCurrentPrice = currentPrice != null && assetCurrency && lotDisplayCurrency && assetCurrency !== lotDisplayCurrency
@@ -244,7 +241,6 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("portfolio_positions")
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .insert({
       user_id: user.id,
       symbol: parsed.data.symbol,

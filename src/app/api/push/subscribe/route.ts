@@ -14,7 +14,6 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (supabase as any)
     .from("push_subscriptions")
     .upsert(
@@ -39,7 +38,6 @@ export async function DELETE(request: NextRequest) {
   if (!endpoint) return NextResponse.json({ ok: true });
 
   const supabase = createServiceClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (supabase as any).from("push_subscriptions").delete().eq("endpoint", endpoint);
 
   return NextResponse.json({ ok: true });

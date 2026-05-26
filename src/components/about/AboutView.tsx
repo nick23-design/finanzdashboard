@@ -291,7 +291,7 @@ const SECTIONS: Section[] = [
     content: (
       <div className="space-y-3">
         <Block label="Was es macht">
-          <p>Zwei beliebige Aktien head-to-head vergleichen. Erreichbar über die Suche, den "Vergleichen"-Button im Aktiendetail oder die Konkurrenten-Chips.</p>
+          <p>Zwei beliebige Aktien head-to-head vergleichen. Erreichbar über die Suche, den &quot;Vergleichen&quot;-Button im Aktiendetail oder die Konkurrenten-Chips.</p>
         </Block>
         <Block label="Performance-Chart">
           <p>Beide Kurse normiert auf 0% ab dem ersten gemeinsamen Datenpunkt — zeigt relative Outperformance, nicht absolute Kursniveaus.</p>
