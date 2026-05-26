@@ -1813,6 +1813,9 @@ export async function runAnalysisJob(
   serviceClient: ReturnType<typeof createServiceClient>,
 ): Promise<void> {
   const ts = () => new Date().toISOString();
+  const _start = Date.now();
+  const tlog = (label: string) =>
+    console.log(`[JOB:${jobId.slice(0, 8)}][${symbol}] ${label}: ${Date.now() - _start}ms`);
 
   const updateStep = async (step: string, progress: number) => {
     await serviceClient.from("analysis_jobs").update({
@@ -1823,8 +1826,19 @@ export async function runAnalysisJob(
     }).eq("id", jobId).eq("user_id", userId);
   };
 
+  // Sicherheits-Wrapper: bricht nach 160s ab, damit Vercel nicht bei 180s schneidet
+  const JOB_SAFETY_MS = 160_000;
+  let _safetyTimer: ReturnType<typeof setTimeout> | null = null;
+  const _safetyPromise = new Promise<never>((_, reject) => {
+    _safetyTimer = setTimeout(() => reject(new Error(`Pipeline-Timeout nach ${JOB_SAFETY_MS / 1000}s`)), JOB_SAFETY_MS);
+  });
+
+  const _runJob = async () => {
+
   try {
+    tlog("start");
     await updateStep("fetch_data", 10);
+    tlog("after updateStep fetch_data");
 
     const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData, fxContext] =
       await Promise.all([
@@ -1837,6 +1851,7 @@ export async function runAnalysisJob(
         fetchAnalystData(symbol).catch(() => null as AnalystData | null),
         fetchFxContext().catch(() => ({ eurUsd: EUR_USD_FALLBACK, source: "fallback" as const, asOf: new Date().toISOString() })),
       ]);
+    tlog("after Promise.all data fetch");
 
     const snapshot: AssetSnapshot = {
       id: "",
@@ -1857,6 +1872,7 @@ export async function runAnalysisJob(
     };
 
     await updateStep("enrich_news", 20);
+    tlog("after updateStep enrich_news");
 
     const googleNewsLimited = googleNews.slice(0, ENRICH_MAX_ARTICLES);
     const googleNewsEnriched = await Promise.race([
@@ -1865,8 +1881,10 @@ export async function runAnalysisJob(
         setTimeout(() => resolve(googleNewsLimited), ENRICH_TIMEOUT_MS),
       ),
     ]).catch(() => googleNewsLimited);
+    tlog("after enrichWithDescriptions");
 
     const peerContext = await fetchPeerContext(symbol, serviceClient).catch(() => "");
+    tlog("after fetchPeerContext");
 
     await updateStep("diana_check", 30);
 
@@ -1884,13 +1902,15 @@ export async function runAnalysisJob(
     };
 
     await updateStep("run_agents", 45);
+    tlog("starting runAnalysisPipeline");
 
     const orchestrated = await runAnalysisPipeline(
       symbol, snapshot, googleNewsEnriched, edgarFacts, insiderTrades, trends, institutional, analystData,
       diana.analysis_confidence_cap, diana, peerContext, serviceClient, fxContext,
-      () => updateStep("run_synthesis", 65),
+      () => { tlog("synthesis start"); return updateStep("run_synthesis", 65); },
       () => updateStep("run_vera", 80),
     );
+    tlog("after runAnalysisPipeline");
 
     await updateStep("save_result", 95);
 
@@ -1921,6 +1941,7 @@ export async function runAnalysisJob(
 
     const analysisId = await saveAnalysis(result, serviceClient);
     void saveOutcome(result, serviceClient);
+    tlog("after saveAnalysis");
 
     await serviceClient.from("analysis_jobs").update({
       status: "reviewing",
@@ -1929,6 +1950,7 @@ export async function runAnalysisJob(
       result: result as unknown as import("@/types/database").Json,
       updated_at: ts(),
     }).eq("id", jobId).eq("user_id", userId);
+    tlog("starting runDeferredVeraCheck");
 
     await runDeferredVeraCheck({
       analysisId,
@@ -1963,13 +1985,32 @@ export async function runAnalysisJob(
         // The main result is already stored; Vera must never flip the job to failed.
       }
     });
+    tlog("completed");
 
   } catch (err) {
+    tlog(`error: ${err instanceof Error ? err.message : String(err)}`);
     await serviceClient.from("analysis_jobs").update({
       status: "failed",
       error: err instanceof Error ? err.message : "Unbekannter Fehler",
       updated_at: ts(),
     }).eq("id", jobId).eq("user_id", userId);
+  }
+
+  }; // end _runJob
+
+  try {
+    await Promise.race([_runJob(), _safetyPromise]);
+  } catch (err) {
+    tlog(`safety-catch: ${err instanceof Error ? err.message : String(err)}`);
+    try {
+      await serviceClient.from("analysis_jobs").update({
+        status: "failed",
+        error: err instanceof Error ? err.message : "Analyse-Timeout",
+        updated_at: ts(),
+      }).eq("id", jobId).eq("user_id", userId);
+    } catch { /* ignore */ }
+  } finally {
+    if (_safetyTimer) clearTimeout(_safetyTimer);
   }
 }
 
