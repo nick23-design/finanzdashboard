@@ -14,7 +14,6 @@ import { AIAnalysisCard } from "./AIAnalysisCard";
 import { EarningsCard } from "./EarningsCard";
 import { AnalysisHistoryCard } from "./AnalysisHistoryCard";
 import { AssetNewsCard } from "./AssetNewsCard";
-import { fetchEarningsCalendar } from "@/lib/finance-client";
 import type { EarningsCalendar } from "@/lib/finance-client";
 import type { SignalType } from "@/types/finance";
 import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
@@ -343,7 +342,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         // Assets first — saves snapshot to Supabase cache
         const assetRes = await fetch(`/api/assets/${symbol}`);
 
-        fetchEarningsCalendar(symbol).then(e => { if (e) setEarnings(e); }).catch(() => null);
+        fetch(`/api/assets/${symbol}/calendar`).then(r => r.ok ? r.json() : null).then(e => { if (e) setEarnings(e); }).catch(() => null);
 
         if (cancelled) return;
 
