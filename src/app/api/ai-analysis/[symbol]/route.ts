@@ -53,7 +53,7 @@
  *     FOR ALL TO authenticated USING (true) WITH CHECK (true);
  */
 
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
@@ -82,7 +82,7 @@ import { PEER_MAP } from "@/lib/peer-map";
 import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
 import type { AssetSnapshot, Database } from "@/types/database";
 
-export const maxDuration = 90;
+export const maxDuration = 10;
 
 const ENRICH_MAX_ARTICLES = 6;
 const ENRICH_TIMEOUT_MS = 8_000;
@@ -1226,26 +1226,11 @@ async function runAnalysisPipeline(
 
   const cappedSynthesis = { ...rawSynthesis, conviction: cappedConviction };
 
-  // Vera wird im Background-Job übersprungen (zu unzuverlässig innerhalb after()-Budget)
-  // Vera bleibt aktiv wenn runAnalysisPipeline direkt (ohne Background-Job) aufgerufen wird
-  if (onVeraStart) {
-    // Background-Modus: Vera skippen
-    await onVeraStart().catch(() => {});
-    protocol.push({ agent: "Vera", status: "skipped", detail: "Wird in dieser Version übersprungen — Synthese ist vollständig" });
-    return {
-      ...cappedSynthesis,
-      price_levels: cappedSynthesis.price_levels ?? null,
-      fundamental,
-      sentiment,
-      market_intel: marketIntel,
-      protocol,
-      findings: [],
-    };
-  }
-
-  // Direktmodus (kein Background-Job): Vera läuft normal
+  // Vera — Fact-Check mit Jina-Excerpts aus enrich_news (kein article-fetch = ~8s)
+  if (onVeraStart) await onVeraStart().catch(() => {});
   const { result: verified, entry: veraEntry, findings } = await runFactCheckAgent(
     symbol, cappedSynthesis, analystData, googleNews, snapshot,
+    true, // skipArticleFetch: nutzt Excerpts aus enrich_news statt Jina-Fetches
   );
   protocol.push(veraEntry);
 
@@ -1263,7 +1248,7 @@ async function runAnalysisPipeline(
 
 // ─── Background Job ───────────────────────────────────────────────────────────
 
-async function runAnalysisJob(
+export async function runAnalysisJob(
   jobId: string,
   symbol: string,
   userId: string,
@@ -1561,13 +1546,6 @@ export async function POST(
   if (jobErr || !job) {
     return NextResponse.json({ error: "Job konnte nicht erstellt werden" }, { status: 500 });
   }
-
-  const serviceClient = createServiceClient();
-
-  // Analyse läuft asynchron nach dem Response — kein Timeout-Risiko mehr
-  after(async () => {
-    await runAnalysisJob(job.id, symbol, user.id, serviceClient);
-  });
 
   return NextResponse.json({ status: "queued", job_id: job.id, symbol });
 }

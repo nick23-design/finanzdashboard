@@ -490,8 +490,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         return;
       }
 
-      // Job gestartet: pollen
+      // Job gestartet: Run-Endpoint feuern (fire & forget), dann pollen
       if (data.status === "queued" && typeof data.job_id === "string") {
+        void fetch(`/api/ai-analysis/jobs/${data.job_id}/run`, { method: "POST" }).catch(() => {});
         startJobPolling(data.job_id);
         return;
       }
