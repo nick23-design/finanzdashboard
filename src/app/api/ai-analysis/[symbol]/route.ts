@@ -1341,8 +1341,6 @@ function runDianaCheck(
   return { completeness_score: score, missing_fields: missing, stale_fields: stale, warnings, analysis_confidence_cap: cap };
 }
 
-// --- Orchestrator ---
-
 async function runOrchestrator(
   symbol: string,
   snapshot: AssetSnapshot,

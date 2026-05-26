@@ -6,6 +6,13 @@
 const FINANCE_API_URL =
   process.env.FINANCE_API_URL || "http://localhost:8000";
 
+const PRIMARY_TIMEOUT_MS = 12_000;
+const SECONDARY_TIMEOUT_MS = 10_000;
+
+function apiSignal(ms: number) {
+  return AbortSignal.timeout(ms);
+}
+
 export interface NewsItem {
   title: string;
   publisher: string;
@@ -43,6 +50,7 @@ export async function fetchMarketIndices(): Promise<MarketIndex[]> {
   try {
     const res = await fetch(`${FINANCE_API_URL}/market/indices`, {
       next: { revalidate: 0 },
+      signal: apiSignal(SECONDARY_TIMEOUT_MS),
     });
     if (!res.ok) return [];
     return res.json();
@@ -53,7 +61,8 @@ export async function fetchMarketIndices(): Promise<MarketIndex[]> {
 
 export async function fetchAssetData(symbol: string) {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}`, {
-    next: { revalidate: 0 }, // caching handled at DB layer
+    next: { revalidate: 0 },
+    signal: apiSignal(PRIMARY_TIMEOUT_MS),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -65,6 +74,7 @@ export async function fetchAssetData(symbol: string) {
 export async function fetchNews(symbol: string): Promise<NewsItem[]> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/news`, {
     next: { revalidate: 0 },
+    signal: apiSignal(SECONDARY_TIMEOUT_MS),
   });
   if (!res.ok) return [];
   return res.json();
@@ -100,6 +110,7 @@ export interface InstitutionalData {
 export async function fetchInsiderTrades(symbol: string): Promise<InsiderTrade[]> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/insider-trades`, {
     next: { revalidate: 0 },
+    signal: apiSignal(SECONDARY_TIMEOUT_MS),
   });
   if (!res.ok) return [];
   return res.json();
@@ -108,6 +119,7 @@ export async function fetchInsiderTrades(symbol: string): Promise<InsiderTrade[]
 export async function fetchTrends(symbol: string): Promise<TrendPoint[]> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/trends`, {
     next: { revalidate: 0 },
+    signal: apiSignal(SECONDARY_TIMEOUT_MS),
   });
   if (!res.ok) return [];
   return res.json();
@@ -116,6 +128,7 @@ export async function fetchTrends(symbol: string): Promise<TrendPoint[]> {
 export async function fetchInstitutional(symbol: string): Promise<InstitutionalData | null> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/institutional`, {
     next: { revalidate: 0 },
+    signal: apiSignal(SECONDARY_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   return res.json();
@@ -124,6 +137,7 @@ export async function fetchInstitutional(symbol: string): Promise<InstitutionalD
 export async function fetchGoogleNews(symbol: string): Promise<GoogleNewsItem[]> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/google-news`, {
     next: { revalidate: 0 },
+    signal: apiSignal(SECONDARY_TIMEOUT_MS),
   });
   if (!res.ok) return [];
   return res.json();
@@ -132,6 +146,7 @@ export async function fetchGoogleNews(symbol: string): Promise<GoogleNewsItem[]>
 export async function fetchEdgarFacts(symbol: string): Promise<EdgarFacts | null> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/edgar-facts`, {
     next: { revalidate: 0 },
+    signal: apiSignal(SECONDARY_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   return res.json();
@@ -157,6 +172,7 @@ export interface EarningsCalendar {
 export async function fetchEarningsCalendar(symbol: string): Promise<EarningsCalendar | null> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/calendar`, {
     next: { revalidate: 0 },
+    signal: apiSignal(SECONDARY_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   return res.json();
@@ -165,6 +181,7 @@ export async function fetchEarningsCalendar(symbol: string): Promise<EarningsCal
 export async function fetchAnalystData(symbol: string): Promise<AnalystData | null> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/analyst-data`, {
     next: { revalidate: 0 },
+    signal: apiSignal(SECONDARY_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   return res.json();
@@ -176,7 +193,7 @@ export async function fetchPriceHistory(
 ) {
   const res = await fetch(
     `${FINANCE_API_URL}/assets/${symbol}/history?period=${period}`,
-    { next: { revalidate: 0 } }
+    { next: { revalidate: 0 }, signal: apiSignal(PRIMARY_TIMEOUT_MS) }
   );
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
