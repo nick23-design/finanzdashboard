@@ -598,15 +598,17 @@ Abschließendes JSON-Format:
   let fetchCount = 0;
   let factCheck: FactCheckResult | null = null;
 
-  // Im schnellen Modus (Background-Job): kein fetch_article → ein einziger Sonnet-Call
+  // Im schnellen Modus (Background-Job): Haiku + kein fetch_article → ein einziger schneller Call
   const activeTools = skipArticleFetch ? [] : [veraTool];
   const maxTurns = skipArticleFetch ? 1 : VERA_MAX_TURNS;
+  const veraModel = skipArticleFetch ? "claude-haiku-4-5-20251001" : "claude-sonnet-4-6";
+  const veraMaxTokens = skipArticleFetch ? 1500 : 4000;
 
   try {
     for (let i = 0; i < maxTurns; i++) {
       const response = await client.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4000,
+        model: veraModel,
+        max_tokens: veraMaxTokens,
         system: systemPrompt,
         ...(activeTools.length > 0
           ? { tools: activeTools, tool_choice: { type: "auto" } as Anthropic.Messages.ToolChoiceAuto }
@@ -1226,12 +1228,19 @@ async function runAnalysisPipeline(
 
   const cappedSynthesis = { ...rawSynthesis, conviction: cappedConviction };
 
-  // Vera — Fact-Check mit Jina-Excerpts aus enrich_news (kein article-fetch = ~8s)
+  // Vera — Fact-Check mit Jina-Excerpts (Haiku, kein article-fetch = ~4s); harter 18s-Fallback
   if (onVeraStart) await onVeraStart().catch(() => {});
-  const { result: verified, entry: veraEntry, findings } = await runFactCheckAgent(
-    symbol, cappedSynthesis, analystData, googleNews, snapshot,
-    true, // skipArticleFetch: nutzt Excerpts aus enrich_news statt Jina-Fetches
+  const veraTimeout = new Promise<{ result: SynthesisResult; entry: ProtocolEntry; findings: StructuredFinding[] }>(
+    resolve => setTimeout(() => resolve({
+      result: cappedSynthesis,
+      entry: { agent: "Vera", status: "skipped", detail: "Timeout — Fact-Check übersprungen" },
+      findings: [],
+    }), 18_000),
   );
+  const { result: verified, entry: veraEntry, findings } = await Promise.race([
+    runFactCheckAgent(symbol, cappedSynthesis, analystData, googleNews, snapshot, true),
+    veraTimeout,
+  ]);
   protocol.push(veraEntry);
 
   return {
