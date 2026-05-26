@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { RefreshCw, Sunrise, ChevronDown, ChevronUp, Info } from "lucide-react";
 import type { MorningBriefing, BriefingProtocol } from "@/app/api/morning-briefing/route";
+import { AgentAvatar, AGENTS, type AgentId } from "@/components/ui/AgentAvatar";
 
 function ProtocolSection({ protocol }: { protocol: BriefingProtocol }) {
   const [open, setOpen] = useState(false);
@@ -20,6 +21,12 @@ function ProtocolSection({ protocol }: { protocol: BriefingProtocol }) {
       {open && (
         <div className="mt-2 rounded-xl p-3 space-y-1.5 text-[10px]"
           style={{ background: "rgba(99,102,241,0.05)", border: "1px solid rgba(99,102,241,0.15)" }}>
+          {protocol.agent && AGENTS[protocol.agent as AgentId] && (
+            <div className="flex items-center justify-between">
+              <span style={{ color: "var(--muted)" }}>Verantwortlich</span>
+              <AgentAvatar agent={protocol.agent as AgentId} size="xs" showName />
+            </div>
+          )}
           <div className="flex justify-between">
             <span style={{ color: "var(--muted)" }}>KI-Modell</span>
             <span className="text-white font-medium">Claude Haiku 4.5</span>

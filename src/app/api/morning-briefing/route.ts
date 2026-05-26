@@ -36,6 +36,7 @@ import {
 import type { MarketIndex } from "@/lib/finance-client";
 
 export interface BriefingProtocol {
+  agent: string;
   model: string;
   watchlist_total: number;
   notable_symbols: string[];
@@ -212,9 +213,14 @@ export async function GET(request: NextRequest) {
     return `${item.symbol}: Earnings ${label} (${r.value.next_earnings_date})`;
   }).filter((x): x is string => x !== null);
 
-  // Scores context
-  const scores = scoresResult.data;
-  const scoresLine = scores && scores.length > 0
+  // Scores context — deduplicate by symbol (table has one row per analysis run)
+  const scoresRaw = scoresResult.data ?? [];
+  const scoresBySymbol = new Map<string, typeof scoresRaw[0]>();
+  for (const s of scoresRaw) {
+    if (!scoresBySymbol.has(s.symbol)) scoresBySymbol.set(s.symbol, s);
+  }
+  const scores = [...scoresBySymbol.values()];
+  const scoresLine = scores.length > 0
     ? scores.map(s => `${s.symbol}: ${s.signal} (${s.total_score}/100)`).join(", ")
     : "Keine Scores verfügbar";
 
@@ -231,13 +237,14 @@ export async function GET(request: NextRequest) {
   });
 
   const protocol: BriefingProtocol = {
+    agent: "finn",
     model: "claude-haiku-4-5-20251001",
     watchlist_total: watchlist.length,
     notable_symbols: notable.map(r => r.item.symbol),
     news_fetched_for: newsFetchedFor,
     news_headlines: allNewsHeadlines,
     upcoming_earnings: earningsLines,
-    scores_used: scores?.map(s => s.symbol) ?? [],
+    scores_used: scores.map(s => s.symbol),
     indices_count: (liveIndices as MarketIndex[]).length,
   };
 
