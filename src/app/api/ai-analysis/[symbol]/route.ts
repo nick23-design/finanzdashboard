@@ -55,6 +55,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+
+export const maxDuration = 60;
 import { z } from "zod";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
@@ -545,6 +547,7 @@ Wachstumsausblick: ${synthesis.growth_outlook}`;
     snapshot.free_cashflow != null ? `Free Cashflow: ${fmtBigAuth(snapshot.free_cashflow)} ${snapshot.currency ?? "USD"}` : null,
     snapshot.debt_to_equity != null ? `Debt/Equity: ${snapshot.debt_to_equity.toFixed(2)}` : null,
     snapshot.market_cap != null ? `Marktkapitalisierung: ${fmtBigAuth(snapshot.market_cap)} ${snapshot.currency ?? "USD"}` : null,
+    snapshot.rsi != null ? `RSI (14): ${snapshot.rsi.toFixed(1)} (live von Finance API — autoritativ)` : null,
     snapshot.currency && snapshot.currency !== "USD"
       ? `Währungshinweis: Finance API liefert Analysten-Kursziele in USD. Opus darf diese in ${snapshot.currency} umrechnen — das ist korrekt und kein Fehler.`
       : null,
@@ -553,7 +556,7 @@ Wachstumsausblick: ${synthesis.growth_outlook}`;
   const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren. Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit validem JSON.
 
 REGELN — Autoritative Daten & Artikel-Freshness:
-1. AUTORITATIVE MARKTDATEN (Finance API, live) haben immer Vorrang — alle Werte in diesem Abschnitt (Kurs, MAs, KGV, FCF, D/E, Marktkapitalisierung, Umsatzwachstum) dürfen NICHT durch Artikelangaben überschrieben oder als "unbelegt" markiert werden. Sie stammen direkt von der Finance API und sind per Definition belegt.
+1. AUTORITATIVE MARKTDATEN (Finance API, live) haben immer Vorrang — alle Werte in diesem Abschnitt (Kurs, MAs, KGV, FCF, D/E, Marktkapitalisierung, Umsatzwachstum, RSI) dürfen NICHT durch Artikelangaben überschrieben oder als "unbelegt" markiert werden. Sie stammen direkt von der Finance API und sind per Definition belegt.
 2. Altersbasierte Vertrauensregeln — eine Korrektur ist nur zulässig wenn der Beleg-Artikel aktuell genug ist:
    - Kurse, Marktpreise, aktuelle Kennzahlen: nur Artikel < 2 Tage (älter = veraltet, keine Korrektur)
    - Quartalsergebnisse, Guidance, Prognosen: nur Artikel < 14 Tage
@@ -1272,6 +1275,24 @@ async function saveAnalysis(result: AIAnalysisResult): Promise<string | null> {
 }
 
 // --- Route handler ---
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ symbol: string }> },
+) {
+  const auth = await requireAuth();
+  if (isNextResponse(auth)) return auth;
+
+  const { symbol: rawSymbol } = await params;
+  const parsed = tickerSchema.safeParse(rawSymbol);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Ungültiges Ticker-Symbol" }, { status: 400 });
+  }
+
+  const cached = await getCached(parsed.data);
+  if (cached) return NextResponse.json(cached);
+  return NextResponse.json({ status: "analyzing" });
+}
 
 export async function POST(
   _request: NextRequest,

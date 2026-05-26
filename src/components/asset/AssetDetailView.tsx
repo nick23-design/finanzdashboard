@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { AssetSnapshot, AnalysisScore } from "@/types/database";
@@ -316,6 +316,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiProgress, setAiProgress] = useState(0);
+  const [aiPolling, setAiPolling] = useState(false);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [earnings, setEarnings] = useState<EarningsCalendar | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -398,6 +401,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     return () => clearInterval(id);
   }, [aiLoading]);
 
+  // Cleanup polling on unmount
+  useEffect(() => () => stopPolling(), []);
+
   async function handleManualRefresh() {
     setRefreshing(true);
     try {
@@ -412,6 +418,32 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     setRefreshing(false);
   }
 
+  function stopPolling() {
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+    if (pollingTimeoutRef.current) { clearTimeout(pollingTimeoutRef.current); pollingTimeoutRef.current = null; }
+    setAiPolling(false);
+  }
+
+  function startPolling() {
+    setAiPolling(true);
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/ai-analysis/${symbol}`);
+        const data = await res.json();
+        if (res.ok && "recommendation" in data) {
+          stopPolling();
+          setAiAnalysis(data as AIAnalysisResult);
+          setAiLoading(false);
+        }
+      } catch { /* continue polling silently */ }
+    }, 4000);
+    pollingTimeoutRef.current = setTimeout(() => {
+      stopPolling();
+      setAiLoading(false);
+      setAiError("Analyse hat zu lange gedauert. Bitte erneut versuchen.");
+    }, 180_000);
+  }
+
   async function runAIAnalysis() {
     setAiLoading(true);
     setAiError(null);
@@ -419,11 +451,20 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
       const res = await fetch(`/api/ai-analysis/${symbol}`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "KI-Analyse fehlgeschlagen");
+      if ("status" in data && data.status === "analyzing") {
+        startPolling();
+        return;
+      }
       setAiAnalysis(data as AIAnalysisResult);
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : "Unbekannter Fehler");
-    } finally {
       setAiLoading(false);
+    } catch (err) {
+      if (err instanceof TypeError) {
+        // Netzwerkfehler (z.B. iOS-Bildschirmsperre) → Server läuft weiter → pollen
+        startPolling();
+      } else {
+        setAiError(err instanceof Error ? err.message : "Unbekannter Fehler");
+        setAiLoading(false);
+      }
     }
   }
 
@@ -621,7 +662,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             disabled={aiLoading}
             className="w-full py-2.5 rounded-xl text-sm font-semibold transition-opacity disabled:opacity-60"
             style={{ background: "var(--primary)", color: "#000" }}>
-            {aiLoading ? "Analysiere…" : "KI-Analyse starten"}
+            {aiPolling ? "Warte auf Ergebnis…" : aiLoading ? "Analysiere…" : "KI-Analyse starten"}
           </button>
           {aiLoading && (
             <div className="space-y-2 mt-2">
@@ -642,7 +683,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
                 />
               </div>
               <p className="text-xs text-center" style={{ color: "var(--muted)" }}>
-                {aiStep(aiProgress)}
+                {aiPolling ? "Analyse läuft im Hintergrund — Bildschirm sperren ist okay" : aiStep(aiProgress)}
               </p>
             </div>
           )}
