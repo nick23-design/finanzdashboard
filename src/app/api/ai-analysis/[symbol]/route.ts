@@ -91,6 +91,9 @@ const DEFERRED_VERA_TIMEOUT_MS = 25_000;
 const VERA_FAST_NEWS_LIMIT = 5;
 const VERA_FULL_NEWS_LIMIT = 10;
 const EUR_USD_FALLBACK = 1.08;
+// Sonnet bekommt 25s Budget. Schafft sie es nicht: Haiku-Fallback in ~8s.
+// Verhindert, dass Synthesis die gesamte Pipeline auf 80-95s aufbläht.
+const SYNTHESIS_SONNET_TIMEOUT_MS = 25_000;
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
@@ -813,7 +816,8 @@ async function runSynthesisAgent(
   analystData: AnalystData | null,
   dataQuality?: DianaQualityReport | null,
 ): Promise<SynthesisResult> {
-  const client = getClient();
+  // Dedizierter Client mit kurzem Timeout — Sonnet bekommt 25s, danach Haiku-Fallback
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: SYNTHESIS_SONNET_TIMEOUT_MS });
 
   const marketIntelSection = marketIntel
     ? `\nMARKT-INTELLIGENZ:
@@ -843,7 +847,7 @@ ${dataQuality ? `\nDATENQUALITÄT: ${dataQuality.completeness_score}/100 · Conv
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 3500,
+    max_tokens: 2200,
     system: `Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Research-Einschätzung auf Deutsch.
 
 WICHTIG:
@@ -1611,6 +1615,85 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
 
 // --- Cache & Persistence ---
 
+// ─── Synthese-Fallback (Haiku) ────────────────────────────────────────────────
+// Wird verwendet wenn Sonnet das 25s-Budget überschreitet.
+// Kürzerer Prompt, Haiku-Modell → typisch ~6-10s.
+
+async function runSynthesisFastAgent(
+  symbol: string,
+  s: AssetSnapshot,
+  fundamental: FundamentalAnalysis,
+  sentiment: SentimentAnalysis,
+  marketIntel: MarketIntelAnalysis | null,
+  analystData: AnalystData | null,
+  dataQuality?: DianaQualityReport | null,
+): Promise<SynthesisResult> {
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 12_000 });
+
+  const analystLine = analystData?.mean_target != null
+    ? `Analysten-Kursziel: Ø $${analystData.mean_target.toFixed(2)}`
+    : "";
+  const priceLine = s.price != null ? `Kurs: ${s.price.toFixed(2)} ${s.currency ?? "USD"}` : "";
+  const miLine = marketIntel
+    ? `Insider: ${marketIntel.insider_signal} | Institutionen: ${marketIntel.institutional_trend}`
+    : "";
+  const dianaLine = dataQuality
+    ? `Datenbasis: ${dataQuality.completeness_score}/100, Cap: ${dataQuality.analysis_confidence_cap}/10`
+    : "";
+
+  const context = [
+    `${symbol} | ${priceLine}`,
+    `Wachstum: ${fundamental.growth_rating}/10 | ${fundamental.key_positives.slice(0, 2).join(", ")}`,
+    `Risiken: ${fundamental.key_risks.slice(0, 2).join(", ")}`,
+    `Sentiment: ${sentiment.sentiment.toUpperCase()} | ${sentiment.sentiment_summary.slice(0, 120)}`,
+    analystLine, miLine, dianaLine,
+  ].filter(Boolean).join("\n");
+
+  const fallback: SynthesisResult = {
+    recommendation: "Halten",
+    conviction: 5,
+    summary: "Analyse konnte nicht erstellt werden.",
+    bull_case: [],
+    bear_case: [],
+    growth_outlook: "Nicht verfügbar",
+    thesis_type: "Speculative",
+    time_horizon_view: {
+      short_term: "Kurzfristige Einschätzung nicht verfügbar.",
+      medium_term: "Mittelfristige Einschätzung nicht verfügbar.",
+      long_term: "Langfristige Einschätzung nicht verfügbar.",
+    },
+    entry_quality: { label: "fair", rationale: "Keine ausreichenden Timing-Daten verfügbar." },
+    valuation_confidence: "low",
+    valuation_range: null,
+    data_quality_guardrails: ["Schnell-Analyse (Haiku-Fallback): Sonnet überschritt 25s-Budget."],
+    claims: [],
+  };
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1200,
+      system: "Du bist ein Aktienanalyst. Erstelle eine kurze Einschätzung auf Deutsch. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
+      messages: [{
+        role: "user",
+        content: `Analysiere:\n\n${context}\n\nJSON:\n{"recommendation":"Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen","conviction":<1-10>,"summary":"2 Sätze","bull_case":["...","...","..."],"bear_case":["...","..."],"growth_outlook":"1 Satz","price_levels":{"entry":${s.price != null ? s.price.toFixed(2) : null},"target":null,"stop_loss":null,"entry_rationale":"aktuelles Kursniveau","target_rationale":""}}`,
+      }],
+    });
+
+    const parsed = parseJSON<SynthesisResult>(extractText(response.content));
+    return {
+      ...parsed,
+      valuation_confidence: "low",
+      data_quality_guardrails: [
+        ...(parsed.data_quality_guardrails ?? []),
+        "Schnell-Analyse (Haiku-Fallback): Sonnet überschritt 25s-Budget.",
+      ],
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 // ─── Optimierte Pipeline (ersetzt runOrchestrator) ───────────────────────────
 
 async function runAnalysisPipeline(
@@ -1647,14 +1730,24 @@ async function runAnalysisPipeline(
   protocol.push({ agent: "Nina", status: "ok", detail: `Sentiment: ${sentiment.sentiment} · ${sentiment.key_themes.length} Themen · ${withExcerpts}/${googleNews.length} Artikel mit Jina-Excerpt` });
   protocol.push({ agent: "Marco", status: noMarcoData ? "skipped" : "ok", detail: noMarcoData ? "Keine Daten verfügbar (nur für US-Aktien)" : `Insider: ${marketIntel.insider_signal} · Institutionen: ${marketIntel.institutional_trend} · Trends: ${marketIntel.trends_momentum}` });
 
-  // Synthese (Sonnet — deutlich schneller als Opus mit Adaptive Thinking)
+  // Synthese: Sonnet (25s Budget) → bei Timeout Haiku-Fallback (~8s)
   if (onSynthesisStart) await onSynthesisStart().catch(() => {});
-  const rawSynthesisBase = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality);
+  let rawSynthesisBase: SynthesisResult;
+  let usedFallback = false;
+  try {
+    rawSynthesisBase = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality);
+  } catch {
+    // Sonnet hat 25s-Budget überschritten oder ist fehlgeschlagen → Haiku-Fallback
+    console.log(`[PIPELINE][${symbol}] Sonnet-Timeout → Haiku-Fallback`);
+    rawSynthesisBase = await runSynthesisFastAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality);
+    usedFallback = true;
+  }
   const rawSynthesis = completeResearchFields(rawSynthesisBase, snapshot, marketIntel, analystData, dataQuality, fxContext);
   const rawConviction = clampConviction(rawSynthesis.conviction);
   const cappedConviction = Math.min(rawConviction, confidenceCap);
   const capNote = rawConviction > confidenceCap ? ` · Conviction ${rawConviction}→${cappedConviction} (Diana-Cap)` : "";
-  protocol.push({ agent: "Opus", status: "ok", detail: `Synthese: ${rawSynthesis.recommendation} · Conviction ${cappedConviction}/10${capNote}${guardrails ? " · Guardrails aktiv" : ""}` });
+  const fallbackNote = usedFallback ? " · Haiku-Fallback (Sonnet-Timeout)" : "";
+  protocol.push({ agent: "Opus", status: usedFallback ? "warning" : "ok", detail: `Synthese: ${rawSynthesis.recommendation} · Conviction ${cappedConviction}/10${capNote}${guardrails ? " · Guardrails aktiv" : ""}${fallbackNote}` });
 
   const cappedSynthesis = { ...rawSynthesis, conviction: cappedConviction };
   protocol.push({
