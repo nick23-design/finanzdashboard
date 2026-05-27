@@ -161,6 +161,21 @@ interface AnalysisTraceEntry {
   error?: string;
 }
 
+interface HistoryValuationRange {
+  currency: string;
+  bear: number | null;
+  base: number | null;
+  bull: number | null;
+  rationale: string;
+  confidence?: string | null;
+  methods?: string[];
+}
+
+interface HistoryValuationDivergence {
+  difference_pct: number | null;
+  interpretation: string;
+}
+
 const PROTOCOL_STATUS: Record<ProtocolEntry["status"], { icon: string; color: string }> = {
   ok:      { icon: "✓", color: "#22c55e" },
   warning: { icon: "⚠", color: "#f59e0b" },
@@ -179,6 +194,55 @@ function formatTraceDuration(ms: number | null) {
   if (ms == null) return "—";
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+}
+
+function fmtHistoryMoney(value: number | null | undefined, currency: string) {
+  if (value == null) return "—";
+  const symbol = currency === "EUR" ? "€" : currency === "USD" ? "$" : `${currency} `;
+  return `${symbol}${value.toFixed(2)}`;
+}
+
+function HistoryValuationMiniCard({
+  title,
+  subtitle,
+  range,
+}: {
+  title: string;
+  subtitle: string;
+  range: HistoryValuationRange;
+}) {
+  return (
+    <div className="rounded-xl p-3 space-y-2"
+      style={{ background: "rgba(100,116,139,0.08)", border: "1px solid var(--card-border)" }}>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-semibold text-white text-xs">{title}</p>
+          <p className="text-[10px]" style={{ color: "var(--muted)" }}>{subtitle}</p>
+        </div>
+        {range.confidence && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full"
+            style={{ color: "#f59e0b", background: "#f59e0b22" }}>
+            {range.confidence}
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        {[
+          ["Bear", range.bear, "#ef4444"],
+          ["Base", range.base, "#f59e0b"],
+          ["Bull", range.bull, "#22c55e"],
+        ].map(([label, value, color]) => (
+          <div key={label}>
+            <p className="font-bold" style={{ color: String(color) }}>
+              {fmtHistoryMoney(value as number | null, range.currency)}
+            </p>
+            <p className="font-medium" style={{ color: String(color) }}>{label}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] leading-relaxed">{range.rationale}</p>
+    </div>
+  );
 }
 
 function TraceHistorySection({ trace }: { trace: AnalysisTraceEntry[] }) {
@@ -265,6 +329,9 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
   const marketIntel = extra?.market_intel as { insider_signal: string; institutional_trend: string; trends_momentum: string; key_observations: string[] } | null;
   const protocol = (extra?.protocol as ProtocolEntry[] | undefined) ?? [];
   const trace = (extra?.analysis_trace as AnalysisTraceEntry[] | undefined) ?? [];
+  const analystConsensus = extra?.analyst_consensus_range as HistoryValuationRange | null;
+  const modelValuation = extra?.model_valuation_range as HistoryValuationRange | null;
+  const valuationDivergence = extra?.valuation_divergence as HistoryValuationDivergence | null;
 
   const fmt = (n: number | null) => n != null ? `$${n.toFixed(2)}` : "—";
   const sentColor = SENTIMENT_COLOR[data.news_sentiment] ?? "var(--muted)";
@@ -274,6 +341,37 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
 
       {/* Zusammenfassung */}
       <p className="leading-relaxed">{data.summary}</p>
+
+      {(analystConsensus || modelValuation || valuationDivergence) && (
+        <div className="space-y-2">
+          {analystConsensus && (
+            <HistoryValuationMiniCard
+              title="Analystenkonsens"
+              subtitle="Marktmeinung, kein eigenes Modell"
+              range={analystConsensus}
+            />
+          )}
+          {modelValuation && (
+            <HistoryValuationMiniCard
+              title="Eigenes Modell"
+              subtitle="Gespeicherte FCF-/Multiple-Szenarien"
+              range={modelValuation}
+            />
+          )}
+          {valuationDivergence && (
+            <div className="rounded-xl p-3"
+              style={{ background: "rgba(245,158,11,0.08)", border: "1px solid #f59e0b35" }}>
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold text-white text-xs">Divergenz</p>
+                <span className="font-semibold" style={{ color: "#f59e0b" }}>
+                  {valuationDivergence.difference_pct != null ? `${valuationDivergence.difference_pct > 0 ? "+" : ""}${valuationDivergence.difference_pct.toFixed(1)}%` : "—"}
+                </span>
+              </div>
+              <p className="text-[11px] mt-1 leading-relaxed">{valuationDivergence.interpretation}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Kursziele */}
       {priceLevels && (

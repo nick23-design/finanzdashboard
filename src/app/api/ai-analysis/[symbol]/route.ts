@@ -80,6 +80,14 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { rateLimit } from "@/lib/rate-limit";
 import { PEER_MAP } from "@/lib/peer-map";
 import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
+import {
+  buildAnalystConsensusValuation,
+  buildBusinessDriverAnalysis,
+  buildOwnModelValuation,
+  type BusinessDriverAnalysis,
+  type RawValuationRange,
+  type ValueDriver,
+} from "@/lib/ai-analysis/valuation-model";
 import type { AssetSnapshot, Database, Json } from "@/types/database";
 
 export const maxDuration = 10;
@@ -271,6 +279,10 @@ export interface MoneyRange {
 export interface ValuationRange extends MoneyRange {
   currency: string;
   rationale: string;
+  source?: "analyst_consensus" | "own_model" | "synthesis";
+  confidence?: ValuationConfidence | null;
+  methods?: string[];
+  limitations?: string[];
   usd?: MoneyRange | null;
   eur?: MoneyRange | null;
   fx_rate_eur_usd?: number | null;
@@ -283,6 +295,13 @@ export interface AnalysisClaim {
   evidence: string;
   source_type: "metrics" | "news" | "analyst" | "market_intel" | "inference";
   confidence: number;
+}
+
+export interface ValuationDivergence {
+  analyst_base: number | null;
+  model_base: number | null;
+  difference_pct: number | null;
+  interpretation: string;
 }
 
 interface SynthesisResult {
@@ -298,6 +317,10 @@ interface SynthesisResult {
   entry_quality?: EntryQuality | null;
   valuation_confidence?: ValuationConfidence | null;
   valuation_range?: ValuationRange | null;
+  analyst_consensus_range?: ValuationRange | null;
+  model_valuation_range?: ValuationRange | null;
+  valuation_divergence?: ValuationDivergence | null;
+  business_drivers?: BusinessDriverAnalysis | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
 }
@@ -364,6 +387,10 @@ export interface AIAnalysisResult extends SynthesisResult {
   entry_quality?: EntryQuality | null;
   valuation_confidence?: ValuationConfidence | null;
   valuation_range?: ValuationRange | null;
+  analyst_consensus_range?: ValuationRange | null;
+  model_valuation_range?: ValuationRange | null;
+  valuation_divergence?: ValuationDivergence | null;
+  business_drivers?: BusinessDriverAnalysis | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
   data_quality: DianaQualityReport | null;
@@ -386,6 +413,10 @@ interface OrchestratorResult {
   entry_quality?: EntryQuality | null;
   valuation_confidence?: ValuationConfidence | null;
   valuation_range?: ValuationRange | null;
+  analyst_consensus_range?: ValuationRange | null;
+  model_valuation_range?: ValuationRange | null;
+  valuation_divergence?: ValuationDivergence | null;
+  business_drivers?: BusinessDriverAnalysis | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
   fundamental: FundamentalAnalysis;
@@ -393,6 +424,13 @@ interface OrchestratorResult {
   market_intel: MarketIntelAnalysis | null;
   protocol: ProtocolEntry[];
   findings: StructuredFinding[];
+}
+
+interface ValuationContext {
+  businessDrivers: BusinessDriverAnalysis;
+  analystConsensusRange: ValuationRange | null;
+  modelValuationRange: ValuationRange | null;
+  valuationDivergence: ValuationDivergence | null;
 }
 
 // --- Helpers ---
@@ -625,7 +663,7 @@ function inferValuationConfidence(
 ): ValuationConfidence {
   if ((dataQuality?.completeness_score ?? 100) < 60) return "low";
   if (s.pe_ratio == null && s.free_cashflow == null && analystData?.mean_target == null) return "low";
-  if (analystData?.mean_target != null && s.pe_ratio != null && s.free_cashflow != null) return "high";
+  if (s.pe_ratio != null && s.free_cashflow != null && (dataQuality?.completeness_score ?? 100) >= 85) return "high";
   return "medium";
 }
 
@@ -850,6 +888,121 @@ async function fetchFxContext(): Promise<FxContext> {
   return { eurUsd: EUR_USD_FALLBACK, source: "fallback", asOf: new Date().toISOString() };
 }
 
+function enrichRawValuationRange(raw: RawValuationRange | null, fx: FxContext): ValuationRange | null {
+  if (!raw || !hasAnyRangeValue(raw)) return null;
+  const native = {
+    bear: roundMoney(raw.bear),
+    base: roundMoney(raw.base),
+    bull: roundMoney(raw.bull),
+  };
+  const currency = normalizeCurrency(raw.currency);
+  return {
+    currency,
+    bear: native.bear,
+    base: native.base,
+    bull: native.bull,
+    rationale: raw.rationale,
+    source: raw.source,
+    confidence: raw.confidence,
+    methods: raw.methods,
+    limitations: raw.limitations,
+    usd: convertRange(native, currency, "USD", fx.eurUsd),
+    eur: convertRange(native, currency, "EUR", fx.eurUsd),
+    fx_rate_eur_usd: fx.eurUsd,
+    fx_rate_source: fx.source,
+    fx_rate_as_of: fx.asOf,
+  };
+}
+
+function usdBase(range: ValuationRange | null): number | null {
+  return range?.usd?.base ?? (range?.currency === "USD" ? range.base : null);
+}
+
+function buildValuationDivergence(
+  analystRange: ValuationRange | null,
+  modelRange: ValuationRange | null,
+): ValuationDivergence | null {
+  const analystBase = usdBase(analystRange);
+  const modelBase = usdBase(modelRange);
+  if (analystBase == null || modelBase == null || modelBase <= 0) {
+    return {
+      analyst_base: analystBase,
+      model_base: modelBase,
+      difference_pct: null,
+      interpretation: "Divergenz nicht berechenbar, weil Konsens oder eigenes Modell fehlen.",
+    };
+  }
+
+  const diffPct = Math.round(((analystBase - modelBase) / modelBase) * 1000) / 10;
+  const abs = Math.abs(diffPct);
+  const interpretation = abs < 10
+    ? "Analystenkonsens und eigenes Modell liegen relativ nah beieinander."
+    : diffPct > 0
+    ? `Analystenkonsens liegt rund ${abs.toFixed(1)}% über dem eigenen Modell; der Markt ist optimistischer als unsere konservative Spanne.`
+    : `Eigenes Modell liegt rund ${abs.toFixed(1)}% über dem Analystenkonsens; die Modellannahmen sind optimistischer als die Marktmeinung.`;
+
+  return {
+    analyst_base: roundMoney(analystBase),
+    model_base: roundMoney(modelBase),
+    difference_pct: diffPct,
+    interpretation,
+  };
+}
+
+function buildValuationContext(
+  symbol: string,
+  snapshot: AssetSnapshot,
+  analystData: AnalystData | null,
+  dataQuality: DianaQualityReport | null | undefined,
+  fx: FxContext,
+): ValuationContext {
+  const businessDrivers = buildBusinessDriverAnalysis(symbol, snapshot);
+  const analystConsensusRange = enrichRawValuationRange(
+    buildAnalystConsensusValuation(analystData),
+    fx,
+  );
+  const modelValuationRange = enrichRawValuationRange(
+    buildOwnModelValuation(snapshot, businessDrivers, dataQuality),
+    fx,
+  );
+  const valuationDivergence = buildValuationDivergence(analystConsensusRange, modelValuationRange);
+
+  return { businessDrivers, analystConsensusRange, modelValuationRange, valuationDivergence };
+}
+
+function formatRangeForPrompt(range: ValuationRange | null): string {
+  if (!range) return "nicht verfügbar";
+  const usd = range.usd ?? (range.currency === "USD" ? range : null);
+  const native = `${range.currency} Bear ${range.bear ?? "N/A"} / Base ${range.base ?? "N/A"} / Bull ${range.bull ?? "N/A"}`;
+  const usdLine = usd && range.currency !== "USD"
+    ? ` | USD Bear ${usd.bear ?? "N/A"} / Base ${usd.base ?? "N/A"} / Bull ${usd.bull ?? "N/A"}`
+    : "";
+  const methods = range.methods?.length ? ` | Methoden: ${range.methods.join(", ")}` : "";
+  const confidence = range.confidence ? ` | Konfidenz: ${range.confidence}` : "";
+  return `${native}${usdLine}${confidence}${methods}. ${range.rationale}`;
+}
+
+function formatBusinessDriversForPrompt(drivers: BusinessDriverAnalysis): string {
+  const fmtDrivers = (items: ValueDriver[]) => items.slice(0, 3)
+    .map(item => `- ${item.driver}: ${item.why_it_matters} (KPIs: ${item.metrics.slice(0, 3).join(", ")})`)
+    .join("\n");
+
+  return [
+    `Unternehmenstyp: ${drivers.business_model_type}`,
+    `Template: ${drivers.sector_template} · Konfidenz: ${drivers.classification_confidence}`,
+    drivers.secondary_types.length ? `Sekundärtypen: ${drivers.secondary_types.join(", ")}` : "",
+    drivers.classification_reasoning.length ? `Klassifizierung: ${drivers.classification_reasoning.join(" | ")}` : "",
+    "Umsatztreiber:",
+    fmtDrivers(drivers.revenue_drivers),
+    "Margentreiber:",
+    fmtDrivers(drivers.margin_drivers),
+    "Cashflow-Treiber:",
+    fmtDrivers(drivers.cash_flow_drivers),
+    `Bewertungsmethoden: ${drivers.model_instructions.valuation_methods.join(", ")}`,
+    `Red Flags: ${drivers.red_flags.slice(0, 4).join(" | ")}`,
+  ].filter(Boolean).join("\n");
+}
+
 function completeResearchFields(
   raw: SynthesisResult,
   s: AssetSnapshot,
@@ -857,24 +1010,36 @@ function completeResearchFields(
   analystData: AnalystData | null,
   dataQuality: DianaQualityReport | null | undefined,
   fx: FxContext,
+  valuationContext: ValuationContext,
 ): SynthesisResult {
   const thesis = raw.thesis_type ?? inferThesisType(s, marketIntel);
   const entry = raw.entry_quality ?? inferEntryQuality(s);
-  const valuationConfidence = raw.valuation_confidence ?? inferValuationConfidence(s, analystData, dataQuality);
+  const valuationConfidence =
+    valuationContext.modelValuationRange?.confidence ??
+    raw.valuation_confidence ??
+    inferValuationConfidence(s, analystData, dataQuality);
   const guardrails = [
     ...(raw.data_quality_guardrails ?? []),
     ...buildDataQualityGuardrails(dataQuality, valuationConfidence),
+    ...(valuationContext.modelValuationRange?.limitations ?? []),
+    ...(!valuationContext.modelValuationRange && valuationContext.analystConsensusRange
+      ? ["Kein belastbares eigenes Modell: Analystenkonsens nur als Marktmeinung anzeigen."]
+      : []),
   ].filter((item, index, arr) => item.trim() && arr.indexOf(item) === index);
 
   const timeHorizon = raw.time_horizon_view ?? buildDefaultTimeHorizonView(s, entry, thesis);
-  const valuationRange = buildValuationRange(
+  const synthesisRange = buildValuationRange(
     raw.valuation_range ?? null,
     s,
-    analystData,
-    raw.price_levels ?? null,
+    null,
+    null,
     valuationConfidence,
     fx,
   );
+  const valuationRange =
+    valuationContext.modelValuationRange ??
+    synthesisRange ??
+    valuationContext.analystConsensusRange;
 
   const confidenceIsLow = valuationConfidence === "low" || (dataQuality?.completeness_score ?? 100) < 70;
   const priceLevels = confidenceIsLow && raw.price_levels
@@ -901,6 +1066,10 @@ function completeResearchFields(
     entry_quality: entry,
     valuation_confidence: valuationConfidence,
     valuation_range: valuationRange,
+    analyst_consensus_range: valuationContext.analystConsensusRange,
+    model_valuation_range: valuationContext.modelValuationRange,
+    valuation_divergence: valuationContext.valuationDivergence,
+    business_drivers: valuationContext.businessDrivers,
     data_quality_guardrails: guardrails,
     claims,
     price_levels: priceLevels,
@@ -1046,6 +1215,7 @@ async function runSynthesisAgent(
   sentiment: SentimentAnalysis,
   marketIntel: MarketIntelAnalysis | null,
   analystData: AnalystData | null,
+  valuationContext: ValuationContext,
   dataQuality?: DianaQualityReport | null,
 ): Promise<SynthesisResult> {
   const client = new Anthropic({
@@ -1064,6 +1234,15 @@ Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kerna
     : "";
 
   const analystSection = formatAnalystData(analystData);
+  const driverSection = formatBusinessDriversForPrompt(valuationContext.businessDrivers);
+  const valuationSection = `ANALYSTENKONSENS (Marktmeinung, kein eigenes Modell):
+${formatRangeForPrompt(valuationContext.analystConsensusRange)}
+
+EIGENES BEWERTUNGSMODELL (deterministisch):
+${formatRangeForPrompt(valuationContext.modelValuationRange)}
+
+DIVERGENZ:
+${valuationContext.valuationDivergence?.interpretation ?? "Nicht berechenbar."}`;
   const synthesisTool: Anthropic.Messages.Tool = {
     name: "complete_synthesis",
     description: "Gibt die finale, strukturierte Research-Synthese zurück. Muss vollständig und inhaltlich substantiell sein.",
@@ -1163,6 +1342,12 @@ Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kerna
 ${currentPriceRef}KENNZAHLEN (aktuelle Marktdaten):
 ${formatMetrics(s)}
 ${analystSection ? "\nANALYSTEN-KONSENS (Zukunftsprognosen, kein aktueller Kurs):\n" + analystSection : ""}
+SEKTOR- UND WERTTREIBER-MODELL:
+${driverSection}
+
+BEWERTUNGSTRENNUNG:
+${valuationSection}
+
 WACHSTUMSBEWERTUNG: ${fundamental.growth_rating}/10
 Stärken: ${fundamental.key_positives.join(" | ")}
 Risiken: ${fundamental.key_risks.join(" | ")}
@@ -1183,8 +1368,11 @@ WICHTIG:
 - Beziehe dich ausschließlich auf die bereitgestellten Daten. Erfinde keine Deals, Produkte, Margen oder Ereignisse.
 - Google Trends ist nur ein schwaches Retail-Sentiment-Signal. Verwende es nie als Kernargument.
 - Wenn Datenqualität lückenhaft ist: Conviction begrenzen, valuation_confidence niedrig/mittel setzen und keine pseudo-präzisen Kursziele formulieren.
-- Valuation bitte als Szenario-Spanne (bear/base/bull), nicht als punktgenaues Versprechen. Nutze null, wenn keine belastbare Grundlage vorhanden ist.
+- Analystenkonsens ist nur Marktmeinung. Gib ihn niemals als eigenes Bewertungsmodell aus.
+- Das eigene Bewertungsmodell ist die primäre Bewertungsgrundlage. Wenn es fehlt oder low confidence ist, erkläre die Unsicherheit statt ein präzises Ziel zu formulieren.
+- valuation_range soll das eigene Modell widerspiegeln, wenn vorhanden; sonst null oder ausdrücklich sehr vorsichtig. Keine Konsens-Ziele als eigene Fair-Value-Spanne ausgeben.
 - price_levels.entry und stop_loss dürfen als Timing-/Risikomarken gesetzt werden; price_levels.target nur wenn valuation_confidence nicht low ist.
+- Nutze die gelieferten Werttreiber und Red Flags. Für Hyperscaler z.B. AI-Capex/Margenlogik; für Semis Zyklus/Inventar/Margen; für spekulative Growth-Titel Cashburn/Execution.
 - claims müssen konkrete, prüfbare Aussagen sein, jeweils mit Evidenz aus Kennzahlen, News, Analysten oder Inferenz.
 - Keine Anlageberatung, keine Garantien.
 
@@ -1194,7 +1382,7 @@ Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
     messages: [
       {
         role: "user",
-        content: `Erstelle eine strukturierte Research-Analyse und rufe danach zwingend das Tool complete_synthesis auf.\n\n${context}\n\nQualitätsanforderungen:\n- Summary, Bull-Case, Bear-Case und Wachstumsausblick müssen substantiell sein.\n- Wenn kein belastbares Bewertungsmodell möglich ist: valuation_confidence auf low/medium, valuation_range null oder klar als Analystenkonsens erklären.\n- Entry Quality muss aus RSI, Kurs relativ zu MA50/MA200 und These abgeleitet sein.\n- Keine Fallback-Sätze wie "Analyse konnte nicht erstellt werden" oder "Nicht verfügbar".`,
+        content: `Erstelle eine strukturierte Research-Analyse und rufe danach zwingend das Tool complete_synthesis auf.\n\n${context}\n\nQualitätsanforderungen:\n- Summary, Bull-Case, Bear-Case und Wachstumsausblick müssen substantiell sein.\n- Trenne Analystenkonsens, eigenes Bewertungsmodell, Timing und langfristige These klar.\n- Wenn kein belastbares eigenes Modell möglich ist: valuation_confidence auf low/medium, valuation_range null und Konsens nur als Marktmeinung erwähnen.\n- Entry Quality muss aus RSI, Kurs relativ zu MA50/MA200 und These abgeleitet sein.\n- Keine Fallback-Sätze wie "Analyse konnte nicht erstellt werden" oder "Nicht verfügbar".`,
       },
     ],
   });
@@ -1267,7 +1455,11 @@ Mittelfristig: ${synthesis.time_horizon_view?.medium_term ?? "N/A"}
 Langfristig: ${synthesis.time_horizon_view?.long_term ?? "N/A"}
 Entry Quality: ${synthesis.entry_quality?.label ?? "N/A"} — ${synthesis.entry_quality?.rationale ?? "N/A"}
 Valuation Confidence: ${synthesis.valuation_confidence ?? "N/A"}
-Valuation Range: ${synthesis.valuation_range ? `${synthesis.valuation_range.currency} Bear ${synthesis.valuation_range.bear ?? "N/A"} / Base ${synthesis.valuation_range.base ?? "N/A"} / Bull ${synthesis.valuation_range.bull ?? "N/A"} — ${synthesis.valuation_range.rationale}` : "N/A"}
+Analystenkonsens: ${formatRangeForPrompt(synthesis.analyst_consensus_range ?? null)}
+Eigenes Bewertungsmodell: ${formatRangeForPrompt(synthesis.model_valuation_range ?? null)}
+Valuation Divergence: ${synthesis.valuation_divergence?.interpretation ?? "N/A"}
+Valuation Range im Bericht: ${synthesis.valuation_range ? `${synthesis.valuation_range.currency} Bear ${synthesis.valuation_range.bear ?? "N/A"} / Base ${synthesis.valuation_range.base ?? "N/A"} / Bull ${synthesis.valuation_range.bull ?? "N/A"} — ${synthesis.valuation_range.rationale}` : "N/A"}
+Business Drivers: ${synthesis.business_drivers ? `${synthesis.business_drivers.business_model_type}; KPIs: ${synthesis.business_drivers.sector_specific_kpis.slice(0, 5).join(", ")}; Red Flags: ${synthesis.business_drivers.red_flags.slice(0, 3).join(" | ")}` : "N/A"}
 Claims:
 ${(synthesis.claims ?? []).map(c => `- ${c.claim} | Evidence: ${c.evidence} | Confidence ${c.confidence}/10`).join("\n") || "- Keine strukturierten Claims"}`;
 
@@ -1312,7 +1504,9 @@ REGELN — Autoritative Daten & Artikel-Freshness:
 5. Währungsumrechnung bei Analysten-Kurszielen: Finance API liefert Kursziele immer in USD. Bei Aktien die nicht in USD notieren darf Opus diese in die lokale Notierungswährung umrechnen — das ist kein Fehler.
 6. Konsistenzprüfung: Prüfe, ob Empfehlung, RSI, Abstand zu MA50/MA200, Datenqualität, Entry Quality und valuation_range logisch zusammenpassen.
 7. Wenn die Datenbasis lückenhaft ist, sind hohe Conviction und präzise Kursziele verdächtig. Eine breite Szenario-Spanne ist dagegen zulässig.
-8. Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf keine Kernthese stützen.`;
+8. Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf keine Kernthese stützen.
+9. Analystenkonsens und eigenes Bewertungsmodell dürfen nicht vermischt werden. Konsens-Kursziele sind Marktmeinung, kein Fair Value aus eigenem Modell.
+10. Prüfe, ob die verwendeten Werttreiber zum Unternehmenstyp passen, z.B. Hyperscaler mit AI-Capex/Margenlogik, Semis mit Zyklus/Inventar/Margen, spekulative Growth-Titel mit Cashburn/Execution.`;
 
   const fetchArticleLine = skipArticleFetch
     ? "Kein Artikel-Nachladen in diesem Lauf. Prüfe nur gegen die gelieferten Excerpts und autoritativen Daten."
@@ -1946,7 +2140,14 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
     const noData = fb_m.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar";
     protocol.push({ agent: "Marco", status: noData ? "skipped" : "ok", detail: noData ? "Keine Daten verfügbar" : `Insider: ${fb_m.insider_signal} (Fallback)` });
   }
-  const rawSynthesisFb = await runSynthesisAgent(symbol, snapshot, fb_f, fb_s, fb_m, analystData);
+  const fallbackValuationContext = buildValuationContext(
+    symbol,
+    snapshot,
+    analystData,
+    null,
+    { eurUsd: EUR_USD_FALLBACK, source: "fallback", asOf: new Date().toISOString() },
+  );
+  const rawSynthesisFb = await runSynthesisAgent(symbol, snapshot, fb_f, fb_s, fb_m, analystData, fallbackValuationContext);
   const cappedFb = { ...rawSynthesisFb, conviction: Math.min(rawSynthesisFb.conviction, confidenceCap) };
   const capNoteFb = rawSynthesisFb.conviction > confidenceCap ? ` · Conviction ${rawSynthesisFb.conviction}→${cappedFb.conviction} (Diana-Cap)` : "";
   protocol.push({ agent: "Opus", status: "ok", detail: `Synthese (Fallback): ${cappedFb.recommendation} · Conviction ${cappedFb.conviction}/10${capNoteFb}` });
@@ -2082,6 +2283,18 @@ async function runAnalysisPipeline(
   protocol.push({ agent: "Nina", status: "ok", detail: `Sentiment: ${sentiment.sentiment} · ${sentiment.key_themes.length} Themen · ${withExcerpts}/${googleNews.length} Artikel mit Jina-Excerpt` });
   protocol.push({ agent: "Marco", status: noMarcoData ? "skipped" : "ok", detail: noMarcoData ? "Keine Daten verfügbar (nur für US-Aktien)" : `Insider: ${marketIntel.insider_signal} · Institutionen: ${marketIntel.institutional_trend} · Trends: ${marketIntel.trends_momentum}` });
 
+  const valuationContext = await runStep(
+    "valuation_model",
+    "Werttreiber & Bewertungsmodell vorbereiten",
+    58,
+    async () => buildValuationContext(symbol, snapshot, analystData, dataQuality, fxContext),
+  );
+  protocol.push({
+    agent: "Driver",
+    status: valuationContext.modelValuationRange ? "ok" : "warning",
+    detail: `${valuationContext.businessDrivers.sector_template} · eigenes Modell ${valuationContext.modelValuationRange ? valuationContext.modelValuationRange.confidence ?? "medium" : "nicht verfügbar"}${valuationContext.valuationDivergence?.difference_pct != null ? ` · Konsens-Abweichung ${valuationContext.valuationDivergence.difference_pct}%` : ""}`,
+  });
+
   // Synthese: Opus als qualitative Hauptsynthese → bei Timeout Haiku-Fallback (~8s)
   if (onSynthesisStart) await onSynthesisStart().catch(() => {});
   let rawSynthesisBase: SynthesisResult;
@@ -2091,7 +2304,7 @@ async function runAnalysisPipeline(
       "run_synthesis",
       "Opus Synthese erstellen",
       65,
-      () => runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality),
+      () => runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, valuationContext, dataQuality),
     );
   } catch {
     console.log(`[PIPELINE][${symbol}] Opus-Timeout → Haiku-Fallback`);
@@ -2107,7 +2320,7 @@ async function runAnalysisPipeline(
     "research_guardrails",
     "Research-Guardrails anwenden",
     78,
-    async () => completeResearchFields(rawSynthesisBase, snapshot, marketIntel, analystData, dataQuality, fxContext),
+    async () => completeResearchFields(rawSynthesisBase, snapshot, marketIntel, analystData, dataQuality, fxContext, valuationContext),
   );
   assertSynthesisQuality(rawSynthesis, usedFallback ? "Fallback-Synthese" : "Opus-Synthese");
   const rawConviction = clampConviction(rawSynthesis.conviction);
@@ -2132,6 +2345,10 @@ async function runAnalysisPipeline(
     entry_quality: cappedSynthesis.entry_quality ?? null,
     valuation_confidence: cappedSynthesis.valuation_confidence ?? null,
     valuation_range: cappedSynthesis.valuation_range ?? null,
+    analyst_consensus_range: cappedSynthesis.analyst_consensus_range ?? null,
+    model_valuation_range: cappedSynthesis.model_valuation_range ?? null,
+    valuation_divergence: cappedSynthesis.valuation_divergence ?? null,
+    business_drivers: cappedSynthesis.business_drivers ?? null,
     data_quality_guardrails: cappedSynthesis.data_quality_guardrails ?? [],
     claims: cappedSynthesis.claims ?? [],
     fundamental,
@@ -2159,6 +2376,10 @@ function buildAnalysisExtraData(result: AIAnalysisResult): import("@/types/datab
     ...(result.entry_quality ? { entry_quality: result.entry_quality } : {}),
     ...(result.valuation_confidence ? { valuation_confidence: result.valuation_confidence } : {}),
     ...(result.valuation_range ? { valuation_range: result.valuation_range } : {}),
+    ...(result.analyst_consensus_range ? { analyst_consensus_range: result.analyst_consensus_range } : {}),
+    ...(result.model_valuation_range ? { model_valuation_range: result.model_valuation_range } : {}),
+    ...(result.valuation_divergence ? { valuation_divergence: result.valuation_divergence } : {}),
+    ...(result.business_drivers ? { business_drivers: result.business_drivers } : {}),
     ...(result.data_quality_guardrails ? { data_quality_guardrails: result.data_quality_guardrails } : {}),
     ...(result.claims ? { claims: result.claims } : {}),
     ...(result.data_quality ? { data_quality: result.data_quality } : {}),
@@ -2279,6 +2500,10 @@ async function runDeferredVeraCheck({
     entry_quality: factCheck.result.entry_quality ?? result.entry_quality,
     valuation_confidence: factCheck.result.valuation_confidence ?? result.valuation_confidence,
     valuation_range: factCheck.result.valuation_range ?? result.valuation_range,
+    analyst_consensus_range: factCheck.result.analyst_consensus_range ?? result.analyst_consensus_range,
+    model_valuation_range: factCheck.result.model_valuation_range ?? result.model_valuation_range,
+    valuation_divergence: factCheck.result.valuation_divergence ?? result.valuation_divergence,
+    business_drivers: factCheck.result.business_drivers ?? result.business_drivers,
     data_quality_guardrails: factCheck.result.data_quality_guardrails ?? result.data_quality_guardrails,
     claims: factCheck.result.claims ?? result.claims,
     trace: getTrace ? getTrace() : result.trace,
@@ -2512,6 +2737,10 @@ export async function runAnalysisJob(
       entry_quality: orchestrated.entry_quality ?? null,
       valuation_confidence: orchestrated.valuation_confidence ?? null,
       valuation_range: orchestrated.valuation_range ?? null,
+      analyst_consensus_range: orchestrated.analyst_consensus_range ?? null,
+      model_valuation_range: orchestrated.model_valuation_range ?? null,
+      valuation_divergence: orchestrated.valuation_divergence ?? null,
+      business_drivers: orchestrated.business_drivers ?? null,
       data_quality_guardrails: orchestrated.data_quality_guardrails ?? [],
       claims: orchestrated.claims ?? [],
       data_quality: diana,
@@ -2656,6 +2885,10 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
       entry_quality: extra.entry_quality as EntryQuality | null ?? null,
       valuation_confidence: extra.valuation_confidence as ValuationConfidence | null ?? null,
       valuation_range: extra.valuation_range as ValuationRange | null ?? null,
+      analyst_consensus_range: extra.analyst_consensus_range as ValuationRange | null ?? null,
+      model_valuation_range: extra.model_valuation_range as ValuationRange | null ?? null,
+      valuation_divergence: extra.valuation_divergence as ValuationDivergence | null ?? null,
+      business_drivers: extra.business_drivers as BusinessDriverAnalysis | null ?? null,
       data_quality_guardrails: extra.data_quality_guardrails as string[] ?? [],
       claims: extra.claims as AnalysisClaim[] ?? [],
       data_quality: extra.data_quality as DianaQualityReport | null ?? null,

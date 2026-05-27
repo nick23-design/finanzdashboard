@@ -66,6 +66,11 @@ function formatMoney(value: number | null | undefined, currency: string) {
   return `${currencySymbol(currency)}${value.toFixed(2)}`;
 }
 
+function formatSignedPct(value: number | null | undefined) {
+  if (value == null) return "—";
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
 const TRACE_STATUS_STYLES: Record<AnalysisTraceEntry["status"], { label: string; color: string }> = {
   running: { label: "läuft", color: "#f59e0b" },
   ok: { label: "ok", color: "#22c55e" },
@@ -178,9 +183,13 @@ function TimeHorizonSection({ view }: { view: NonNullable<AIAnalysisResult["time
 function ValuationRangeSection({
   range,
   levels,
+  title = "Bewertungsspanne",
+  subtitle = "Bear / Base / Bull Case",
 }: {
   range: NonNullable<AIAnalysisResult["valuation_range"]>;
   levels?: PriceLevels | null;
+  title?: string;
+  subtitle?: string;
 }) {
   const [currency, setCurrency] = useState<"USD" | "EUR">("USD");
   const selected = currency === "USD" ? range.usd : range.eur;
@@ -197,9 +206,9 @@ function ValuationRangeSection({
       style={{ background: "rgba(100,116,139,0.08)", border: "1px solid var(--card-border)" }}>
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="text-xs font-semibold text-white">Bewertungsspanne</p>
+          <p className="text-xs font-semibold text-white">{title}</p>
           <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
-            Bear / Base / Bull Case
+            {subtitle}
           </p>
         </div>
         <div className="flex rounded-full p-0.5" style={{ background: "var(--card-border)" }}>
@@ -238,6 +247,36 @@ function ValuationRangeSection({
         {range.rationale}
       </p>
 
+      {(range.confidence || range.methods?.length) && (
+        <div className="flex flex-wrap gap-1.5">
+          {range.confidence && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+              style={{
+                color: VALUATION_CONFIDENCE_LABELS[range.confidence]?.color ?? "var(--muted)",
+                background: `${VALUATION_CONFIDENCE_LABELS[range.confidence]?.color ?? "#64748b"}22`,
+              }}>
+              Konfidenz {VALUATION_CONFIDENCE_LABELS[range.confidence]?.label ?? range.confidence}
+            </span>
+          )}
+          {range.methods?.slice(0, 3).map(method => (
+            <span key={method} className="text-[10px] px-2 py-0.5 rounded-full"
+              style={{ color: "var(--muted)", background: "rgba(100,116,139,0.12)" }}>
+              {method}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {range.limitations?.length ? (
+        <ul className="space-y-0.5">
+          {range.limitations.slice(0, 2).map((item, i) => (
+            <li key={i} className="text-[10px] leading-relaxed" style={{ color: "var(--muted)" }}>
+              · {item}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       {levels && (levels.entry != null || levels.stop_loss != null) && (
         <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t" style={{ borderColor: "var(--card-border)" }}>
           <div>
@@ -255,6 +294,103 @@ function ValuationRangeSection({
         <p className="text-[10px]" style={{ color: "var(--muted)" }}>
           {fxNote}. Umrechnung ist nur Orientierung, kein Börsenkurs in dieser Währung.
         </p>
+      )}
+    </div>
+  );
+}
+
+function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }) {
+  const analyst = analysis.analyst_consensus_range;
+  const model = analysis.model_valuation_range;
+  const divergence = analysis.valuation_divergence;
+
+  if (!analyst && !model && !divergence) return null;
+
+  const divergenceColor = divergence?.difference_pct == null
+    ? "#64748b"
+    : Math.abs(divergence.difference_pct) < 10
+    ? "#38bdf8"
+    : "#f59e0b";
+
+  return (
+    <div className="space-y-2">
+      {analyst && (
+        <ValuationRangeSection
+          range={analyst}
+          title="Analystenkonsens"
+          subtitle="Marktmeinung, kein eigenes Modell"
+        />
+      )}
+      {model && (
+        <ValuationRangeSection
+          range={model}
+          levels={analysis.price_levels}
+          title="Eigenes Modell"
+          subtitle="Deterministische FCF-/Multiple-Szenarien"
+        />
+      )}
+      {divergence && (
+        <div
+          className="rounded-xl p-3"
+          style={{ background: `${divergenceColor}12`, border: `1px solid ${divergenceColor}35` }}>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-white">Divergenz</p>
+            <span className="text-xs font-semibold" style={{ color: divergenceColor }}>
+              {formatSignedPct(divergence.difference_pct)}
+            </span>
+          </div>
+          <p className="text-[11px] mt-1 leading-relaxed" style={{ color: "var(--muted)" }}>
+            {divergence.interpretation}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BusinessDriversSection({ drivers }: { drivers: NonNullable<AIAnalysisResult["business_drivers"]> }) {
+  const primaryDrivers = [
+    ...drivers.revenue_drivers.slice(0, 2),
+    ...drivers.margin_drivers.slice(0, 1),
+    ...drivers.cash_flow_drivers.slice(0, 1),
+  ];
+
+  return (
+    <div
+      className="rounded-xl p-3 space-y-3"
+      style={{ background: "rgba(100,116,139,0.08)", border: "1px solid var(--card-border)" }}>
+      <div>
+        <p className="text-xs font-semibold text-white">Werttreiber-Modell</p>
+        <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
+          {drivers.business_model_type} · {drivers.classification_confidence}
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        {primaryDrivers.map(driver => (
+          <div key={driver.driver}>
+            <p className="text-xs font-semibold text-white">{driver.driver}</p>
+            <p className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
+              {driver.why_it_matters}
+            </p>
+            <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
+              KPIs: {driver.metrics.slice(0, 3).join(", ")}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {drivers.red_flags.length > 0 && (
+        <div className="pt-2 border-t" style={{ borderColor: "var(--card-border)" }}>
+          <p className="text-xs font-semibold mb-1" style={{ color: "#f59e0b" }}>Red Flags</p>
+          <ul className="space-y-0.5">
+            {drivers.red_flags.slice(0, 4).map((flag, i) => (
+              <li key={i} className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
+                · {flag}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
@@ -597,11 +733,17 @@ export function AIAnalysisCard({ analysis }: Props) {
       )}
 
       {/* Valuation */}
-      {analysis.valuation_range ? (
+      {analysis.analyst_consensus_range || analysis.model_valuation_range || analysis.valuation_divergence ? (
+        <ValuationSeparationSection analysis={analysis} />
+      ) : analysis.valuation_range ? (
         <ValuationRangeSection range={analysis.valuation_range} levels={analysis.price_levels} />
       ) : analysis.price_levels ? (
         <PriceLevelSection levels={analysis.price_levels} />
       ) : null}
+
+      {analysis.business_drivers && (
+        <BusinessDriversSection drivers={analysis.business_drivers} />
+      )}
 
       {/* Summary */}
       <p className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
