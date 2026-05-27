@@ -96,6 +96,12 @@ import {
   buildValuationDivergence,
   type DivergenceResult,
 } from "@/lib/ai-analysis/divergence";
+import {
+  runGuardrailEngine,
+  ALL_LIGHTWEIGHT_RULES,
+  type GuardrailAnalysis,
+  type GuardrailContext,
+} from "@/lib/ai-analysis/guardrails";
 import type { AssetSnapshot, Database, Json } from "@/types/database";
 
 export const maxDuration = 10;
@@ -2949,158 +2955,91 @@ async function saveOutcome(result: AIAnalysisResult, client?: SbClient): Promise
 }
 
 // ─── Lightweight Guardrails (synchron, vor saveAnalysis) ─────────────────────
-// Schnelle, deterministisiche Prüfungen die ohne KI-Aufruf sofort laufen.
+// Schnelle, deterministische Prüfungen die ohne KI-Aufruf sofort laufen.
 // Tiefe VERA-Analyse läuft asynchron per CRON.
+//
+// Wrapper: konvertiert SynthesisResult ↔ GuardrailAnalysis und baut GuardrailContext.
+// Die eigentliche Logik liegt in src/lib/ai-analysis/guardrails/ (modulare Engine).
 
 function runLightweightGuardrails(
   result: SynthesisResult,
   dataQuality: DianaQualityReport | null,
   valuationContext: ValuationContext | null,
 ): SynthesisResult {
+  // ─── Basis-Checks (vor der Engine) ──────────────────────────────────────────
+  // Schema Validation + JSON Repair laufen vor der Guardrail-Engine,
+  // damit alle Regeln eine saubere Datenbasis sehen.
+
   let rec = result.recommendation as string;
-  let conviction = result.conviction;
-  const guardrails = [...(result.data_quality_guardrails ?? [])];
-  let entry_quality = result.entry_quality;
-  let valuation_divergence = result.valuation_divergence;
-  let price_levels = result.price_levels;
-  let claims = result.claims ?? [];
-
-  // ─── Basis-Checks (bestehend) ────────────────────────────────────────────────
-
-  // 1. Schema Validation: recommendation muss in erlaubten Werten stehen
   if (!ALLOWED_RECOMMENDATIONS.includes(rec as AllowedRecommendation)) {
     rec = "Halten";
-    guardrails.push("Empfehlung korrigiert: unbekannter Wert auf 'Halten' gesetzt.");
   }
+  const baseGuardrails = rec !== result.recommendation
+    ? [...(result.data_quality_guardrails ?? []), "Empfehlung korrigiert: unbekannter Wert auf 'Halten' gesetzt."]
+    : [...(result.data_quality_guardrails ?? [])];
 
-  // 2. JSON Repair: Pflichtfelder auffüllen
   const summary = result.summary?.trim() || "Analyse wird verarbeitet.";
-  const bull_case = Array.isArray(result.bull_case) && result.bull_case.length >= 2
-    ? result.bull_case
-    : [...(Array.isArray(result.bull_case) ? result.bull_case : []), "Weitere Analyse erforderlich.", "Datenbasis wird ausgewertet."].slice(0, Math.max(2, result.bull_case?.length ?? 0));
-  const bear_case = Array.isArray(result.bear_case) && result.bear_case.length >= 2
-    ? result.bear_case
-    : [...(Array.isArray(result.bear_case) ? result.bear_case : []), "Risiken werden ausgewertet.", "Bewertungsrisiko beachten."].slice(0, Math.max(2, result.bear_case?.length ?? 0));
+  const bull_case =
+    Array.isArray(result.bull_case) && result.bull_case.length >= 2
+      ? result.bull_case
+      : [
+          ...(Array.isArray(result.bull_case) ? result.bull_case : []),
+          "Weitere Analyse erforderlich.",
+          "Datenbasis wird ausgewertet.",
+        ].slice(0, Math.max(2, result.bull_case?.length ?? 0));
+  const bear_case =
+    Array.isArray(result.bear_case) && result.bear_case.length >= 2
+      ? result.bear_case
+      : [
+          ...(Array.isArray(result.bear_case) ? result.bear_case : []),
+          "Risiken werden ausgewertet.",
+          "Bewertungsrisiko beachten.",
+        ].slice(0, Math.max(2, result.bear_case?.length ?? 0));
 
-  // ─── Research Guardrails (neu) ────────────────────────────────────────────────
+  // ─── GuardrailAnalysis: slice of SynthesisResult ────────────────────────────
+  const ga: GuardrailAnalysis = {
+    recommendation: rec,
+    conviction: result.conviction,
+    price_levels: result.price_levels ?? null,
+    entry_quality: result.entry_quality ?? null,
+    valuation_confidence: result.valuation_confidence ?? null,
+    valuation_divergence: result.valuation_divergence ?? null,
+    claims: result.claims ?? [],
+    data_quality_guardrails: baseGuardrails,
+  };
 
-  const completeness = dataQuality?.completeness_score ?? 100;
-  const modelConf = result.valuation_confidence;
-  const hasConsensus = valuationContext?.analystConsensusRange != null;
-  const hasModel = valuationContext?.modelValuationRange != null;
+  // ─── GuardrailContext: derived values for rules ──────────────────────────────
+  const ctx: GuardrailContext = {
+    symbol: "",  // not available at this call site; no current rule needs it
+    dataQualityScore: dataQuality?.completeness_score ?? null,
+    hasAnalystConsensus: valuationContext?.analystConsensusRange != null,
+    hasOwnModel: valuationContext?.modelValuationRange != null,
+    analystConsensusBase: valuationContext?.analystConsensusRange?.base ?? null,
+    ownModelBase: valuationContext?.modelValuationRange?.base ?? null,
+    valuationContext,
+  };
 
-  // Guardrail 1: Kein Analystenkonsens wenn strukturierte Daten fehlen
-  // → Claims mit source_type "analyst" auf Konfidenz ≤ 4 kappen + Hinweis
-  if (!hasConsensus) {
-    const analystClaims = claims.filter(c => c.source_type === "analyst");
-    if (analystClaims.length > 0) {
-      guardrails.push(
-        `${analystClaims.length} Analyst-Claim(s) ohne strukturierten Analystenkonsens — Belege ungeprüft.`,
-      );
-      claims = claims.map(c =>
-        c.source_type === "analyst" ? { ...c, confidence: Math.min(c.confidence, 4) } : c,
-      );
-    }
+  // ─── Run engine ──────────────────────────────────────────────────────────────
+  const { analysis, fired } = runGuardrailEngine(ga, ctx, ALL_LIGHTWEIGHT_RULES);
+
+  if (fired.length > 0) {
+    // Optional debug log (no sensitive data)
+    console.debug(`[GUARDRAILS] fired: ${fired.map(r => r.id).join(", ")}`);
   }
 
-  // Guardrail 2: Kursziele aus News als unverified kennzeichnen
-  const NEWS_PRICE_RE = /\$\s*[\d,.]+|\b\d{2,5}(?:[.,]\d+)?\s*(?:USD|EUR|Dollar|Euro)\b|[Kk]ursziel\s*(?:\$|€)?\s*[\d,.]+/;
-  const newsWithPriceTarget = claims.filter(
-    c => c.source_type === "news" && NEWS_PRICE_RE.test(`${c.claim} ${c.evidence}`),
-  );
-  if (newsWithPriceTarget.length > 0) {
-    guardrails.push(
-      `${newsWithPriceTarget.length} Kursziel(e) aus News — nur als unverified target mention zu werten, nicht als Analystenkonsens.`,
-    );
-    claims = claims.map(c =>
-      newsWithPriceTarget.includes(c)
-        ? { ...c, evidence: `[News-Kursziel, unverified] ${c.evidence}` }
-        : c,
-    );
-  }
-
-  // Guardrail 3: Identischer Basiswert Konsens = Modell → Vermischungs-Warnung
-  if (hasConsensus && hasModel) {
-    const analystBase = valuationContext!.analystConsensusRange!.base;
-    const modelBase = valuationContext!.modelValuationRange!.base;
-    if (analystBase != null && modelBase != null && analystBase === modelBase) {
-      guardrails.push("Analystenkonsens und eigenes Modell haben identischen Basiswert — möglicherweise vermischt.");
-    }
-  }
-
-  // Guardrail 4: Keine sichtbare Divergenz wenn eigenes Modell fehlt.
-  // Das deterministische Modul setzt status != "available" in diesem Fall;
-  // dieser Check ist ein Sicherheitsnetz für etwaige Pipeline-Anomalien.
-  if (!hasModel && valuation_divergence?.status === "available") {
-    valuation_divergence = null;
-    guardrails.push("Divergenz-Status korrigiert — kein eigenes Bewertungsmodell verfügbar (Fallback-Check).");
-  }
-
-  // Guardrail 5a: Keine starken Empfehlungen bei kritisch lückenhafter Datenbasis (< 40)
-  if (completeness < 40) {
-    if (rec === "Kaufen" || rec === "Leicht kaufen") {
-      rec = "Halten";
-      guardrails.push(`Empfehlung auf 'Halten' korrigiert — Datenbasis kritisch lückenhaft (${completeness}/100).`);
-    }
-    conviction = Math.min(conviction, 5);
-  } else if (completeness < 50) {
-    // Bestehender Check: Kaufen → Leicht kaufen
-    if (rec === "Kaufen") {
-      rec = "Leicht kaufen";
-      guardrails.push("Empfehlung von 'Kaufen' auf 'Leicht kaufen' korrigiert — Datenbasis < 50%.");
-    }
-    conviction = Math.min(conviction, 6);
-  }
-
-  // Guardrail 5b: Kein präzises Kursziel bei niedriger Modellkonfidenz oder lückenhafter Basis
-  if (modelConf === "low" || completeness < 55) {
-    if (price_levels?.target != null) {
-      price_levels = {
-        ...price_levels,
-        target: null,
-        target_rationale: "Kein präzises Kursziel — Datenbasis oder Modellkonfidenz zu niedrig.",
-      };
-      guardrails.push("Präzises Kursziel entfernt — Modellkonfidenz 'low' oder Datenbasis < 55%.");
-    }
-  }
-
-  // Guardrail 6: Bei "Halten" / "Leicht verkaufen" / "Verkaufen" darf Entry Quality
-  // nur dann "attraktiv" sein, wenn eigenes Modell + Datenbasis klare Unterbewertung stützen.
-  if (rec === "Halten" || rec === "Leicht verkaufen" || rec === "Verkaufen") {
-    if (entry_quality?.label === "attraktiv") {
-      // Unterbewertung gilt als belegt wenn: Modell vorhanden + Konfidenz ≥ medium + Basis > entry * 1.15
-      const modelBase = valuationContext?.modelValuationRange?.base ?? null;
-      const entryPrice = price_levels?.entry ?? null;
-      const clearUndervaluation =
-        hasModel &&
-        modelConf !== "low" &&
-        completeness >= 60 &&
-        (modelBase == null || entryPrice == null || modelBase > entryPrice * 1.15);
-      if (!clearUndervaluation) {
-        entry_quality = {
-          label: "fair",
-          rationale:
-            "'attraktiv' bei 'Halten' erfordert ein eigenes Modell mit klarer Unterbewertung (≥ 15% Upside) und ausreichender Datenbasis.",
-        };
-        guardrails.push(
-          "Entry Quality von 'attraktiv' auf 'fair' korrigiert — 'Halten'-Empfehlung ohne belegbare Modell-Unterbewertung.",
-        );
-      }
-    }
-  }
-
+  // ─── Merge back into SynthesisResult ────────────────────────────────────────
   return {
     ...result,
-    recommendation: rec,
-    conviction,
+    recommendation: analysis.recommendation,
+    conviction: analysis.conviction,
     summary,
     bull_case,
     bear_case,
-    entry_quality,
-    valuation_divergence,
-    price_levels,
-    claims,
-    data_quality_guardrails: guardrails,
+    entry_quality: analysis.entry_quality ?? result.entry_quality,
+    valuation_divergence: analysis.valuation_divergence ?? null,
+    price_levels: analysis.price_levels ?? null,
+    claims: analysis.claims,
+    data_quality_guardrails: analysis.data_quality_guardrails,
   };
 }
 
