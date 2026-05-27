@@ -91,9 +91,10 @@ const DEFERRED_VERA_TIMEOUT_MS = 25_000;
 const VERA_FAST_NEWS_LIMIT = 5;
 const VERA_FULL_NEWS_LIMIT = 10;
 const EUR_USD_FALLBACK = 1.08;
-// Sonnet bekommt 25s Budget. Schafft sie es nicht: Haiku-Fallback in ~8s.
-// Verhindert, dass Synthesis die gesamte Pipeline auf 80-95s aufbläht.
-const SYNTHESIS_SONNET_TIMEOUT_MS = 25_000;
+// Opus ist die qualitative Hauptsynthese. Keine SDK-Retries: Ein sauberer
+// Versuch, danach Haiku-Fallback statt versteckter 3x-Timeouts.
+const SYNTHESIS_OPUS_MODEL = "claude-opus-4-7";
+const SYNTHESIS_OPUS_TIMEOUT_MS = 90_000;
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
@@ -836,8 +837,11 @@ async function runSynthesisAgent(
   analystData: AnalystData | null,
   dataQuality?: DianaQualityReport | null,
 ): Promise<SynthesisResult> {
-  // Dedizierter Client mit kurzem Timeout — Sonnet bekommt 25s, danach Haiku-Fallback
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: SYNTHESIS_SONNET_TIMEOUT_MS });
+  const client = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    timeout: SYNTHESIS_OPUS_TIMEOUT_MS,
+    maxRetries: 0,
+  });
 
   const marketIntelSection = marketIntel
     ? `\nMARKT-INTELLIGENZ:
@@ -866,7 +870,7 @@ ${sentiment.sentiment_summary}${marketIntelSection}
 ${dataQuality ? `\nDATENQUALITÄT: ${dataQuality.completeness_score}/100 · Conviction-Cap ${dataQuality.analysis_confidence_cap}/10 · Fehlend: ${dataQuality.missing_fields.join(", ") || "keine"}\n` : ""}`;
 
   const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
+    model: SYNTHESIS_OPUS_MODEL,
     max_tokens: 2200,
     system: `Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Research-Einschätzung auf Deutsch.
 
@@ -1636,7 +1640,7 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
 // --- Cache & Persistence ---
 
 // ─── Synthese-Fallback (Haiku) ────────────────────────────────────────────────
-// Wird verwendet wenn Sonnet das 25s-Budget überschreitet.
+// Wird verwendet wenn Opus das Zeitbudget überschreitet.
 // Kürzerer Prompt, Haiku-Modell → typisch ~6-10s.
 
 async function runSynthesisFastAgent(
@@ -1685,7 +1689,7 @@ async function runSynthesisFastAgent(
     entry_quality: { label: "fair", rationale: "Keine ausreichenden Timing-Daten verfügbar." },
     valuation_confidence: "low",
     valuation_range: null,
-    data_quality_guardrails: ["Schnell-Analyse (Haiku-Fallback): Sonnet überschritt 25s-Budget."],
+    data_quality_guardrails: ["Schnell-Analyse (Haiku-Fallback): Opus überschritt das Zeitbudget."],
     claims: [],
   };
 
@@ -1706,7 +1710,7 @@ async function runSynthesisFastAgent(
       valuation_confidence: "low",
       data_quality_guardrails: [
         ...(parsed.data_quality_guardrails ?? []),
-        "Schnell-Analyse (Haiku-Fallback): Sonnet überschritt 25s-Budget.",
+        "Schnell-Analyse (Haiku-Fallback): Opus überschritt das Zeitbudget.",
       ],
     };
   } catch {
@@ -1769,7 +1773,7 @@ async function runAnalysisPipeline(
   protocol.push({ agent: "Nina", status: "ok", detail: `Sentiment: ${sentiment.sentiment} · ${sentiment.key_themes.length} Themen · ${withExcerpts}/${googleNews.length} Artikel mit Jina-Excerpt` });
   protocol.push({ agent: "Marco", status: noMarcoData ? "skipped" : "ok", detail: noMarcoData ? "Keine Daten verfügbar (nur für US-Aktien)" : `Insider: ${marketIntel.insider_signal} · Institutionen: ${marketIntel.institutional_trend} · Trends: ${marketIntel.trends_momentum}` });
 
-  // Synthese: Sonnet (25s Budget) → bei Timeout Haiku-Fallback (~8s)
+  // Synthese: Opus als qualitative Hauptsynthese → bei Timeout Haiku-Fallback (~8s)
   if (onSynthesisStart) await onSynthesisStart().catch(() => {});
   let rawSynthesisBase: SynthesisResult;
   let usedFallback = false;
@@ -1781,8 +1785,7 @@ async function runAnalysisPipeline(
       () => runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality),
     );
   } catch {
-    // Sonnet hat 25s-Budget überschritten oder ist fehlgeschlagen → Haiku-Fallback
-    console.log(`[PIPELINE][${symbol}] Sonnet-Timeout → Haiku-Fallback`);
+    console.log(`[PIPELINE][${symbol}] Opus-Timeout → Haiku-Fallback`);
     rawSynthesisBase = await runStep(
       "fast_synthesis",
       "Haiku-Fallback erstellen",
@@ -1800,7 +1803,7 @@ async function runAnalysisPipeline(
   const rawConviction = clampConviction(rawSynthesis.conviction);
   const cappedConviction = Math.min(rawConviction, confidenceCap);
   const capNote = rawConviction > confidenceCap ? ` · Conviction ${rawConviction}→${cappedConviction} (Diana-Cap)` : "";
-  const fallbackNote = usedFallback ? " · Haiku-Fallback (Sonnet-Timeout)" : "";
+  const fallbackNote = usedFallback ? " · Haiku-Fallback (Opus-Timeout)" : "";
   protocol.push({ agent: "Opus", status: usedFallback ? "warning" : "ok", detail: `Synthese: ${rawSynthesis.recommendation} · Conviction ${cappedConviction}/10${capNote}${guardrails ? " · Guardrails aktiv" : ""}${fallbackNote}` });
 
   const cappedSynthesis = { ...rawSynthesis, conviction: cappedConviction };
@@ -2091,8 +2094,8 @@ export async function runAnalysisJob(
     await publishTrace({ result: tracePayload(trace) }).catch(() => {});
   };
 
-  // Sicherheits-Wrapper: bricht nach 160s ab, damit Vercel nicht bei 180s schneidet
-  const JOB_SAFETY_MS = 160_000;
+  // Sicherheits-Wrapper: bricht vor Vercels 300s-Limit ab, damit wir sauber speichern.
+  const JOB_SAFETY_MS = 280_000;
   let _safetyTimer: ReturnType<typeof setTimeout> | null = null;
   const _safetyPromise = new Promise<never>((_, reject) => {
     _safetyTimer = setTimeout(() => reject(new Error(`Pipeline-Timeout nach ${JOB_SAFETY_MS / 1000}s`)), JOB_SAFETY_MS);
