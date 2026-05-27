@@ -49,6 +49,7 @@ import {
   D9_StaleDataFreshnessWarning,
   D11_MissingDataNotNegativeThesis,
   D12_WeakDataLanguage,
+  G17_LowConfidenceBearishModelBullishRecommendation,
   ALL_LIGHTWEIGHT_RULES,
 } from "../guardrails/index";
 import type {
@@ -3241,5 +3242,300 @@ describe("Phase 4 integration — JPM-like (no own model, no consensus, dq=55)",
     expect(ids).toContain("V13");
     expect(ids).toContain("D9");
     expect(result.conviction).toBeLessThanOrEqual(7);
+  });
+});
+
+// ─── G17: Low conf + bearish model + defensive entry → Halten ────────────────
+
+/**
+ * Helper: builds a context that satisfies all G17 trigger conditions.
+ * ownModelBase = 75 with currentPrice = 100 → upside = −25% exactly.
+ * Use ownModelBase: 74 for upside < −25%.
+ */
+function makeG17Context(overrides: Parameters<typeof makeContext>[0] = {}) {
+  return makeContext({
+    hasOwnModel: true,
+    hasAnalystConsensus: false,
+    dataQualityScore: 50,
+    currentPrice: 100,
+    ownModelBase: 70, // upside = (70−100)/100 * 100 = −30% → ≤ −25%
+    ...overrides,
+  });
+}
+
+/**
+ * Builds an analysis that satisfies all G17 trigger conditions:
+ * - recommendation = "Leicht kaufen"
+ * - valuation_confidence = "low"
+ * - entry_quality.label = "Rücksetzer abwarten"
+ * - valuation_divergence = null (not "available")
+ */
+function makeG17Analysis(overrides: Partial<GuardrailAnalysis> = {}): GuardrailAnalysis {
+  return makeAnalysis({
+    recommendation: "Leicht kaufen",
+    valuation_confidence: "low",
+    entry_quality: { label: "Rücksetzer abwarten", rationale: "Modell konservativ." },
+    valuation_divergence: null,
+    conviction: 7,
+    ...overrides,
+  });
+}
+
+describe("G17_LowConfidenceBearishModelBullishRecommendation", () => {
+  // ─── Happy path ───────────────────────────────────────────────────────────
+
+  test("all conditions met: 'Leicht kaufen' downgraded to 'Halten'", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis();
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).toContain("G17");
+    expect(result.recommendation).toBe("Halten");
+    expect(result.data_quality_guardrails.some(w => w.includes("Halten"))).toBe(true);
+    expect(result.data_quality_guardrails.some(w => w.includes("konvergente Warnsignale"))).toBe(true);
+  });
+
+  test("'Kaufen' also downgraded to 'Halten'", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis({ recommendation: "Kaufen" });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).toContain("G17");
+    expect(result.recommendation).toBe("Halten");
+  });
+
+  test("conviction capped to ≤6", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis({ conviction: 8 });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).toContain("G17");
+    expect(result.conviction).toBeLessThanOrEqual(6);
+  });
+
+  test("warning message includes upside%, dq score, entry label, and old recommendation", () => {
+    const ctx = makeG17Context({ ownModelBase: 70, currentPrice: 100, dataQualityScore: 45 });
+    const analysis = makeG17Analysis({ recommendation: "Leicht kaufen" });
+    const { analysis: result } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    const warning = result.data_quality_guardrails.find(w => w.includes("konvergente"));
+    expect(warning).toBeDefined();
+    expect(warning).toMatch(/Leicht kaufen/);
+    expect(warning).toMatch(/45\/100/);
+    expect(warning).toMatch(/Rücksetzer abwarten/);
+    expect(warning).toMatch(/-30%|-30 %/); // upside.toFixed(0) = "-30"
+  });
+
+  test("all four defensive entry labels trigger the rule", () => {
+    const defensiveLabels = [
+      "Rücksetzer abwarten",
+      "nicht hinterherrennen",
+      "nur spekulativ",
+      "überhitzt",
+    ] as const;
+    const ctx = makeG17Context();
+    for (const label of defensiveLabels) {
+      const analysis = makeG17Analysis({
+        entry_quality: { label, rationale: "Test." },
+      });
+      const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+      expect(fired.map(r => r.id)).toContain("G17");
+    }
+  });
+
+  // ─── Negative: individual conditions missing ─────────────────────────────
+
+  test("valuation_confidence = 'medium' → does NOT fire", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis({ valuation_confidence: "medium" });
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("valuation_confidence = 'high' → does NOT fire", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis({ valuation_confidence: "high" });
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("dq = 60 (not < 60) → does NOT fire", () => {
+    const ctx = makeG17Context({ dataQualityScore: 60 });
+    const analysis = makeG17Analysis();
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("divergence.status = 'available' → does NOT fire (divergence support present)", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis({
+      valuation_divergence: makeAvailableDivergence({ consensusUpsidePct: 20, ownModelUpsidePct: -30 }),
+    });
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("hasAnalystConsensus = true → does NOT fire (consensus support present)", () => {
+    const ctx = makeG17Context({ hasAnalystConsensus: true });
+    const analysis = makeG17Analysis();
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("own model upside = −20% (> −25%) → does NOT fire (model not sufficiently bearish)", () => {
+    // ownModelBase = 80, currentPrice = 100 → upside = −20%
+    const ctx = makeG17Context({ ownModelBase: 80, currentPrice: 100 });
+    const analysis = makeG17Analysis();
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("own model upside = −25% exactly → DOES fire (threshold is ≤ −25%)", () => {
+    // ownModelBase = 75, currentPrice = 100 → upside = exactly −25%
+    // condition guard: `ownModelUpside > -25 → return false`
+    // −25 is NOT > −25 → guard does not skip → rule fires
+    const ctx = makeG17Context({ ownModelBase: 75, currentPrice: 100 });
+    const analysis = makeG17Analysis();
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).toContain("G17");
+  });
+
+  test("own model upside = −24% → does NOT fire (just above threshold)", () => {
+    // ownModelBase = 76, currentPrice = 100 → upside = −24%
+    const ctx = makeG17Context({ ownModelBase: 76, currentPrice: 100 });
+    const analysis = makeG17Analysis();
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("entry quality = 'attraktiv' → does NOT fire (not defensive)", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis({
+      entry_quality: { label: "attraktiv", rationale: "Guter Einstieg." },
+    });
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("entry quality = 'fair' → does NOT fire (neutral, not defensive)", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis({
+      entry_quality: { label: "fair", rationale: "Fairer Preis." },
+    });
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("recommendation = 'Halten' already → does NOT fire (only bullish recs)", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis({ recommendation: "Halten" });
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("recommendation = 'Verkaufen' → does NOT fire (not a bullish rec)", () => {
+    const ctx = makeG17Context();
+    const analysis = makeG17Analysis({ recommendation: "Verkaufen" });
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("hasOwnModel = false (no upside computable) → does NOT fire", () => {
+    const ctx = makeG17Context({ hasOwnModel: false, ownModelBase: undefined });
+    const analysis = makeG17Analysis();
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("ownModelBase null (upside not computable) → does NOT fire", () => {
+    const ctx = makeG17Context({ ownModelBase: null });
+    const analysis = makeG17Analysis();
+    const { fired } = runGuardrailEngine(analysis, ctx, [G17_LowConfidenceBearishModelBullishRecommendation]);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  // ─── Integration with full pipeline ──────────────────────────────────────
+
+  test("integration: G7 downgrades 'Kaufen'→'Leicht kaufen', G17 then catches it", () => {
+    // dq=55: G7 fires on "Kaufen" (dq<60 + low conf) → "Leicht kaufen"
+    // G17 fires on "Leicht kaufen" → "Halten"
+    const ctx = makeG17Context({ dataQualityScore: 55, ownModelBase: 70 });
+    const analysis = makeAnalysis({
+      recommendation: "Kaufen",
+      valuation_confidence: "low",
+      entry_quality: { label: "Rücksetzer abwarten", rationale: "Test." },
+      valuation_divergence: null,
+      conviction: 8,
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    const ids = fired.map(r => r.id);
+    expect(ids).toContain("G7");   // Kaufen → Leicht kaufen
+    expect(ids).toContain("G17");  // Leicht kaufen → Halten
+    expect(result.recommendation).toBe("Halten");
+  });
+
+  test("integration (Broadcom-like): own model bearish, no consensus, low conf, dq<60 → G17 fires", () => {
+    const ctx = makeContext({
+      symbol: "AVGO",
+      hasOwnModel: true,
+      hasAnalystConsensus: false,
+      dataQualityScore: 55,
+      currentPrice: 185,
+      ownModelBase: 120, // upside = (120-185)/185 ≈ −35%
+    });
+    const analysis = makeAnalysis({
+      recommendation: "Leicht kaufen",
+      valuation_confidence: "low",
+      entry_quality: { label: "Rücksetzer abwarten", rationale: "Modell konservativ." },
+      valuation_divergence: { status: "missing_consensus", explanationSeed: "Kein Konsens.", warnings: [] },
+      conviction: 6,
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    const ids = fired.map(r => r.id);
+    expect(ids).toContain("G17");
+    expect(result.recommendation).toBe("Halten");
+    // Warning: explains four converging signals
+    const warning = result.data_quality_guardrails.find(w => w.includes("konvergente"));
+    expect(warning).toBeDefined();
+    expect(warning).toMatch(/Rücksetzer abwarten/);
+  });
+
+  test("integration: G17 does NOT fire when analyst consensus is present", () => {
+    const ctx = makeContext({
+      hasOwnModel: true,
+      hasAnalystConsensus: true, // exception: consensus support present
+      dataQualityScore: 55,
+      currentPrice: 100,
+      ownModelBase: 70,
+    });
+    const analysis = makeG17Analysis();
+    const { fired } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("integration: G17 does NOT fire when valuation_confidence is initially 'medium' and no Phase 3 rule lowers it", () => {
+    // In the AVGO-like scenario without consensus:
+    // If conf stays "medium" (no V7/V10/V13 fire), G17 condition fails
+    const ctx = makeG17Context({ dataQualityScore: 55, ownModelBase: 70 });
+    const analysis = makeG17Analysis({ valuation_confidence: "medium" });
+    const { fired } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    expect(fired.map(r => r.id)).not.toContain("G17");
+  });
+
+  test("integration: V13 sets conf='low' for both-missing → G17 doesn't fire (no own model for upside)", () => {
+    // Both sources missing: V13 fires + sets conf to low
+    // G17 needs hasOwnModel=true for upside calc → with no own model, doesn't fire
+    const ctx = makeContext({
+      hasOwnModel: false,
+      hasAnalystConsensus: false,
+      dataQualityScore: 50,
+      currentPrice: 100,
+    });
+    const analysis = makeAnalysis({
+      recommendation: "Leicht kaufen",
+      valuation_confidence: "low",
+      entry_quality: { label: "Rücksetzer abwarten", rationale: "Test." },
+      valuation_divergence: null,
+    });
+    const { fired } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    const ids = fired.map(r => r.id);
+    expect(ids).toContain("V13");  // both missing → forces low
+    expect(ids).not.toContain("G17"); // no own model → upside null → G17 silent
   });
 });

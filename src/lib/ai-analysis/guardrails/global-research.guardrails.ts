@@ -1,9 +1,10 @@
 /**
- * Global Research Guardrails — Phase 2
+ * Global Research Guardrails — Phase 2 + Phase 3.5
  *
  * Generic quality checks for stock analyses, independent of sector.
  * All rules are synchronous, deterministic, and make no LLM/VERA calls.
  *
+ * Phase 2 (runs after G1–G6, before Phase 3 V-rules):
  * G7  — No strong recommendation without support
  * G8  — No pseudo-precision with wide scenario range
  * G9  — Low confidence model limits valuation claims
@@ -15,8 +16,13 @@
  * G15 — Technical timing cannot override fundamental uncertainty
  * G16 — Large consensus/model divergence requires explanation
  *
+ * Phase 3.5 (runs after Phase 3 V-rules, before Phase 4 D-rules):
+ * G17 — Low conf + bearish model + defensive entry + no support → cap to 'Halten'
+ *
  * Run AFTER Phase 1 rules (G1–G6). G12 and G13 rely on seeing the
  * recommendations already patched by G5a, G6, and G7.
+ * G17 is placed AFTER Phase 3 so it sees valuation_confidence set by
+ * V7/V10/V13 before evaluating recommendation consistency.
  */
 
 import type {
@@ -617,6 +623,117 @@ export const G16_ExtremeDivergenceRequiresExplanation: GuardrailRule = {
       issueType: "extreme_divergence",
       message,
       patch,
+    };
+  },
+};
+
+// ─── G17: Low conf + bearish model + defensive entry → cap to Halten ─────────
+
+/**
+ * When ALL of the following converge simultaneously:
+ *   - valuation_confidence = "low"           (weak analytical basis)
+ *   - dataQualityScore < 60                  (thin data)
+ *   - divergence.status ≠ "available"        (no valuation-divergence support)
+ *   - no structured analyst consensus        (!hasAnalystConsensus)
+ *   - own model upside ≤ −25%               (model is meaningfully bearish)
+ *   - entry quality is defensively labelled  (timing signal is also cautious)
+ *
+ * …then a bullish recommendation ("Kaufen" or "Leicht kaufen") is internally
+ * inconsistent. Four separate signals all point away from entry; the
+ * recommendation must be capped to "Halten".
+ *
+ * This is NOT a sector-specific rule. It fires for any company where these
+ * multi-dimensional consistency constraints are violated.
+ *
+ * Placement: runs between Phase 3 (V-rules) and Phase 4 (D-rules) in index.ts,
+ * so it sees valuation_confidence after V7/V10/V13 may have set it to "low".
+ *
+ * Exception handling (baked into conditions):
+ *   - Strong positive model (upside > −25%) → ownModelUpside > -25 → doesn't fire
+ *   - Structural consensus/divergence support → hasAnalystConsensus=true or
+ *     divergence.status="available" → doesn't fire
+ */
+
+/** Entry labels that represent a defensive / cautious timing signal. */
+const DEFENSIVE_ENTRY_LABELS: EntryQualityLabel[] = [
+  "Rücksetzer abwarten",
+  "nicht hinterherrennen",
+  "nur spekulativ",
+  "überhitzt",
+];
+
+/**
+ * Computes own-model upside as % relative to current price.
+ * Returns null when own model or price data are unavailable.
+ */
+function computeOwnModelUpsidePct(context: GuardrailContext): number | null {
+  if (!context.hasOwnModel) return null;
+  if (context.ownModelBase == null || !context.currentPrice) return null;
+  return ((context.ownModelBase - context.currentPrice) / context.currentPrice) * 100;
+}
+
+export const G17_LowConfidenceBearishModelBullishRecommendation: GuardrailRule = {
+  id: "G17",
+  scope: "global",
+  severity: "warning",
+  description:
+    "Low conf + dq<60 + bearish own model (≤−25%) + no consensus/divergence + defensive entry → cap rec to 'Halten'.",
+
+  condition(context: GuardrailContext, analysis: GuardrailAnalysis): boolean {
+    // Only fires for bullish recommendations (conservative merge will enforce "Halten" cap)
+    if (
+      analysis.recommendation !== "Kaufen" &&
+      analysis.recommendation !== "Leicht kaufen"
+    ) {
+      return false;
+    }
+
+    // Requires low valuation confidence (set by AI or by V7/V10/V13 in Phase 3)
+    if (analysis.valuation_confidence !== "low") return false;
+
+    // Requires weak data quality
+    if ((context.dataQualityScore ?? 100) >= 60) return false;
+
+    // No available divergence support — divergence.status="available" would provide backing
+    if (analysis.valuation_divergence?.status === "available") return false;
+
+    // No structured analyst consensus as an independent positive signal
+    if (context.hasAnalystConsensus) return false;
+
+    // Own model must exist AND be meaningfully bearish
+    const ownModelUpside = computeOwnModelUpsidePct(context);
+    if (ownModelUpside === null || ownModelUpside > -25) return false;
+
+    // Entry quality must be defensively labelled (timing signal also cautious)
+    const label = analysis.entry_quality?.label;
+    return DEFENSIVE_ENTRY_LABELS.includes(label as EntryQualityLabel);
+  },
+
+  apply(context: GuardrailContext, analysis: GuardrailAnalysis): GuardrailResult {
+    const dq = context.dataQualityScore ?? 0;
+    const upside = computeOwnModelUpsidePct(context) ?? 0;
+    const label = analysis.entry_quality?.label ?? "defensiv";
+    const oldRec = analysis.recommendation;
+
+    const message =
+      `Empfehlung von '${oldRec}' auf 'Halten' angepasst — vier konvergente Warnsignale: ` +
+      `niedrige Bewertungskonfidenz ('low'), schwache Datenbasis (${dq}/100), ` +
+      `konservatives Eigenmodell (${upside.toFixed(0)}% Upside-Potenzial) ` +
+      `und defensiver Einstiegshinweis ('${label}'). ` +
+      `'${oldRec}' ist ohne strukturierten Analystenkonsens oder positive Divergenzunterstützung nicht haltbar. ` +
+      `Neue Einstiege nur gestaffelt oder nach Rücksetzern.`;
+
+    return {
+      id: "G17",
+      scope: "global",
+      severity: "warning",
+      issueType: "bearish_model_bullish_recommendation",
+      message,
+      patch: {
+        recommendation: "Halten",
+        convictionMax: 6,
+        warnings: [message],
+      },
     };
   },
 };

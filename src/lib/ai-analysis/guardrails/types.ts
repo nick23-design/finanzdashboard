@@ -102,7 +102,9 @@ export type GuardrailIssueType =
   | "large_cap_provider_limitation"
   | "stale_data"
   | "missing_data_negative_thesis"
-  | "weak_data_valuation_language";
+  | "weak_data_valuation_language"
+  // Phase 3.5 — cross-phase consistency
+  | "bearish_model_bullish_recommendation";
 
 /**
  * Mutable analysis slice that the guardrail engine operates on.

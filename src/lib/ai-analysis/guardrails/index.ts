@@ -58,6 +58,7 @@ import {
   G14_NewsSentimentCannotOverrideWeakValuationAlone,
   G15_TechnicalTimingCannotOverrideFundamentalUncertainty,
   G16_ExtremeDivergenceRequiresExplanation,
+  G17_LowConfidenceBearishModelBullishRecommendation,
 } from "./global-research.guardrails";
 import {
   V1_ExtremeDivergenceRequiresInterpretation,
@@ -119,15 +120,20 @@ import type { GuardrailRule } from "./types";
  *   30. V14 — Data quality gaps = provider limitation (Phase 3 fine-tuning)
  *   31. V12 — German divergence template (runs last)
  *
- * Phase 4 — data quality guardrails (after Phase 3):
- *   32. D3  — Single valuation source missing + high confidence → cap to "medium"
- *   33. D4  — No analyst consensus → mark consensus-language claims as unsupported
- *   34. D6  — EDGAR quarterly data missing → cap growth/margin/FCF claims to ≤5
- *   35. D7  — Insider + institutional data both absent → unassessable signal warning
- *   36. D8  — Large-cap (>50B) + dq<70 → data gaps as provider limitation
- *   37. D9  — Stale data fields detected → freshness warning + conviction ≤7
- *   38. D11 — Missing data as negative business thesis → unsupported claim
- *   39. D12 — dq<60 + hard valuation certainty language → cautious note
+ * Phase 3.5 — cross-phase recommendation consistency (after V-rules):
+ *   32. G17 — Low conf + dq<60 + bearish model (≤−25%) + no consensus/divergence
+ *             + defensive entry → cap recommendation to 'Halten'
+ *             MUST run after Phase 3 so it sees valuation_confidence set by V7/V10/V13
+ *
+ * Phase 4 — data quality guardrails (after Phase 3 + G17):
+ *   33. D3  — Single valuation source missing + high confidence → cap to "medium"
+ *   34. D4  — No analyst consensus → mark consensus-language claims as unsupported
+ *   35. D6  — EDGAR quarterly data missing → cap growth/margin/FCF claims to ≤5
+ *   36. D7  — Insider + institutional data both absent → unassessable signal warning
+ *   37. D8  — Large-cap (>50B) + dq<70 → data gaps as provider limitation
+ *   38. D9  — Stale data fields detected → freshness warning + conviction ≤7
+ *   39. D11 — Missing data as negative business thesis → unsupported claim
+ *   40. D12 — dq<60 + hard valuation certainty language → cautious note
  *
  * + Sector rules (future)
  *
@@ -137,7 +143,8 @@ import type { GuardrailRule } from "./types";
  *   - G12 after G5a, G7 (reads final recommendation + conviction)
  *   - G13 after G6  (reads G6's patched entry_quality)
  *   - V6, V10 before other V rules (safety nets that may null divergence)
- *   - V12 last (German template, needs final divergence state)
+ *   - V12 last among V rules (German template, needs final divergence state)
+ *   - G17 after Phase 3 V-rules (needs final valuation_confidence from V7/V10/V13)
  */
 export const ALL_LIGHTWEIGHT_RULES: GuardrailRule[] = [
   // Phase 1
@@ -161,6 +168,8 @@ export const ALL_LIGHTWEIGHT_RULES: GuardrailRule[] = [
   G16_ExtremeDivergenceRequiresExplanation,
   // Phase 3 — valuation & divergence guardrails
   ...VALUATION_DIVERGENCE_RULES,
+  // Phase 3.5 — cross-phase recommendation consistency (after V7/V10/V13 set valuation_confidence)
+  G17_LowConfidenceBearishModelBullishRecommendation,
   // Phase 4 — data quality guardrails
   ...DATA_QUALITY_PHASE4_RULES,
   // Sector rules (future)
@@ -186,6 +195,8 @@ export {
   G14_NewsSentimentCannotOverrideWeakValuationAlone,
   G15_TechnicalTimingCannotOverrideFundamentalUncertainty,
   G16_ExtremeDivergenceRequiresExplanation,
+  // Phase 3.5
+  G17_LowConfidenceBearishModelBullishRecommendation,
   // Phase 3
   V1_ExtremeDivergenceRequiresInterpretation,
   V2_ConservativeModelDisclaimer,
