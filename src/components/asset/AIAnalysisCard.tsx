@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { AIAnalysisResult, DianaQualityReport, PriceLevels, ProtocolEntry } from "@/app/api/ai-analysis/[symbol]/route";
+import type { AIAnalysisResult, DianaQualityReport, PriceLevels, ProtocolEntry, AnalysisTraceEntry } from "@/app/api/ai-analysis/[symbol]/route";
 import { AgentAvatar, AgentAvatarGroup } from "@/components/ui/AgentAvatar";
 
 interface Props {
@@ -64,6 +64,20 @@ function currencySymbol(currency: string) {
 function formatMoney(value: number | null | undefined, currency: string) {
   if (value == null) return "—";
   return `${currencySymbol(currency)}${value.toFixed(2)}`;
+}
+
+const TRACE_STATUS_STYLES: Record<AnalysisTraceEntry["status"], { label: string; color: string }> = {
+  running: { label: "läuft", color: "#f59e0b" },
+  ok: { label: "ok", color: "#22c55e" },
+  warning: { label: "Hinweis", color: "#f97316" },
+  error: { label: "Fehler", color: "#ef4444" },
+  timeout: { label: "Timeout", color: "#ef4444" },
+};
+
+function formatTraceDuration(ms: number | null) {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
 }
 
 function PriceLevelSection({ levels }: { levels: PriceLevels }) {
@@ -347,6 +361,62 @@ function AnalysisProtocol({ entries }: { entries: ProtocolEntry[] }) {
   );
 }
 
+function AnalysisTrace({ trace }: { trace?: AnalysisTraceEntry[] }) {
+  const [open, setOpen] = useState(false);
+  if (!trace?.length) return null;
+
+  const hasProblem = trace.some(entry => ["warning", "error", "timeout"].includes(entry.status));
+
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--card-border)" }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-left"
+        style={{ background: "rgba(100,116,139,0.06)" }}>
+        <span className="text-xs font-semibold" style={{ color: "var(--muted)" }}>
+          Technisches Protokoll
+          {hasProblem && (
+            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{ background: "#f59e0b22", color: "#f59e0b" }}>
+              prüfen
+            </span>
+          )}
+        </span>
+        <span className="text-xs" style={{ color: "var(--muted)" }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <ul className="px-3 py-2 space-y-1.5">
+          {trace.map((entry, i) => {
+            const style = TRACE_STATUS_STYLES[entry.status] ?? TRACE_STATUS_STYLES.warning;
+            return (
+              <li key={`${entry.step}-${i}`} className="flex items-start gap-2 text-xs">
+                <span
+                  className="mt-1 h-2 w-2 rounded-full shrink-0"
+                  style={{ background: style.color }}
+                  aria-label={style.label}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-white truncate">{entry.label}</span>
+                    <span className="shrink-0" style={{ color: style.color }}>
+                      {entry.status === "running" ? style.label : formatTraceDuration(entry.duration_ms)}
+                    </span>
+                  </div>
+                  {(entry.detail || entry.error) && (
+                    <p className="mt-0.5 leading-relaxed" style={{ color: "var(--muted)" }}>
+                      {entry.error ?? entry.detail}
+                    </p>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function ClaimsSection({ claims }: { claims: NonNullable<AIAnalysisResult["claims"]> }) {
   const [open, setOpen] = useState(false);
   if (!claims.length) return null;
@@ -621,6 +691,8 @@ export function AIAnalysisCard({ analysis }: Props) {
       {analysis.protocol?.length > 0 && (
         <AnalysisProtocol entries={analysis.protocol} />
       )}
+
+      <AnalysisTrace trace={analysis.trace} />
 
       {analysis.claims && <ClaimsSection claims={analysis.claims} />}
 

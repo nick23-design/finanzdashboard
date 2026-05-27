@@ -25,13 +25,27 @@ export async function GET(
     return NextResponse.json({ error: "Job nicht gefunden" }, { status: 404 });
   }
 
+  const resultObject =
+    data.result && typeof data.result === "object" && !Array.isArray(data.result)
+      ? data.result as Record<string, unknown>
+      : null;
+  const trace = Array.isArray(resultObject?.trace)
+    ? resultObject.trace
+    : Array.isArray(resultObject?.analysis_trace)
+    ? resultObject.analysis_trace
+    : [];
+  const hasFinalResult =
+    typeof resultObject?.recommendation === "string" &&
+    typeof resultObject?.summary === "string";
+
   return NextResponse.json({
     id: data.id,
     symbol: data.symbol,
     status: data.status,
     current_step: data.current_step,
     progress: data.progress,
-    result: data.result,
+    result: hasFinalResult ? data.result : null,
+    trace,
     error: data.error,
     created_at: data.created_at,
     updated_at: data.updated_at,

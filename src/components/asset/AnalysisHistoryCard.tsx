@@ -150,11 +150,87 @@ interface ProtocolEntry {
   detail: string;
 }
 
+interface AnalysisTraceEntry {
+  step: string;
+  label: string;
+  status: "running" | "ok" | "warning" | "error" | "timeout";
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  detail?: string;
+  error?: string;
+}
+
 const PROTOCOL_STATUS: Record<ProtocolEntry["status"], { icon: string; color: string }> = {
   ok:      { icon: "✓", color: "#22c55e" },
   warning: { icon: "⚠", color: "#f59e0b" },
   skipped: { icon: "⊘", color: "#6b7280" },
 };
+
+const TRACE_STATUS: Record<AnalysisTraceEntry["status"], { label: string; color: string }> = {
+  running: { label: "läuft", color: "#f59e0b" },
+  ok: { label: "ok", color: "#22c55e" },
+  warning: { label: "Hinweis", color: "#f97316" },
+  error: { label: "Fehler", color: "#ef4444" },
+  timeout: { label: "Timeout", color: "#ef4444" },
+};
+
+function formatTraceDuration(ms: number | null) {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+}
+
+function TraceHistorySection({ trace }: { trace: AnalysisTraceEntry[] }) {
+  const [open, setOpen] = useState(false);
+  if (!trace.length) return null;
+  const hasProblem = trace.some(e => e.status === "warning" || e.status === "error" || e.status === "timeout");
+
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--card-border)" }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-left"
+        style={{ background: "rgba(100,116,139,0.06)" }}>
+        <span className="font-semibold" style={{ color: "var(--muted)" }}>
+          Technisches Protokoll
+          {hasProblem && (
+            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{ background: "#f59e0b22", color: "#f59e0b" }}>
+              prüfen
+            </span>
+          )}
+        </span>
+        <span style={{ color: "var(--muted)" }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <ul className="px-3 py-2 space-y-1.5">
+          {trace.map((entry, i) => {
+            const s = TRACE_STATUS[entry.status] ?? TRACE_STATUS.warning;
+            return (
+              <li key={`${entry.step}-${i}`} className="flex items-start gap-2">
+                <span className="mt-1 h-2 w-2 rounded-full shrink-0" style={{ background: s.color }} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-white truncate">{entry.label}</span>
+                    <span className="shrink-0" style={{ color: s.color }}>
+                      {entry.status === "running" ? s.label : formatTraceDuration(entry.duration_ms)}
+                    </span>
+                  </div>
+                  {(entry.detail || entry.error) && (
+                    <p className="mt-0.5 leading-relaxed" style={{ color: "var(--muted)" }}>
+                      {entry.error ?? entry.detail}
+                    </p>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
   const [data, setData] = useState<AIAnalysis | null>(null);
@@ -188,6 +264,7 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
   const priceLevels = extra?.price_levels as { entry: number | null; target: number | null; stop_loss: number | null; entry_rationale?: string; target_rationale?: string } | null;
   const marketIntel = extra?.market_intel as { insider_signal: string; institutional_trend: string; trends_momentum: string; key_observations: string[] } | null;
   const protocol = (extra?.protocol as ProtocolEntry[] | undefined) ?? [];
+  const trace = (extra?.analysis_trace as AnalysisTraceEntry[] | undefined) ?? [];
 
   const fmt = (n: number | null) => n != null ? `$${n.toFixed(2)}` : "—";
   const sentColor = SENTIMENT_COLOR[data.news_sentiment] ?? "var(--muted)";
@@ -339,6 +416,8 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
           )}
         </div>
       )}
+
+      <TraceHistorySection trace={trace} />
     </div>
   );
 }

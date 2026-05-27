@@ -80,7 +80,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { rateLimit } from "@/lib/rate-limit";
 import { PEER_MAP } from "@/lib/peer-map";
 import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
-import type { AssetSnapshot, Database } from "@/types/database";
+import type { AssetSnapshot, Database, Json } from "@/types/database";
 
 export const maxDuration = 10;
 
@@ -306,6 +306,17 @@ export interface ProtocolEntry {
   detail: string;
 }
 
+export interface AnalysisTraceEntry {
+  step: string;
+  label: string;
+  status: "running" | "ok" | "warning" | "error" | "timeout";
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  detail?: string;
+  error?: string;
+}
+
 export interface DianaQualityReport {
   completeness_score: number;
   stale_fields: string[];
@@ -338,6 +349,7 @@ export interface AIAnalysisResult extends SynthesisResult {
   analyzed_at: string;
   from_cache: boolean;
   protocol: ProtocolEntry[];
+  trace?: AnalysisTraceEntry[];
 }
 
 interface OrchestratorResult {
@@ -395,6 +407,14 @@ function validateRecommendation(r: string): AllowedRecommendation {
 
 function validateBeforeSave(r: AIAnalysisResult): boolean {
   return !!(r.symbol?.trim() && r.summary?.trim() && r.recommendation?.trim());
+}
+
+function cloneTrace(trace: AnalysisTraceEntry[]): AnalysisTraceEntry[] {
+  return trace.map(entry => ({ ...entry }));
+}
+
+function tracePayload(trace: AnalysisTraceEntry[]): Json {
+  return { trace: cloneTrace(trace) } as unknown as Json;
 }
 
 function roundMoney(value: number | null): number | null {
@@ -1696,6 +1716,13 @@ async function runSynthesisFastAgent(
 
 // ─── Optimierte Pipeline (ersetzt runOrchestrator) ───────────────────────────
 
+type TraceStepRunner = <T>(
+  step: string,
+  label: string,
+  progress: number,
+  fn: () => Promise<T>,
+) => Promise<T>;
+
 async function runAnalysisPipeline(
   symbol: string,
   snapshot: AssetSnapshot,
@@ -1712,16 +1739,28 @@ async function runAnalysisPipeline(
   fxContext: FxContext,
   onSynthesisStart?: () => Promise<void>,
   _onVeraStart?: () => Promise<void>,
+  traceStep?: TraceStepRunner,
 ): Promise<OrchestratorResult> {
   const protocol: ProtocolEntry[] = [];
-  const guardrails = await fetchGuardrails(symbol, serviceClient).catch(() => "");
+  const runStep: TraceStepRunner = traceStep ?? ((_step, _label, _progress, fn) => fn());
+  const guardrails = await runStep(
+    "load_guardrails",
+    "Historische Guardrails laden",
+    42,
+    () => fetchGuardrails(symbol, serviceClient).catch(() => ""),
+  );
 
   // Felix + Nina + Marco parallel (alle Haiku — schnell)
-  const [fundamental, sentiment, marketIntel] = await Promise.all([
-    runFundamentalAgent(snapshot, edgarFacts, peerContext),
-    runSentimentAgent(googleNews),
-    runMarketIntelAgent(insiderTrades, trends, institutional),
-  ]);
+  const [fundamental, sentiment, marketIntel] = await runStep(
+    "run_agents",
+    "Felix, Nina & Marco analysieren",
+    45,
+    () => Promise.all([
+      runFundamentalAgent(snapshot, edgarFacts, peerContext),
+      runSentimentAgent(googleNews),
+      runMarketIntelAgent(insiderTrades, trends, institutional),
+    ]),
+  );
 
   const withExcerpts = googleNews.filter(n => n.description).length;
   const noMarcoData = marketIntel.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar";
@@ -1735,14 +1774,29 @@ async function runAnalysisPipeline(
   let rawSynthesisBase: SynthesisResult;
   let usedFallback = false;
   try {
-    rawSynthesisBase = await runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality);
+    rawSynthesisBase = await runStep(
+      "run_synthesis",
+      "Opus Synthese erstellen",
+      65,
+      () => runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality),
+    );
   } catch {
     // Sonnet hat 25s-Budget überschritten oder ist fehlgeschlagen → Haiku-Fallback
     console.log(`[PIPELINE][${symbol}] Sonnet-Timeout → Haiku-Fallback`);
-    rawSynthesisBase = await runSynthesisFastAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality);
+    rawSynthesisBase = await runStep(
+      "fast_synthesis",
+      "Haiku-Fallback erstellen",
+      72,
+      () => runSynthesisFastAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, dataQuality),
+    );
     usedFallback = true;
   }
-  const rawSynthesis = completeResearchFields(rawSynthesisBase, snapshot, marketIntel, analystData, dataQuality, fxContext);
+  const rawSynthesis = await runStep(
+    "research_guardrails",
+    "Research-Guardrails anwenden",
+    78,
+    async () => completeResearchFields(rawSynthesisBase, snapshot, marketIntel, analystData, dataQuality, fxContext),
+  );
   const rawConviction = clampConviction(rawSynthesis.conviction);
   const cappedConviction = Math.min(rawConviction, confidenceCap);
   const capNote = rawConviction > confidenceCap ? ` · Conviction ${rawConviction}→${cappedConviction} (Diana-Cap)` : "";
@@ -1795,6 +1849,7 @@ function buildAnalysisExtraData(result: AIAnalysisResult): import("@/types/datab
     ...(result.data_quality_guardrails ? { data_quality_guardrails: result.data_quality_guardrails } : {}),
     ...(result.claims ? { claims: result.claims } : {}),
     ...(result.data_quality ? { data_quality: result.data_quality } : {}),
+    ...(result.trace ? { analysis_trace: result.trace } : {}),
     protocol: result.protocol,
   }) as unknown as import("@/types/database").Json;
 }
@@ -1810,6 +1865,9 @@ async function runDeferredVeraCheck({
   snapshot,
   confidenceCap,
   serviceClient,
+  startTrace,
+  finishTrace,
+  getTrace,
 }: {
   analysisId: string | null;
   jobId: string;
@@ -1821,6 +1879,9 @@ async function runDeferredVeraCheck({
   snapshot: AssetSnapshot;
   confidenceCap: number;
   serviceClient: ReturnType<typeof createServiceClient>;
+  startTrace?: (step: string, label: string, progress: number) => Promise<AnalysisTraceEntry>;
+  finishTrace?: (entry: AnalysisTraceEntry, status: AnalysisTraceEntry["status"], detail?: string, error?: string) => Promise<void>;
+  getTrace?: () => AnalysisTraceEntry[];
 }): Promise<void> {
   const ts = () => new Date().toISOString();
 
@@ -1846,6 +1907,9 @@ async function runDeferredVeraCheck({
     }).eq("id", jobId).eq("user_id", userId);
   };
 
+  const veraTrace = startTrace
+    ? await startTrace("vera_fact_check", "Vera Faktencheck", 98).catch(() => null)
+    : null;
   const timeoutResult = Symbol("vera-timeout");
   const factCheckPromise = runFactCheckAgent(
     symbol, result, analystData, googleNews, snapshot, true,
@@ -1859,8 +1923,12 @@ async function runDeferredVeraCheck({
   ]);
 
   if (!factCheck || factCheck === timeoutResult) {
+    if (veraTrace && finishTrace) {
+      await finishTrace(veraTrace, "timeout", "Vera überschritt das nachgelagerte Zeitbudget").catch(() => {});
+    }
     const skippedResult: AIAnalysisResult = {
       ...result,
+      trace: getTrace ? getTrace() : result.trace,
       protocol: replaceVeraProtocolEntry(result.protocol, {
         agent: "Vera",
         status: "skipped",
@@ -1869,6 +1937,16 @@ async function runDeferredVeraCheck({
     };
     await completeWith(skippedResult);
     return;
+  }
+
+  if (veraTrace && finishTrace) {
+    await finishTrace(
+      veraTrace,
+      factCheck.findings.length ? "warning" : "ok",
+      factCheck.findings.length
+        ? `${factCheck.findings.length} Korrektur(en) oder Findings`
+        : "Keine belegten Fehler gefunden",
+    ).catch(() => {});
   }
 
   const verifiedResult: AIAnalysisResult = {
@@ -1887,6 +1965,7 @@ async function runDeferredVeraCheck({
     valuation_range: factCheck.result.valuation_range ?? result.valuation_range,
     data_quality_guardrails: factCheck.result.data_quality_guardrails ?? result.data_quality_guardrails,
     claims: factCheck.result.claims ?? result.claims,
+    trace: getTrace ? getTrace() : result.trace,
     protocol: replaceVeraProtocolEntry(result.protocol, factCheck.entry),
   };
 
@@ -1909,14 +1988,107 @@ export async function runAnalysisJob(
   const _start = Date.now();
   const tlog = (label: string) =>
     console.log(`[JOB:${jobId.slice(0, 8)}][${symbol}] ${label}: ${Date.now() - _start}ms`);
+  const trace: AnalysisTraceEntry[] = [];
+
+  const publishTrace = async (
+    fields: Database["public"]["Tables"]["analysis_jobs"]["Update"] = {},
+  ) => {
+    await serviceClient.from("analysis_jobs").update({
+      result: tracePayload(trace),
+      updated_at: ts(),
+      ...fields,
+    }).eq("id", jobId).eq("user_id", userId);
+  };
 
   const updateStep = async (step: string, progress: number) => {
-    await serviceClient.from("analysis_jobs").update({
+    await publishTrace({
       status: "running",
       current_step: step,
       progress,
-      updated_at: ts(),
-    }).eq("id", jobId).eq("user_id", userId);
+    });
+  };
+
+  const getTrace = () => cloneTrace(trace);
+
+  const startTrace = async (
+    step: string,
+    label: string,
+    progress: number,
+  ): Promise<AnalysisTraceEntry> => {
+    const entry: AnalysisTraceEntry = {
+      step,
+      label,
+      status: "running",
+      started_at: ts(),
+      finished_at: null,
+      duration_ms: null,
+    };
+    trace.push(entry);
+    console.log(JSON.stringify({
+      event: "analysis_trace_start",
+      job_id: jobId,
+      symbol,
+      step,
+      label,
+      elapsed_ms: Date.now() - _start,
+    }));
+    await publishTrace({
+      status: step === "vera_fact_check" ? "reviewing" : "running",
+      current_step: step,
+      progress,
+    });
+    return entry;
+  };
+
+  const finishTrace = async (
+    entry: AnalysisTraceEntry,
+    status: AnalysisTraceEntry["status"],
+    detail?: string,
+    error?: string,
+  ) => {
+    const finishedAt = ts();
+    entry.status = status;
+    entry.finished_at = finishedAt;
+    entry.duration_ms = Math.max(0, new Date(finishedAt).getTime() - new Date(entry.started_at).getTime());
+    if (detail) entry.detail = detail;
+    if (error) entry.error = error;
+    console.log(JSON.stringify({
+      event: "analysis_trace_finish",
+      job_id: jobId,
+      symbol,
+      step: entry.step,
+      status,
+      duration_ms: entry.duration_ms,
+      detail,
+      error,
+      elapsed_ms: Date.now() - _start,
+    }));
+    await publishTrace();
+  };
+
+  const traceStep: TraceStepRunner = async (step, label, progress, fn) => {
+    const entry = await startTrace(step, label, progress);
+    try {
+      const result = await fn();
+      await finishTrace(entry, "ok");
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await finishTrace(entry, "error", undefined, message).catch(() => {});
+      throw err;
+    }
+  };
+
+  const markRunningTraceAsTimeout = async (detail: string) => {
+    const now = ts();
+    for (const entry of trace) {
+      if (entry.status !== "running") continue;
+      entry.status = "timeout";
+      entry.finished_at = now;
+      entry.duration_ms = Math.max(0, new Date(now).getTime() - new Date(entry.started_at).getTime());
+      entry.detail = detail;
+    }
+    await publishTrace({ result: tracePayload(trace) }).catch(() => {});
   };
 
   // Sicherheits-Wrapper: bricht nach 160s ab, damit Vercel nicht bei 180s schneidet
@@ -1930,11 +2102,8 @@ export async function runAnalysisJob(
 
   try {
     tlog("start");
-    await updateStep("fetch_data", 10);
-    tlog("after updateStep fetch_data");
-
     const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData, fxContext] =
-      await Promise.all([
+      await traceStep("fetch_data", "Markt-, News- und Zusatzdaten laden", 10, () => Promise.all([
         fetchAssetData(symbol),
         fetchGoogleNews(symbol).catch(() => [] as GoogleNewsItem[]),
         fetchEdgarFacts(symbol).catch(() => null),
@@ -1943,7 +2112,7 @@ export async function runAnalysisJob(
         fetchInstitutional(symbol).catch(() => null),
         fetchAnalystData(symbol).catch(() => null as AnalystData | null),
         fetchFxContext().catch(() => ({ eurUsd: EUR_USD_FALLBACK, source: "fallback" as const, asOf: new Date().toISOString() })),
-      ]);
+      ]));
     tlog("after Promise.all data fetch");
 
     const snapshot: AssetSnapshot = {
@@ -1964,24 +2133,29 @@ export async function runAnalysisJob(
       fetched_at: assetData.fetched_at,
     };
 
-    await updateStep("enrich_news", 20);
-    tlog("after updateStep enrich_news");
-
     const googleNewsLimited = googleNews.slice(0, ENRICH_MAX_ARTICLES);
-    const googleNewsEnriched = await Promise.race([
+    const googleNewsEnriched = await traceStep("enrich_news", "News-Excerpts per Jina anreichern", 20, () => Promise.race([
       enrichWithDescriptions(googleNewsLimited),
       new Promise<typeof googleNewsLimited>(resolve =>
         setTimeout(() => resolve(googleNewsLimited), ENRICH_TIMEOUT_MS),
       ),
-    ]).catch(() => googleNewsLimited);
+    ]).catch(() => googleNewsLimited));
     tlog("after enrichWithDescriptions");
 
-    const peerContext = await fetchPeerContext(symbol, serviceClient).catch(() => "");
+    const peerContext = await traceStep(
+      "peer_context",
+      "Peer-Kontext laden",
+      26,
+      () => fetchPeerContext(symbol, serviceClient).catch(() => ""),
+    );
     tlog("after fetchPeerContext");
 
-    await updateStep("diana_check", 30);
-
-    const diana = runDianaCheck(snapshot, googleNewsEnriched, edgarFacts, analystData, peerContext);
+    const diana = await traceStep(
+      "diana_check",
+      "Diana Datenqualität prüfen",
+      30,
+      async () => runDianaCheck(snapshot, googleNewsEnriched, edgarFacts, analystData, peerContext),
+    );
     const dianaEntry: ProtocolEntry = {
       agent: "Diana",
       status: diana.completeness_score >= 70 ? "ok" : "warning",
@@ -1994,7 +2168,6 @@ export async function runAnalysisJob(
       ].join(" · "),
     };
 
-    await updateStep("run_agents", 45);
     tlog("starting runAnalysisPipeline");
 
     const orchestrated = await runAnalysisPipeline(
@@ -2002,10 +2175,9 @@ export async function runAnalysisJob(
       diana.analysis_confidence_cap, diana, peerContext, serviceClient, fxContext,
       () => { tlog("synthesis start"); return updateStep("run_synthesis", 65); },
       () => updateStep("run_vera", 80),
+      traceStep,
     );
     tlog("after runAnalysisPipeline");
-
-    await updateStep("save_result", 95);
 
     const result: AIAnalysisResult = {
       symbol,
@@ -2030,17 +2202,23 @@ export async function runAnalysisJob(
       protocol: [dianaEntry, ...orchestrated.protocol],
       analyzed_at: new Date().toISOString(),
       from_cache: false,
+      trace: getTrace(),
     };
 
-    const analysisId = await saveAnalysis(result, serviceClient);
-    void saveOutcome(result, serviceClient);
+    let analysisId: string | null = null;
+    await traceStep("save_result", "Analyse speichern", 95, async () => {
+      result.trace = getTrace();
+      analysisId = await saveAnalysis(result, serviceClient);
+      void saveOutcome(result, serviceClient);
+    });
+    result.trace = getTrace();
     tlog("after saveAnalysis");
 
     await serviceClient.from("analysis_jobs").update({
       status: "reviewing",
       current_step: "vera_pending",
       progress: 100,
-      result: result as unknown as import("@/types/database").Json,
+      result: { ...result, trace: getTrace() } as unknown as import("@/types/database").Json,
       updated_at: ts(),
     }).eq("id", jobId).eq("user_id", userId);
     tlog("starting runDeferredVeraCheck");
@@ -2056,9 +2234,14 @@ export async function runAnalysisJob(
       snapshot,
       confidenceCap: diana.analysis_confidence_cap,
       serviceClient,
+      startTrace,
+      finishTrace,
+      getTrace,
     }).catch(async () => {
+      await markRunningTraceAsTimeout("Vera konnte nicht abgeschlossen werden").catch(() => {});
       const skippedResult: AIAnalysisResult = {
         ...result,
+        trace: getTrace(),
         protocol: replaceVeraProtocolEntry(result.protocol, {
           agent: "Vera",
           status: "skipped",
@@ -2082,9 +2265,11 @@ export async function runAnalysisJob(
 
   } catch (err) {
     tlog(`error: ${err instanceof Error ? err.message : String(err)}`);
+    await markRunningTraceAsTimeout("Analyse wurde mit Fehler beendet").catch(() => {});
     await serviceClient.from("analysis_jobs").update({
       status: "failed",
       error: err instanceof Error ? err.message : "Unbekannter Fehler",
+      result: tracePayload(trace),
       updated_at: ts(),
     }).eq("id", jobId).eq("user_id", userId);
   }
@@ -2096,9 +2281,11 @@ export async function runAnalysisJob(
   } catch (err) {
     tlog(`safety-catch: ${err instanceof Error ? err.message : String(err)}`);
     try {
+      await markRunningTraceAsTimeout("Pipeline-Sicherheitslimit erreicht").catch(() => {});
       await serviceClient.from("analysis_jobs").update({
         status: "failed",
         error: err instanceof Error ? err.message : "Analyse-Timeout",
+        result: tracePayload(trace),
         updated_at: ts(),
       }).eq("id", jobId).eq("user_id", userId);
     } catch { /* ignore */ }
@@ -2157,6 +2344,7 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
       claims: extra.claims as AnalysisClaim[] ?? [],
       data_quality: extra.data_quality as DianaQualityReport | null ?? null,
       protocol: extra.protocol as ProtocolEntry[] ?? [],
+      trace: extra.analysis_trace as AnalysisTraceEntry[] ?? [],
       analyzed_at: data.analyzed_at,
       from_cache: true,
     };

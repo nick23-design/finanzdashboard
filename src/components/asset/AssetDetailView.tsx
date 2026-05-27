@@ -16,7 +16,7 @@ import { AnalysisHistoryCard } from "./AnalysisHistoryCard";
 import { AssetNewsCard } from "./AssetNewsCard";
 import type { EarningsCalendar } from "@/lib/finance-client";
 import type { SignalType } from "@/types/finance";
-import type { AIAnalysisResult } from "@/app/api/ai-analysis/[symbol]/route";
+import type { AIAnalysisResult, AnalysisTraceEntry } from "@/app/api/ai-analysis/[symbol]/route";
 import { formatCountdown, formatRelativeTime } from "@/lib/time";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import { Bell, TrendingUp, RotateCw } from "lucide-react";
@@ -286,14 +286,83 @@ const JOB_STEP_LABELS: Record<string, string> = {
   queued:       "Analyse wird gestartet…",
   fetch_data:   "Marktdaten werden geladen…",
   enrich_news:  "Nachrichten werden angereichert…",
+  peer_context: "Vergleichsunternehmen werden geladen…",
   diana_check:  "Datenqualität wird bewertet…",
+  load_guardrails: "Historische Guardrails werden geladen…",
   run_agents:   "Felix, Nina & Marco analysieren…",
   run_synthesis:"Synthese wird erstellt…",
+  fast_synthesis:"Schnell-Synthese wird erstellt…",
+  research_guardrails:"Research-Guardrails werden angewendet…",
+  vera_fact_check:"Vera prüft Fakten im Nachgang…",
   run_vera:     "Vera prüft Fakten im Nachgang…",
   vera_pending: "Analyse bereit, Vera prüft nach…",
   save_result:  "Ergebnis wird gespeichert…",
   completed:    "Analyse abgeschlossen",
 };
+
+const TRACE_STATUS_STYLES: Record<AnalysisTraceEntry["status"], { label: string; color: string }> = {
+  running: { label: "läuft", color: "#f59e0b" },
+  ok: { label: "ok", color: "#22c55e" },
+  warning: { label: "Hinweis", color: "#f97316" },
+  error: { label: "Fehler", color: "#ef4444" },
+  timeout: { label: "Timeout", color: "#ef4444" },
+};
+
+function formatTraceDuration(ms: number | null) {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+}
+
+function AnalysisTracePanel({
+  trace,
+  defaultOpen = false,
+}: {
+  trace: AnalysisTraceEntry[];
+  defaultOpen?: boolean;
+}) {
+  if (!trace.length) return null;
+
+  return (
+    <details
+      className="rounded-xl overflow-hidden border"
+      style={{ borderColor: "var(--card-border)", background: "rgba(100,116,139,0.05)" }}
+      {...(defaultOpen ? { open: true } : {})}>
+      <summary
+        className="px-3 py-2 text-xs font-semibold cursor-pointer"
+        style={{ color: "var(--muted)" }}>
+        Technisches Protokoll
+      </summary>
+      <ul className="px-3 pb-3 space-y-1.5">
+        {trace.map((entry, index) => {
+          const style = TRACE_STATUS_STYLES[entry.status] ?? TRACE_STATUS_STYLES.warning;
+          return (
+            <li key={`${entry.step}-${index}`} className="flex items-start gap-2 text-xs">
+              <span
+                className="mt-1 h-2 w-2 rounded-full shrink-0"
+                style={{ background: style.color }}
+                aria-label={style.label}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-white truncate">{entry.label}</span>
+                  <span className="shrink-0" style={{ color: style.color }}>
+                    {entry.status === "running" ? style.label : formatTraceDuration(entry.duration_ms)}
+                  </span>
+                </div>
+                {(entry.detail || entry.error) && (
+                  <p className="mt-0.5 leading-relaxed" style={{ color: "var(--muted)" }}>
+                    {entry.error ?? entry.detail}
+                  </p>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
+  );
+}
 
 interface AssetDetailViewProps {
   symbol: string;
@@ -315,6 +384,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [aiProgress, setAiProgress] = useState(0);
   const [aiPolling, setAiPolling] = useState(false);
   const [aiCurrentStep, setAiCurrentStep] = useState<string>("");
+  const [aiTrace, setAiTrace] = useState<AnalysisTraceEntry[]>([]);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [earnings, setEarnings] = useState<EarningsCalendar | null>(null);
@@ -437,11 +507,21 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
 
         const progress = typeof job.progress === "number" ? job.progress : 0;
         const step = typeof job.current_step === "string" ? job.current_step : "";
+        const trace = Array.isArray(job.trace)
+          ? job.trace as unknown as AnalysisTraceEntry[]
+          : [];
         setAiProgress(progress);
         setAiCurrentStep(step);
+        setAiTrace(trace);
 
         if (job.result) {
-          setAiAnalysis(job.result as unknown as AIAnalysisResult);
+          const result = job.result as Record<string, unknown>;
+          if (typeof result.recommendation === "string") {
+            setAiAnalysis({
+              ...result,
+              trace: Array.isArray(result.trace) ? result.trace : trace,
+            } as unknown as AIAnalysisResult);
+          }
           setAiLoading(false);
           if (pollingTimeoutRef.current) {
             clearTimeout(pollingTimeoutRef.current);
@@ -483,6 +563,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     setAiError(null);
     setAiProgress(0);
     setAiCurrentStep("queued");
+    setAiTrace([]);
 
     try {
       const res = await fetch(`/api/ai-analysis/${symbol}`, { method: "POST" });
@@ -497,6 +578,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
 
       // Cache-Treffer: direkt anzeigen
       if ("recommendation" in data) {
+        setAiTrace(Array.isArray(data.trace) ? data.trace as unknown as AnalysisTraceEntry[] : []);
         setAiAnalysis(data as unknown as AIAnalysisResult);
         setAiLoading(false);
         return;
@@ -719,10 +801,10 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
                 {(["diana","felix","nina","marco","opus"] as const).map(agent => {
                   const active =
                     (agent === "diana" && ["diana_check","run_agents","queued","fetch_data","enrich_news"].includes(aiCurrentStep)) ||
-                    (agent === "felix" && ["run_agents","run_synthesis"].includes(aiCurrentStep)) ||
-                    (agent === "nina"  && ["run_agents","run_synthesis"].includes(aiCurrentStep)) ||
-                    (agent === "marco" && ["run_agents","run_synthesis"].includes(aiCurrentStep)) ||
-                    (agent === "opus"  && aiCurrentStep === "run_synthesis");
+                    (agent === "felix" && ["run_agents","run_synthesis","fast_synthesis"].includes(aiCurrentStep)) ||
+                    (agent === "nina"  && ["run_agents","run_synthesis","fast_synthesis"].includes(aiCurrentStep)) ||
+                    (agent === "marco" && ["run_agents","run_synthesis","fast_synthesis"].includes(aiCurrentStep)) ||
+                    (agent === "opus"  && ["run_synthesis","fast_synthesis","research_guardrails"].includes(aiCurrentStep));
                   return <AgentAvatar key={agent} agent={agent} size="sm" showName working={active} />;
                 })}
               </div>
@@ -736,6 +818,11 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
               <p className="text-xs text-center" style={{ color: "var(--muted)" }}>
                 {JOB_STEP_LABELS[aiCurrentStep] ?? "Analyse läuft…"}
               </p>
+            </div>
+          )}
+          {aiTrace.length > 0 && (
+            <div className="mt-3">
+              <AnalysisTracePanel trace={aiTrace} defaultOpen={Boolean(aiError) || aiLoading} />
             </div>
           )}
         </div>
