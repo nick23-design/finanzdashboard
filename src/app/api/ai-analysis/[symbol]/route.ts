@@ -1379,7 +1379,7 @@ Bewertungskommentar: ${fundamental.valuation_comment}
 NACHRICHTENSTIMMUNG: ${sentiment.sentiment.toUpperCase()}
 Themen: ${sentiment.key_themes.join(", ")}
 ${sentiment.sentiment_summary}${marketIntelSection}
-${dataQuality ? `\nDATENQUALITÄT: ${dataQuality.completeness_score}/100 · Conviction-Cap ${dataQuality.analysis_confidence_cap}/10 · Fehlend: ${dataQuality.missing_fields.join(", ") || "keine"}\n` : ""}`;
+${dataQuality ? `\nDATENQUALITÄT: ${dataQuality.completeness_score}/100 · Conviction-Cap ${dataQuality.analysis_confidence_cap}/10 · Providerdaten fehlen: ${dataQuality.missing_fields.join(", ") || "keine"}\n` : ""}`;
 
   const response = await client.messages.create({
     model: SYNTHESIS_OPUS_MODEL,
@@ -1928,7 +1928,7 @@ function runDianaCheck(
   if (!edgarFacts || edgarFacts.revenue.length === 0) {
     score -= 15; missing.push("EDGAR-Quartalsdaten");
   } else if (edgarFacts.revenue.length < 4) {
-    score -= 5; warnings.push(`Nur ${edgarFacts.revenue.length} EDGAR-Quartale`);
+    score -= 5; warnings.push(`Provider liefert nur ${edgarFacts.revenue.length} EDGAR-Quartale`);
   }
 
   if (googleNews.length === 0) {
@@ -1936,7 +1936,7 @@ function runDianaCheck(
   } else {
     const withExcerpts = googleNews.filter(n => n.description).length;
     if (withExcerpts < 2) {
-      score -= 5; warnings.push(`Nur ${withExcerpts}/${googleNews.length} News mit Auszug`);
+      score -= 5; warnings.push(`Nur ${withExcerpts}/${googleNews.length} News mit Jina-Auszug`);
     }
   }
 
@@ -1946,7 +1946,7 @@ function runDianaCheck(
   );
   if (!hasAnalystData) { score -= 10; missing.push("Analysten-Konsens"); }
 
-  if (!peerContext) { score -= 5; warnings.push("Keine Peer-Vergleichsdaten"); }
+  if (!peerContext) { score -= 5; warnings.push("Peer-Daten nicht verfügbar (Provider/Ingestion)"); }
 
   score = Math.max(0, Math.min(100, Math.round(score)));
 
@@ -2779,7 +2779,7 @@ export async function runAnalysisJob(
       detail: [
         `Datenbasis ${diana.completeness_score}/100`,
         `Cap ${diana.analysis_confidence_cap}/10`,
-        ...(diana.missing_fields.length ? [`Fehlend: ${diana.missing_fields.slice(0, 4).join(", ")}`] : []),
+        ...(diana.missing_fields.length ? [`Providerdaten fehlen: ${diana.missing_fields.slice(0, 4).join(", ")} (kein operatives Risiko)`] : []),
         ...(diana.stale_fields.length ? [`Veraltet: ${diana.stale_fields.join(", ")}`] : []),
         ...(diana.warnings.length ? diana.warnings.slice(0, 2) : []),
       ].join(" · "),
