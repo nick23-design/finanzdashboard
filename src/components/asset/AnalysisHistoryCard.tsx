@@ -172,9 +172,18 @@ interface HistoryValuationRange {
   methods?: string[];
 }
 
+/** Supports both old format (difference_pct/interpretation) and new DivergenceResult format. */
 interface HistoryValuationDivergence {
-  difference_pct: number | null;
-  interpretation: string;
+  // Old format (analyses stored before the module refactor)
+  difference_pct?: number | null;
+  interpretation?: string;
+  // New DivergenceResult format
+  status?: string;
+  baseGapPct?: number;
+  gapLabel?: string;
+  explanationSeed?: string;
+  consensusUpsidePct?: number;
+  ownModelUpsidePct?: number;
 }
 
 const PROTOCOL_STATUS: Record<ProtocolEntry["status"], { icon: string; color: string }> = {
@@ -382,18 +391,32 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
               range={modelValuation}
             />
           )}
-          {valuationDivergence && (
-            <div className="rounded-xl p-3"
-              style={{ background: "rgba(245,158,11,0.08)", border: "1px solid #f59e0b35" }}>
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold text-white text-xs">Divergenz</p>
-                <span className="font-semibold" style={{ color: "#f59e0b" }}>
-                  {valuationDivergence.difference_pct != null ? `${valuationDivergence.difference_pct > 0 ? "+" : ""}${valuationDivergence.difference_pct.toFixed(1)}%` : "—"}
-                </span>
+          {valuationDivergence && (() => {
+            // Normalise: prefer new format fields, fall back to old format
+            const isNewFormat = valuationDivergence.status != null;
+            const showCard = !isNewFormat || valuationDivergence.status === "available";
+            const pct = isNewFormat ? valuationDivergence.baseGapPct : valuationDivergence.difference_pct;
+            const text = isNewFormat ? valuationDivergence.explanationSeed : valuationDivergence.interpretation;
+            if (!showCard) return null;
+            return (
+              <div className="rounded-xl p-3"
+                style={{ background: "rgba(245,158,11,0.08)", border: "1px solid #f59e0b35" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold text-white text-xs">Divergenz</p>
+                  <span className="font-semibold" style={{ color: "#f59e0b" }}>
+                    {pct != null ? `${pct > 0 ? "+" : ""}${pct.toFixed(1)}%` : "—"}
+                  </span>
+                </div>
+                {isNewFormat && valuationDivergence.consensusUpsidePct != null && valuationDivergence.ownModelUpsidePct != null && (
+                  <div className="flex gap-3 mt-1 text-[10px]">
+                    <span>Konsens: <span className="font-semibold text-white">{valuationDivergence.consensusUpsidePct >= 0 ? "+" : ""}{valuationDivergence.consensusUpsidePct.toFixed(1)}%</span></span>
+                    <span>Modell: <span className="font-semibold text-white">{valuationDivergence.ownModelUpsidePct >= 0 ? "+" : ""}{valuationDivergence.ownModelUpsidePct.toFixed(1)}%</span></span>
+                  </div>
+                )}
+                <p className="text-[11px] mt-1 leading-relaxed">{text}</p>
               </div>
-              <p className="text-[11px] mt-1 leading-relaxed">{valuationDivergence.interpretation}</p>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 

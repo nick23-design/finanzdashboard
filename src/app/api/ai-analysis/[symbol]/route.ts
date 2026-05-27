@@ -92,6 +92,10 @@ import {
   validateAndRepairSynthesis,
   SynthesisValidationSchema,
 } from "@/lib/ai-analysis/synthesis-validator";
+import {
+  buildValuationDivergence,
+  type DivergenceResult,
+} from "@/lib/ai-analysis/divergence";
 import type { AssetSnapshot, Database, Json } from "@/types/database";
 
 export const maxDuration = 10;
@@ -301,12 +305,8 @@ export interface AnalysisClaim {
   confidence: number;
 }
 
-export interface ValuationDivergence {
-  analyst_base: number | null;
-  model_base: number | null;
-  difference_pct: number | null;
-  interpretation: string;
-}
+/** Re-exported so components can import the type from route without touching the lib path. */
+export type { DivergenceResult };
 
 interface SynthesisResult {
   recommendation: string;
@@ -323,7 +323,7 @@ interface SynthesisResult {
   valuation_range?: ValuationRange | null;
   analyst_consensus_range?: ValuationRange | null;
   model_valuation_range?: ValuationRange | null;
-  valuation_divergence?: ValuationDivergence | null;
+  valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
@@ -393,7 +393,7 @@ export interface AIAnalysisResult extends SynthesisResult {
   valuation_range?: ValuationRange | null;
   analyst_consensus_range?: ValuationRange | null;
   model_valuation_range?: ValuationRange | null;
-  valuation_divergence?: ValuationDivergence | null;
+  valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
@@ -420,7 +420,7 @@ interface OrchestratorResult {
   valuation_range?: ValuationRange | null;
   analyst_consensus_range?: ValuationRange | null;
   model_valuation_range?: ValuationRange | null;
-  valuation_divergence?: ValuationDivergence | null;
+  valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
@@ -435,7 +435,8 @@ interface ValuationContext {
   businessDrivers: BusinessDriverAnalysis;
   analystConsensusRange: ValuationRange | null;
   modelValuationRange: ValuationRange | null;
-  valuationDivergence: ValuationDivergence | null;
+  /** Always defined — status field encodes all edge cases. */
+  valuationDivergence: DivergenceResult;
 }
 
 // --- Helpers ---
@@ -919,39 +920,12 @@ function enrichRawValuationRange(raw: RawValuationRange | null, fx: FxContext): 
   };
 }
 
-function usdBase(range: ValuationRange | null): number | null {
-  return range?.usd?.base ?? (range?.currency === "USD" ? range.base : null);
-}
-
-function buildValuationDivergence(
-  analystRange: ValuationRange | null,
-  modelRange: ValuationRange | null,
-): ValuationDivergence | null {
-  const analystBase = usdBase(analystRange);
-  const modelBase = usdBase(modelRange);
-  if (analystBase == null || modelBase == null || modelBase <= 0) {
-    return {
-      analyst_base: analystBase,
-      model_base: modelBase,
-      difference_pct: null,
-      interpretation: "Divergenz nicht berechenbar, weil Konsens oder eigenes Modell fehlen.",
-    };
-  }
-
-  const diffPct = Math.round(((analystBase - modelBase) / modelBase) * 1000) / 10;
-  const abs = Math.abs(diffPct);
-  const interpretation = abs < 10
-    ? "Analystenkonsens und eigenes Modell liegen relativ nah beieinander."
-    : diffPct > 0
-    ? `Analystenkonsens liegt rund ${abs.toFixed(1)}% über dem eigenen Modell; der Markt ist optimistischer als unsere konservative Spanne.`
-    : `Eigenes Modell liegt rund ${abs.toFixed(1)}% über dem Analystenkonsens; die Modellannahmen sind optimistischer als die Marktmeinung.`;
-
-  return {
-    analyst_base: roundMoney(analystBase),
-    model_base: roundMoney(modelBase),
-    difference_pct: diffPct,
-    interpretation,
-  };
+/** Extract USD-denominated base/bear/bull from an enriched ValuationRange. */
+function getUsdMoneyRange(range: ValuationRange | null): { bear: number | null; base: number | null; bull: number | null } | null {
+  if (!range) return null;
+  if (range.usd) return range.usd;
+  if (range.currency === "USD") return { bear: range.bear, base: range.base, bull: range.bull };
+  return null;
 }
 
 function buildValuationContext(
@@ -970,7 +944,42 @@ function buildValuationContext(
     buildOwnModelValuation(snapshot, businessDrivers, dataQuality),
     fx,
   );
-  const valuationDivergence = buildValuationDivergence(analystConsensusRange, modelValuationRange);
+
+  // Current price converted to USD for upside calculations
+  const priceUsd: number | null =
+    snapshot.price != null
+      ? snapshot.currency === "EUR"
+        ? snapshot.price * fx.eurUsd
+        : snapshot.currency === "USD" || !snapshot.currency
+        ? snapshot.price
+        : null // unknown currency — skip conversion
+      : null;
+
+  const consensusUsd = getUsdMoneyRange(analystConsensusRange);
+  const modelUsd = getUsdMoneyRange(modelValuationRange);
+
+  const valuationDivergence = buildValuationDivergence({
+    currentPrice: priceUsd ?? undefined,
+    analystConsensus: analystConsensusRange
+      ? {
+          bear: consensusUsd?.bear ?? null,
+          base: consensusUsd?.base ?? null,
+          bull: consensusUsd?.bull ?? null,
+          source: "structured_consensus",
+          available: true,
+        }
+      : { available: false },
+    ownModel: modelValuationRange
+      ? {
+          bear: modelUsd?.bear ?? null,
+          base: modelUsd?.base ?? null,
+          bull: modelUsd?.bull ?? null,
+          confidence: modelValuationRange.confidence ?? undefined,
+          method: modelValuationRange.methods ?? [],
+          available: true,
+        }
+      : { available: false },
+  });
 
   return { businessDrivers, analystConsensusRange, modelValuationRange, valuationDivergence };
 }
@@ -1246,8 +1255,9 @@ ${formatRangeForPrompt(valuationContext.analystConsensusRange)}
 EIGENES BEWERTUNGSMODELL (deterministisch):
 ${formatRangeForPrompt(valuationContext.modelValuationRange)}
 
-DIVERGENZ:
-${valuationContext.valuationDivergence?.interpretation ?? "Nicht berechenbar."}`;
+DIVERGENZ (deterministisch berechnet — erkläre dies auf Deutsch, rechne NICHT nach):
+Status: ${valuationContext.valuationDivergence.status}
+${valuationContext.valuationDivergence.explanationSeed}${valuationContext.valuationDivergence.warnings.length ? `\nWARNUNGEN: ${valuationContext.valuationDivergence.warnings.join(" | ")}` : ""}`;
   const synthesisTool: Anthropic.Messages.Tool = {
     name: "complete_synthesis",
     description: "Gibt die finale, strukturierte Research-Synthese zurück. Muss vollständig und inhaltlich substantiell sein.",
@@ -1508,7 +1518,7 @@ Entry Quality: ${synthesis.entry_quality?.label ?? "N/A"} — ${synthesis.entry_
 Valuation Confidence: ${synthesis.valuation_confidence ?? "N/A"}
 Analystenkonsens: ${formatRangeForPrompt(synthesis.analyst_consensus_range ?? null)}
 Eigenes Bewertungsmodell: ${formatRangeForPrompt(synthesis.model_valuation_range ?? null)}
-Valuation Divergence: ${synthesis.valuation_divergence?.interpretation ?? "N/A"}
+Valuation Divergence: ${synthesis.valuation_divergence ? `[${synthesis.valuation_divergence.status}] ${synthesis.valuation_divergence.explanationSeed}` : "N/A"}
 Valuation Range im Bericht: ${synthesis.valuation_range ? `${synthesis.valuation_range.currency} Bear ${synthesis.valuation_range.bear ?? "N/A"} / Base ${synthesis.valuation_range.base ?? "N/A"} / Bull ${synthesis.valuation_range.bull ?? "N/A"} — ${synthesis.valuation_range.rationale}` : "N/A"}
 Business Drivers: ${synthesis.business_drivers ? `${synthesis.business_drivers.business_model_type}; KPIs: ${synthesis.business_drivers.sector_specific_kpis.slice(0, 5).join(", ")}; Red Flags: ${synthesis.business_drivers.red_flags.slice(0, 3).join(" | ")}` : "N/A"}
 Claims:
@@ -2343,7 +2353,7 @@ async function runAnalysisPipeline(
   protocol.push({
     agent: "Driver",
     status: valuationContext.modelValuationRange ? "ok" : "warning",
-    detail: `${valuationContext.businessDrivers.sector_template} · eigenes Modell ${valuationContext.modelValuationRange ? valuationContext.modelValuationRange.confidence ?? "medium" : "nicht verfügbar"}${valuationContext.valuationDivergence?.difference_pct != null ? ` · Konsens-Abweichung ${valuationContext.valuationDivergence.difference_pct}%` : ""}`,
+    detail: `${valuationContext.businessDrivers.sector_template} · eigenes Modell ${valuationContext.modelValuationRange ? valuationContext.modelValuationRange.confidence ?? "medium" : "nicht verfügbar"} · Divergenz ${valuationContext.valuationDivergence.status}${valuationContext.valuationDivergence.baseGapPct != null ? ` (${valuationContext.valuationDivergence.baseGapPct > 0 ? "+" : ""}${valuationContext.valuationDivergence.baseGapPct}%)` : ""}`,
   });
 
   // Synthese: Opus als qualitative Hauptsynthese → bei Timeout Haiku-Fallback (~8s)
@@ -2901,7 +2911,7 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
       valuation_range: extra.valuation_range as ValuationRange | null ?? null,
       analyst_consensus_range: extra.analyst_consensus_range as ValuationRange | null ?? null,
       model_valuation_range: extra.model_valuation_range as ValuationRange | null ?? null,
-      valuation_divergence: extra.valuation_divergence as ValuationDivergence | null ?? null,
+      valuation_divergence: extra.valuation_divergence as DivergenceResult | null ?? null,
       business_drivers: extra.business_drivers as BusinessDriverAnalysis | null ?? null,
       data_quality_guardrails: extra.data_quality_guardrails as string[] ?? [],
       claims: extra.claims as AnalysisClaim[] ?? [],
@@ -3018,10 +3028,12 @@ function runLightweightGuardrails(
     }
   }
 
-  // Guardrail 4: Keine Divergenz wenn eigenes Modell fehlt
-  if (!hasModel && valuation_divergence != null) {
+  // Guardrail 4: Keine sichtbare Divergenz wenn eigenes Modell fehlt.
+  // Das deterministische Modul setzt status != "available" in diesem Fall;
+  // dieser Check ist ein Sicherheitsnetz für etwaige Pipeline-Anomalien.
+  if (!hasModel && valuation_divergence?.status === "available") {
     valuation_divergence = null;
-    guardrails.push("Divergenz entfernt — kein eigenes Bewertungsmodell verfügbar.");
+    guardrails.push("Divergenz-Status korrigiert — kein eigenes Bewertungsmodell verfügbar (Fallback-Check).");
   }
 
   // Guardrail 5a: Keine starken Empfehlungen bei kritisch lückenhafter Datenbasis (< 40)
