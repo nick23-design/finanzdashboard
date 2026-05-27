@@ -3022,6 +3022,9 @@ function runLightweightGuardrails(
     dataQualityScore: dataQuality?.completeness_score ?? null,
     // Phase 3: current price for V6 safety-net (missing price → null divergence)
     currentPrice: valuationContext?.currentPriceUsd ?? null,
+    // Phase 3 fine-tuning: company type + sector for V14 (provider-limitation framing)
+    companyType: valuationContext?.businessDrivers?.business_model_type,
+    sector: valuationContext?.businessDrivers?.sector_template,
     hasAnalystConsensus: valuationContext?.analystConsensusRange != null,
     hasOwnModel: valuationContext?.modelValuationRange != null,
     analystConsensusBase: valuationContext?.analystConsensusRange?.base ?? null,

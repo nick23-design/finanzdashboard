@@ -39,6 +39,8 @@ import {
   V10_ScenarioOrderingInvalid,
   V11_ExtremeUpsideDownside,
   V12_DivergenceLanguageGermanTemplate,
+  V13_BothValuationSourcesMissing,
+  V14_DataQualityProviderLimitation,
   ALL_LIGHTWEIGHT_RULES,
 } from "../guardrails/index";
 import type {
@@ -2052,6 +2054,106 @@ describe("V12_DivergenceLanguageGermanTemplate", () => {
   });
 });
 
+// ─── V13: Both valuation sources missing ─────────────────────────────────────
+
+describe("V13_BothValuationSourcesMissing", () => {
+  test("fires when neither own model nor consensus present → setValuationConfidenceLow + warning", () => {
+    const analysis = makeAnalysis({ valuation_confidence: "medium" });
+    const ctx = makeContext({ hasOwnModel: false, hasAnalystConsensus: false });
+    const { fired, analysis: result } = runGuardrailEngine(
+      analysis, ctx, [V13_BothValuationSourcesMissing],
+    );
+    expect(fired.map(r => r.id)).toContain("V13");
+    expect(result.valuation_confidence).toBe("low");
+    expect(result.data_quality_guardrails.some(w => w.includes("Bewertungskonfidenz eingeschränkt"))).toBe(true);
+  });
+
+  test("does NOT fire when only analyst consensus present (one source available)", () => {
+    const ctx = makeContext({ hasOwnModel: false, hasAnalystConsensus: true });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, [V13_BothValuationSourcesMissing]);
+    expect(fired.map(r => r.id)).not.toContain("V13");
+  });
+
+  test("does NOT fire when only own model present (one source available)", () => {
+    const ctx = makeContext({ hasOwnModel: true, hasAnalystConsensus: false });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, [V13_BothValuationSourcesMissing]);
+    expect(fired.map(r => r.id)).not.toContain("V13");
+  });
+
+  test("does NOT fire when both sources present (default context)", () => {
+    const { fired } = runGuardrailEngine(makeAnalysis(), makeContext(), [V13_BothValuationSourcesMissing]);
+    expect(fired.map(r => r.id)).not.toContain("V13");
+  });
+
+  test("missing_both → V8 and V9 do NOT additionally fire (V13 covers the both-missing case)", () => {
+    // V8 fires only when hasConsensus=true && !hasModel
+    // V9 fires only when hasModel=true && !hasConsensus
+    // When both are false, neither V8 nor V9 should fire; only V13
+    const ctx = makeContext({ hasOwnModel: false, hasAnalystConsensus: false });
+    const { fired } = runGuardrailEngine(
+      makeAnalysis(),
+      ctx,
+      [V13_BothValuationSourcesMissing, V8_ConsensusOnlyValuation, V9_OwnModelOnlyValuation],
+    );
+    const ids = fired.map(r => r.id);
+    expect(ids).toContain("V13");
+    expect(ids).not.toContain("V8"); // condition: hasConsensus=true → not met
+    expect(ids).not.toContain("V9"); // condition: hasModel=true → not met
+  });
+});
+
+// ─── V14: Data quality provider limitation ────────────────────────────────────
+
+describe("V14_DataQualityProviderLimitation", () => {
+  test("fires when companyType known + dq=50 (< 60) → informational provider-limitation warning", () => {
+    const ctx = makeContext({
+      dataQualityScore: 50,
+      companyType: "Mega-cap software / cloud infrastructure",
+    });
+    const { fired, analysis: result } = runGuardrailEngine(
+      makeAnalysis(), ctx, [V14_DataQualityProviderLimitation],
+    );
+    expect(fired.map(r => r.id)).toContain("V14");
+    expect(result.data_quality_guardrails.some(w => w.includes("Provider"))).toBe(true);
+    expect(result.data_quality_guardrails.some(w => w.includes("Provider-") || w.includes("Verfügbarkeitslimitation"))).toBe(true);
+    // informational only — no structural mutations
+    expect(result.conviction).toBe(8);
+  });
+
+  test("fires when companyType known + dq=59 (just below threshold)", () => {
+    const ctx = makeContext({
+      dataQualityScore: 59,
+      companyType: "Bank / financial institution",
+    });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, [V14_DataQualityProviderLimitation]);
+    expect(fired.map(r => r.id)).toContain("V14");
+  });
+
+  test("does NOT fire when companyType is undefined (unknown company)", () => {
+    const ctx = makeContext({ dataQualityScore: 40, companyType: undefined });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, [V14_DataQualityProviderLimitation]);
+    expect(fired.map(r => r.id)).not.toContain("V14");
+  });
+
+  test("does NOT fire when dq=60 (at threshold, not below)", () => {
+    const ctx = makeContext({
+      dataQualityScore: 60,
+      companyType: "Semiconductor / AI infrastructure supplier",
+    });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, [V14_DataQualityProviderLimitation]);
+    expect(fired.map(r => r.id)).not.toContain("V14");
+  });
+
+  test("does NOT fire when dq=80 (good data quality)", () => {
+    const ctx = makeContext({
+      dataQualityScore: 80,
+      companyType: "Mega-cap software / cloud infrastructure",
+    });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, [V14_DataQualityProviderLimitation]);
+    expect(fired.map(r => r.id)).not.toContain("V14");
+  });
+});
+
 // ─── Phase 3 integration — ALL_LIGHTWEIGHT_RULES ────────────────────────────
 
 describe("Phase 3 integration — ALL_LIGHTWEIGHT_RULES", () => {
@@ -2158,5 +2260,87 @@ describe("Phase 3 integration — ALL_LIGHTWEIGHT_RULES", () => {
     expect(f2.map(r => r.id)).not.toContain("V8");
     // V12 needs div.status=available with upside numbers → not present here
     expect(f2.map(r => r.id)).not.toContain("V12");
+  });
+
+  // ─── Phase 3 fine-tuning integration ─────────────────────────────────────
+
+  test("missing_both scenario (JPM-like): V13 fires → confidence=low, V8/V9 do not fire", () => {
+    const ctx = makeContext({
+      hasOwnModel: false,
+      hasAnalystConsensus: false,
+      dataQualityScore: 55,
+    });
+    const analysis = makeAnalysis({
+      valuation_confidence: "medium",
+      valuation_divergence: null,
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    const ids = fired.map(r => r.id);
+    // V13 covers the both-missing case
+    expect(ids).toContain("V13");
+    // Low confidence forced
+    expect(result.valuation_confidence).toBe("low");
+    // V8/V9 require one source to be present — should not fire
+    expect(ids).not.toContain("V8");
+    expect(ids).not.toContain("V9");
+    // V12 requires div.status=available — should not fire
+    expect(ids).not.toContain("V12");
+    // Warning added to data_quality_guardrails
+    expect(result.data_quality_guardrails.some(w => w.includes("Bewertungskonfidenz"))).toBe(true);
+  });
+
+  test("missing_consensus scenario (AVGO-like): V9 fires, no news reconstruction, no V13", () => {
+    // AVGO: own model available, but no analyst consensus → V9 fires (model-only note)
+    // No consensus → no divergence → V12 does NOT fire
+    // V13 does NOT fire (hasOwnModel=true)
+    const ctx = makeContext({
+      hasOwnModel: true,
+      hasAnalystConsensus: false,
+      dataQualityScore: 70,
+    });
+    const analysis = makeAnalysis({
+      valuation_divergence: { status: "missing_consensus", explanationSeed: "...", warnings: [] },
+    });
+    const { fired } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    const ids = fired.map(r => r.id);
+    expect(ids).toContain("V9");       // model-only informational note
+    expect(ids).not.toContain("V13"); // not both-missing
+    expect(ids).not.toContain("V12"); // needs div.status=available
+    expect(ids).not.toContain("V8");  // needs hasConsensus=true
+  });
+
+  test("provider-limitation framing: known company + dq<60 → V14 fires, warning frames as limitation", () => {
+    const ctx = makeContext({
+      hasOwnModel: true,
+      hasAnalystConsensus: true,
+      dataQualityScore: 45,
+      companyType: "Semiconductor / AI infrastructure supplier",
+    });
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence({
+        consensusUpsidePct: 30,
+        ownModelUpsidePct: 20,
+      }),
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    const ids = fired.map(r => r.id);
+    expect(ids).toContain("V14");
+    // Warning mentions provider limitation, not operational risk
+    const v14Warning = result.data_quality_guardrails.find(w => w.includes("Provider"));
+    expect(v14Warning).toBeDefined();
+    expect(v14Warning).toMatch(/Provider-\/Verfügbarkeitslimitation/);
+    // V14 is informational — conviction not capped by V14 alone
+    // (other rules like G5a, G16 may cap, but V14 itself doesn't)
+    expect(result.data_quality_guardrails.some(w => w.includes("Semiconductor"))).toBe(true);
+  });
+
+  test("unknown company + dq<60: V14 does NOT fire (no provider-limitation framing)", () => {
+    // When companyType is not known, we cannot infer it's a provider limitation
+    const ctx = makeContext({
+      dataQualityScore: 40,
+      companyType: undefined,
+    });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, ALL_LIGHTWEIGHT_RULES);
+    expect(fired.map(r => r.id)).not.toContain("V14");
   });
 });

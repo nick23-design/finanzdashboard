@@ -60,6 +60,8 @@ import {
   V10_ScenarioOrderingInvalid,
   V11_ExtremeUpsideDownside,
   V12_DivergenceLanguageGermanTemplate,
+  V13_BothValuationSourcesMissing,
+  V14_DataQualityProviderLimitation,
   VALUATION_DIVERGENCE_RULES,
 } from "./valuation-divergence.guardrails";
 import { SECTOR_RULES } from "./sector/index";
@@ -98,10 +100,12 @@ import type { GuardrailRule } from "./types";
  *   23. V4  — Consensus auto-upside guard (Kaufen without own-model upside)
  *   24. V5  — Own model divergence caution (model ≥25pp more bullish)
  *   25. V7  — Low confidence divergence (divergence + modelConf=low)
- *   26. V8  — Consensus-only valuation informational note
- *   27. V9  — Own-model-only valuation informational note
- *   28. V11 — Extreme upside/downside (≥75%)
- *   29. V12 — German divergence template (runs last)
+ *   26. V13 — Both valuation sources missing → low confidence + warning (Phase 3 fine-tuning)
+ *   27. V8  — Consensus-only valuation informational note
+ *   28. V9  — Own-model-only valuation informational note
+ *   29. V11 — Extreme upside/downside (≥75%)
+ *   30. V14 — Data quality gaps = provider limitation (Phase 3 fine-tuning)
+ *   31. V12 — German divergence template (runs last)
  *
  * + Sector rules (future)
  *
@@ -171,6 +175,8 @@ export {
   V10_ScenarioOrderingInvalid,
   V11_ExtremeUpsideDownside,
   V12_DivergenceLanguageGermanTemplate,
+  V13_BothValuationSourcesMissing,
+  V14_DataQualityProviderLimitation,
   VALUATION_DIVERGENCE_RULES,
   SECTOR_RULES,
 };

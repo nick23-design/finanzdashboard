@@ -91,7 +91,9 @@ export type GuardrailIssueType =
   | "own_model_only_valuation"
   | "scenario_ordering_invalid"
   | "extreme_upside_downside"
-  | "divergence_language";
+  | "divergence_language"
+  | "valuation_data_insufficient"
+  | "data_quality_provider_limitation";
 
 /**
  * Mutable analysis slice that the guardrail engine operates on.

@@ -13,14 +13,18 @@
  *   V4  — Consensus auto-upside guard (Kaufen without own model upside)
  *   V5  — Own model divergence caution (model strongly more bullish than consensus)
  *   V7  — Low confidence model + available divergence → divergence-specific warning
+ *   V13 — Both valuation sources missing → low confidence + warning
  *   V8  — Consensus-only valuation informational note
  *   V9  — Own-model-only valuation informational note
  *   V11 — Extreme upside/downside (≥75%) → conviction cap
+ *   V14 — Data quality gaps = provider limitation (not operational risk)
  *   V12 — German template explanation for available divergence (runs last)
  *
  * V6 and V10 run first because they null out valuation_divergence on structural
  * failures. All rules that require div.status="available" (V1/V2/V4/V5/V7/V11/V12)
  * are safe: they check the current (possibly already-nullified) analysis.
+ * V13 runs after V7 so it only fires when BOTH sources are genuinely absent.
+ * V14 runs after V13 (informational, before V12 German template).
  */
 
 import type {
@@ -628,11 +632,99 @@ export const V12_DivergenceLanguageGermanTemplate: GuardrailRule = {
   },
 };
 
+// ─── V13: Both valuation sources missing ─────────────────────────────────────
+
+/**
+ * When neither an own valuation model nor a structured analyst consensus is
+ * available, valuation confidence must be kept low — there is no quantitative
+ * anchor for the analysis. Adds a German-language warning and forces low
+ * valuation confidence.
+ *
+ * Runs between V7 and V8 so V8/V9 still fire their own informational notes
+ * (covering the single-source cases). V13 only fires for the both-missing case.
+ */
+export const V13_BothValuationSourcesMissing: GuardrailRule = {
+  id: "V13",
+  scope: "valuation",
+  severity: "warning",
+  description:
+    "Neither own model nor analyst consensus available → low confidence + warning.",
+
+  condition(context: GuardrailContext): boolean {
+    return !context.hasOwnModel && !context.hasAnalystConsensus;
+  },
+
+  apply(): GuardrailResult {
+    const message =
+      "Bewertungskonfidenz eingeschränkt: weder eigenes Bewertungsmodell noch strukturierter " +
+      "Analystenkonsens verfügbar. Divergenzrechnung nicht möglich — Empfehlung basiert " +
+      "ausschließlich auf qualitativen Faktoren.";
+    return {
+      id: "V13",
+      scope: "valuation",
+      severity: "warning",
+      issueType: "valuation_data_insufficient",
+      message,
+      patch: {
+        setValuationConfidenceLow: true,
+        warnings: [message],
+      },
+    };
+  },
+};
+
+// ─── V14: Data quality gaps = provider limitation (not operational risk) ──────
+
+/**
+ * When the data quality score is below 60 AND the company type is known
+ * (i.e., the company has been classified — typically established companies),
+ * frame data gaps explicitly as a provider/data-availability limitation,
+ * NOT as a signal of operational risk at the company.
+ *
+ * This prevents the analysis from implying that missing KPIs indicate problems
+ * with a large-cap like AVGO or JPM when the gap is actually a data-provider
+ * limitation (e.g. EDGAR gaps, yfinance coverage).
+ *
+ * Runs after V13 (both-missing), before V12 (German template). Informational only.
+ */
+export const V14_DataQualityProviderLimitation: GuardrailRule = {
+  id: "V14",
+  scope: "data_quality",
+  severity: "info",
+  description:
+    "Known company type + dq<60 → frame data gaps as provider limitation, not operational risk.",
+
+  condition(context: GuardrailContext): boolean {
+    // Only fire when we know the company type (classified entity)
+    if (!context.companyType) return false;
+    const dq = context.dataQualityScore ?? 100;
+    return dq < 60;
+  },
+
+  apply(context: GuardrailContext): GuardrailResult {
+    const dq = context.dataQualityScore ?? 0;
+    const message =
+      `Datenbasis lückenhaft (${dq}/100) — bei bekannten Unternehmen (${context.companyType}) ` +
+      `sind Datenlücken typischerweise eine Provider-/Verfügbarkeitslimitation (z.B. EDGAR-Lücken, ` +
+      `yfinance-Abdeckung), kein Indikator für operationelle Risiken des Unternehmens.`;
+    return {
+      id: "V14",
+      scope: "data_quality",
+      severity: "info",
+      issueType: "data_quality_provider_limitation",
+      message,
+      patch: { warnings: [message] },
+    };
+  },
+};
+
 // ─── Exported rule array (ordered for correct sequential execution) ────────────
 
 /**
  * All Phase 3 valuation & divergence rules in execution order.
  * V6 and V10 run first (safety nets that may null out divergence).
+ * V13 runs between V7 and V8 (both-sources-missing, after low-confidence check).
+ * V14 runs before V12 (informational provider-limitation framing).
  * V12 runs last (German template, needs final divergence state).
  */
 export const VALUATION_DIVERGENCE_RULES: GuardrailRule[] = [
@@ -644,8 +736,10 @@ export const VALUATION_DIVERGENCE_RULES: GuardrailRule[] = [
   V4_ConsensusAutoUpsideGuard,
   V5_OwnModelDivergenceCaution,
   V7_LowConfidenceDivergence,
+  V13_BothValuationSourcesMissing,
   V8_ConsensusOnlyValuation,
   V9_OwnModelOnlyValuation,
   V11_ExtremeUpsideDownside,
+  V14_DataQualityProviderLimitation,
   V12_DivergenceLanguageGermanTemplate,
 ];

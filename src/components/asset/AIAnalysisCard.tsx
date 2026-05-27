@@ -307,10 +307,10 @@ const GAP_LABEL_DE: Record<string, string> = {
 };
 
 const STATUS_LABEL_DE: Record<string, string> = {
-  missing_consensus: "Kein strukturierter Analystenkonsens verfügbar",
-  missing_own_model: "Kein eigenes Bewertungsmodell berechnet",
-  missing_both: "Keine Bewertungsdaten für Divergenz",
-  insufficient_data: "Bewertungsdaten für Divergenz unvollständig",
+  missing_consensus: "Divergenz nicht berechenbar: kein strukturierter Analystenkonsens verfügbar.",
+  missing_own_model: "Divergenz nicht berechenbar: kein eigenes Bewertungsmodell verfügbar.",
+  missing_both: "Divergenz nicht berechenbar: weder strukturiertes eigenes Modell noch strukturierter Analystenkonsens verfügbar.",
+  insufficient_data: "Divergenz nicht berechenbar: Bewertungsdaten unvollständig.",
 };
 
 function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }) {
@@ -427,7 +427,7 @@ function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }
       )}
 
       {/* ─── Status badge for non-available new-format states ─────────────── */}
-      {!isNewAvailable && !isLegacy && div && div.status !== "missing_both" && div.status != null && (
+      {!isNewAvailable && !isLegacy && div && div.status != null && (
         <div className="rounded-xl px-3 py-2"
           style={{ background: "rgba(100,116,139,0.08)", border: "1px solid var(--card-border)" }}>
           <p className="text-[10px]" style={{ color: "var(--muted)" }}>
