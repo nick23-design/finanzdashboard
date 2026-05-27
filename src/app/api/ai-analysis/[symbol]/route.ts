@@ -443,6 +443,8 @@ interface ValuationContext {
   modelValuationRange: ValuationRange | null;
   /** Always defined — status field encodes all edge cases. */
   valuationDivergence: DivergenceResult;
+  /** Current price in USD — needed by V6 safety-net and divergence upside display. */
+  currentPriceUsd: number | null;
 }
 
 // --- Helpers ---
@@ -987,7 +989,7 @@ function buildValuationContext(
       : { available: false },
   });
 
-  return { businessDrivers, analystConsensusRange, modelValuationRange, valuationDivergence };
+  return { businessDrivers, analystConsensusRange, modelValuationRange, valuationDivergence, currentPriceUsd: priceUsd };
 }
 
 function formatRangeForPrompt(range: ValuationRange | null): string {
@@ -3012,9 +3014,14 @@ function runLightweightGuardrails(
   const modelUsd = valuationContext
     ? getUsdMoneyRange(valuationContext.modelValuationRange)
     : null;
+  const consensusUsd = valuationContext
+    ? getUsdMoneyRange(valuationContext.analystConsensusRange)
+    : null;
   const ctx: GuardrailContext = {
     symbol: "",  // not available at this call site; no current rule needs it
     dataQualityScore: dataQuality?.completeness_score ?? null,
+    // Phase 3: current price for V6 safety-net (missing price → null divergence)
+    currentPrice: valuationContext?.currentPriceUsd ?? null,
     hasAnalystConsensus: valuationContext?.analystConsensusRange != null,
     hasOwnModel: valuationContext?.modelValuationRange != null,
     analystConsensusBase: valuationContext?.analystConsensusRange?.base ?? null,
@@ -3022,6 +3029,9 @@ function runLightweightGuardrails(
     // Phase 2: scenario range for G8 wide-spread check
     modelBear: modelUsd?.bear ?? null,
     modelBull: modelUsd?.bull ?? null,
+    // Phase 3: consensus bear/bull for V3 (undercalibration) and V10 (ordering)
+    analystConsensusBear: consensusUsd?.bear ?? null,
+    analystConsensusBull: consensusUsd?.bull ?? null,
     valuationContext,
   };
 

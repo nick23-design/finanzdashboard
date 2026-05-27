@@ -134,6 +134,11 @@ function applyPatch(
     });
   }
 
+  // setValuationConfidenceLow — forces valuation_confidence to "low" (V10 scenario-ordering reset)
+  if (patch.setValuationConfidenceLow === true) {
+    result.valuation_confidence = "low";
+  }
+
   // warnings — appended to data_quality_guardrails
   if (patch.warnings?.length) {
     result = {

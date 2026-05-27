@@ -3,7 +3,7 @@
  *
  * Exports:
  *   - runGuardrailEngine() — the pure engine (no LLM, no VERA)
- *   - ALL_LIGHTWEIGHT_RULES — Phase 1 + Phase 2 global research guardrails
+ *   - ALL_LIGHTWEIGHT_RULES — Phase 1 + Phase 2 + Phase 3 guardrails
  *   - Types needed by route.ts to build GuardrailContext / GuardrailAnalysis
  *
  * Usage in route.ts:
@@ -47,6 +47,21 @@ import {
   G15_TechnicalTimingCannotOverrideFundamentalUncertainty,
   G16_ExtremeDivergenceRequiresExplanation,
 } from "./global-research.guardrails";
+import {
+  V1_ExtremeDivergenceRequiresInterpretation,
+  V2_ConservativeModelDisclaimer,
+  V3_BullBearUndercalibration,
+  V4_ConsensusAutoUpsideGuard,
+  V5_OwnModelDivergenceCaution,
+  V6_MissingCurrentPrice,
+  V7_LowConfidenceDivergence,
+  V8_ConsensusOnlyValuation,
+  V9_OwnModelOnlyValuation,
+  V10_ScenarioOrderingInvalid,
+  V11_ExtremeUpsideDownside,
+  V12_DivergenceLanguageGermanTemplate,
+  VALUATION_DIVERGENCE_RULES,
+} from "./valuation-divergence.guardrails";
 import { SECTOR_RULES } from "./sector/index";
 import type { GuardrailRule } from "./types";
 
@@ -74,13 +89,29 @@ import type { GuardrailRule } from "./types";
  *   16. G15 — Technical timing cannot override fundamental uncertainty
  *   17. G16 — Large divergence requires explanation
  *
- * + Sector rules (Phase 3, placeholder)
+ * Phase 3 — valuation & divergence guardrails (after G1–G16):
+ *   18. V6  — Missing current price (safety net → may null divergence)
+ *   19. V10 — Scenario ordering invalid (safety net → may null divergence)
+ *   20. V1  — Extreme divergence with high conf but dq<75 (complements G16)
+ *   21. V2  — Conservative model disclaimer (model ≥25% below market)
+ *   22. V3  — Bull/bear undercalibration (model bull < consensus bear)
+ *   23. V4  — Consensus auto-upside guard (Kaufen without own-model upside)
+ *   24. V5  — Own model divergence caution (model ≥25pp more bullish)
+ *   25. V7  — Low confidence divergence (divergence + modelConf=low)
+ *   26. V8  — Consensus-only valuation informational note
+ *   27. V9  — Own-model-only valuation informational note
+ *   28. V11 — Extreme upside/downside (≥75%)
+ *   29. V12 — German divergence template (runs last)
  *
- * Ordering is critical:
+ * + Sector rules (future)
+ *
+ * Critical ordering constraints:
  *   - G6 after G5a  (reads patched recommendation)
  *   - G7 after G5a  (checks current recommendation, not original)
  *   - G12 after G5a, G7 (reads final recommendation + conviction)
  *   - G13 after G6  (reads G6's patched entry_quality)
+ *   - V6, V10 before other V rules (safety nets that may null divergence)
+ *   - V12 last (German template, needs final divergence state)
  */
 export const ALL_LIGHTWEIGHT_RULES: GuardrailRule[] = [
   // Phase 1
@@ -102,7 +133,9 @@ export const ALL_LIGHTWEIGHT_RULES: GuardrailRule[] = [
   G14_NewsSentimentCannotOverrideWeakValuationAlone,
   G15_TechnicalTimingCannotOverrideFundamentalUncertainty,
   G16_ExtremeDivergenceRequiresExplanation,
-  // Phase 3 (sector-specific, placeholder)
+  // Phase 3 — valuation & divergence guardrails
+  ...VALUATION_DIVERGENCE_RULES,
+  // Sector rules (future)
   ...SECTOR_RULES,
 ];
 
@@ -125,5 +158,19 @@ export {
   G14_NewsSentimentCannotOverrideWeakValuationAlone,
   G15_TechnicalTimingCannotOverrideFundamentalUncertainty,
   G16_ExtremeDivergenceRequiresExplanation,
+  // Phase 3
+  V1_ExtremeDivergenceRequiresInterpretation,
+  V2_ConservativeModelDisclaimer,
+  V3_BullBearUndercalibration,
+  V4_ConsensusAutoUpsideGuard,
+  V5_OwnModelDivergenceCaution,
+  V6_MissingCurrentPrice,
+  V7_LowConfidenceDivergence,
+  V8_ConsensusOnlyValuation,
+  V9_OwnModelOnlyValuation,
+  V10_ScenarioOrderingInvalid,
+  V11_ExtremeUpsideDownside,
+  V12_DivergenceLanguageGermanTemplate,
+  VALUATION_DIVERGENCE_RULES,
   SECTOR_RULES,
 };

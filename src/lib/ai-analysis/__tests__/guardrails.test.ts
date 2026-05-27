@@ -27,6 +27,18 @@ import {
   G14_NewsSentimentCannotOverrideWeakValuationAlone,
   G15_TechnicalTimingCannotOverrideFundamentalUncertainty,
   G16_ExtremeDivergenceRequiresExplanation,
+  V1_ExtremeDivergenceRequiresInterpretation,
+  V2_ConservativeModelDisclaimer,
+  V3_BullBearUndercalibration,
+  V4_ConsensusAutoUpsideGuard,
+  V5_OwnModelDivergenceCaution,
+  V6_MissingCurrentPrice,
+  V7_LowConfidenceDivergence,
+  V8_ConsensusOnlyValuation,
+  V9_OwnModelOnlyValuation,
+  V10_ScenarioOrderingInvalid,
+  V11_ExtremeUpsideDownside,
+  V12_DivergenceLanguageGermanTemplate,
   ALL_LIGHTWEIGHT_RULES,
 } from "../guardrails/index";
 import type {
@@ -61,6 +73,7 @@ function makeContext(overrides: Partial<GuardrailContext> = {}): GuardrailContex
   return {
     symbol: "TEST",
     dataQualityScore: 80,
+    currentPrice: 100,       // Phase 3: prevents V6 from firing in non-V6 tests
     hasAnalystConsensus: true,
     hasOwnModel: true,
     analystConsensusBase: 120,
@@ -1517,5 +1530,633 @@ describe("Phase 2 integration — ALL_LIGHTWEIGHT_RULES", () => {
     expect(result.recommendation).toBe("Leicht kaufen"); // G7 patch
     expect(result.conviction).toBe(6); // G7 caps to 6, G16 caps to 7 → min wins = 6
     expect(result.data_quality_guardrails.some(w => w.includes("Divergenz"))).toBe(true);
+  });
+});
+
+// ─── Helpers for Phase 3 ──────────────────────────────────────────────────────
+
+/** Full DivergenceResult with all required fields for Phase 3 tests. */
+function makeAvailableDivergence(overrides: {
+  baseGapPct?: number;
+  gapLabel?: "aligned" | "consensus_more_bullish" | "own_model_more_bullish";
+  consensusUpsidePct?: number;
+  ownModelUpsidePct?: number;
+} = {}) {
+  return {
+    status: "available" as const,
+    baseGapPct: overrides.baseGapPct ?? 10,
+    gapLabel: overrides.gapLabel ?? "consensus_more_bullish",
+    consensusUpsidePct: overrides.consensusUpsidePct ?? 20,
+    ownModelUpsidePct: overrides.ownModelUpsidePct ?? 10,
+    explanationSeed: "Consensus +20% vs model +10%",
+    warnings: [],
+  };
+}
+
+// ─── V1: Extreme divergence with high confidence but weak data ────────────────
+
+describe("V1_ExtremeDivergenceRequiresInterpretation", () => {
+  test("fires when |gap|≥40, high conf, dq=70 (< 75) → cap to 7", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "high",
+      valuation_divergence: makeAvailableDivergence({ baseGapPct: 45, gapLabel: "consensus_more_bullish" }),
+    });
+    const ctx = makeContext({ dataQualityScore: 70 });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [V1_ExtremeDivergenceRequiresInterpretation]);
+    expect(fired.map(r => r.id)).toContain("V1");
+    expect(result.conviction).toBe(7);
+  });
+
+  test("does NOT fire when |gap|≥40 but modelConf=medium (G16 handles it, V1 is the high-conf incremental case)", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "medium",
+      valuation_divergence: makeAvailableDivergence({ baseGapPct: 45 }),
+    });
+    const ctx = makeContext({ dataQualityScore: 70 });
+    const { fired } = runGuardrailEngine(analysis, ctx, [V1_ExtremeDivergenceRequiresInterpretation]);
+    expect(fired.map(r => r.id)).not.toContain("V1");
+  });
+
+  test("does NOT fire when high conf and dq=80 (≥75) — both conditions met, no cap needed", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "high",
+      valuation_divergence: makeAvailableDivergence({ baseGapPct: 45 }),
+    });
+    const ctx = makeContext({ dataQualityScore: 80 });
+    const { fired } = runGuardrailEngine(analysis, ctx, [V1_ExtremeDivergenceRequiresInterpretation]);
+    expect(fired.map(r => r.id)).not.toContain("V1");
+  });
+
+  test("does NOT fire when |gap|=38 (below 40 threshold)", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "high",
+      valuation_divergence: makeAvailableDivergence({ baseGapPct: 38 }),
+    });
+    const ctx = makeContext({ dataQualityScore: 60 });
+    const { fired } = runGuardrailEngine(analysis, ctx, [V1_ExtremeDivergenceRequiresInterpretation]);
+    expect(fired.map(r => r.id)).not.toContain("V1");
+  });
+});
+
+// ─── V2: Conservative model disclaimer ───────────────────────────────────────
+
+describe("V2_ConservativeModelDisclaimer", () => {
+  test("fires when ownModelUpsidePct=-30 (≤-25) → informational warning added", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence({ ownModelUpsidePct: -30 }),
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, makeContext(), [V2_ConservativeModelDisclaimer]);
+    expect(fired.map(r => r.id)).toContain("V2");
+    expect(result.data_quality_guardrails.some(w => w.includes("Überbewertung"))).toBe(true);
+    // informational only — no structural mutations
+    expect(result.conviction).toBe(8);
+    expect(result.recommendation).toBe("Kaufen");
+  });
+
+  test("does NOT fire when ownModelUpsidePct=-20 (> -25)", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence({ ownModelUpsidePct: -20 }),
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V2_ConservativeModelDisclaimer]);
+    expect(fired.map(r => r.id)).not.toContain("V2");
+  });
+
+  test("does NOT fire when div.status is not 'available'", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: { status: "missing_own_model", explanationSeed: "...", warnings: [] },
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V2_ConservativeModelDisclaimer]);
+    expect(fired.map(r => r.id)).not.toContain("V2");
+  });
+});
+
+// ─── V3: Bull/bear undercalibration ──────────────────────────────────────────
+
+describe("V3_BullBearUndercalibration", () => {
+  test("fires when modelBull < analystConsensusBear → warning + convictionMax=7", () => {
+    const analysis = makeAnalysis({ conviction: 9 });
+    const ctx = makeContext({ modelBull: 100, analystConsensusBear: 120 });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [V3_BullBearUndercalibration]);
+    expect(fired.map(r => r.id)).toContain("V3");
+    expect(result.conviction).toBe(7);
+    expect(result.data_quality_guardrails.some(w => w.includes("Kalibrierungslücke"))).toBe(true);
+  });
+
+  test("does NOT fire when modelBull ≥ analystConsensusBear", () => {
+    const ctx = makeContext({ modelBull: 130, analystConsensusBear: 100 });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, [V3_BullBearUndercalibration]);
+    expect(fired.map(r => r.id)).not.toContain("V3");
+  });
+
+  test("does NOT fire when either value is null (cannot compare)", () => {
+    const ctxNullBull = makeContext({ modelBull: null, analystConsensusBear: 120 });
+    const { fired: f1 } = runGuardrailEngine(makeAnalysis(), ctxNullBull, [V3_BullBearUndercalibration]);
+    expect(f1.map(r => r.id)).not.toContain("V3");
+
+    const ctxNullBear = makeContext({ modelBull: 90, analystConsensusBear: null });
+    const { fired: f2 } = runGuardrailEngine(makeAnalysis(), ctxNullBear, [V3_BullBearUndercalibration]);
+    expect(f2.map(r => r.id)).not.toContain("V3");
+  });
+});
+
+// ─── V4: Consensus auto-upside guard ─────────────────────────────────────────
+
+describe("V4_ConsensusAutoUpsideGuard", () => {
+  test("fires: consensus_more_bullish + gap≥25 + Kaufen + ownModelUpside≤0 → Leicht kaufen + cap=6", () => {
+    const analysis = makeAnalysis({
+      recommendation: "Kaufen",
+      conviction: 8,
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "consensus_more_bullish",
+        baseGapPct: 30,
+        ownModelUpsidePct: -5,
+        consensusUpsidePct: 25,
+      }),
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, makeContext(), [V4_ConsensusAutoUpsideGuard]);
+    expect(fired.map(r => r.id)).toContain("V4");
+    expect(result.recommendation).toBe("Leicht kaufen");
+    expect(result.conviction).toBe(6);
+  });
+
+  test("does NOT fire when ownModelUpsidePct=+5 (own model shows upside)", () => {
+    const analysis = makeAnalysis({
+      recommendation: "Kaufen",
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "consensus_more_bullish",
+        baseGapPct: 30,
+        ownModelUpsidePct: 5,
+      }),
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V4_ConsensusAutoUpsideGuard]);
+    expect(fired.map(r => r.id)).not.toContain("V4");
+  });
+
+  test("does NOT fire when rec=Leicht kaufen (already moderated)", () => {
+    const analysis = makeAnalysis({
+      recommendation: "Leicht kaufen",
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "consensus_more_bullish",
+        baseGapPct: 30,
+        ownModelUpsidePct: -5,
+      }),
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V4_ConsensusAutoUpsideGuard]);
+    expect(fired.map(r => r.id)).not.toContain("V4");
+  });
+
+  test("does NOT fire when gap=20 (< 25 threshold)", () => {
+    const analysis = makeAnalysis({
+      recommendation: "Kaufen",
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "consensus_more_bullish",
+        baseGapPct: 20,
+        ownModelUpsidePct: -5,
+      }),
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V4_ConsensusAutoUpsideGuard]);
+    expect(fired.map(r => r.id)).not.toContain("V4");
+  });
+});
+
+// ─── V5: Own model divergence caution ────────────────────────────────────────
+
+describe("V5_OwnModelDivergenceCaution", () => {
+  test("fires when own_model_more_bullish + |gap|=30 + medium conf → warning + cap=7", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "medium",
+      conviction: 9,
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "own_model_more_bullish",
+        baseGapPct: -30,
+        ownModelUpsidePct: 40,
+        consensusUpsidePct: 10,
+      }),
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, makeContext(), [V5_OwnModelDivergenceCaution]);
+    expect(fired.map(r => r.id)).toContain("V5");
+    expect(result.conviction).toBe(7);
+  });
+
+  test("fires when high conf but dq=60 (< 75) → still caps", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "high",
+      conviction: 9,
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "own_model_more_bullish",
+        baseGapPct: -30,
+      }),
+    });
+    const ctx = makeContext({ dataQualityScore: 60 });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [V5_OwnModelDivergenceCaution]);
+    expect(fired.map(r => r.id)).toContain("V5");
+    expect(result.conviction).toBe(7);
+  });
+
+  test("does NOT fire when high conf AND dq=80 (≥75) — well-supported case", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "high",
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "own_model_more_bullish",
+        baseGapPct: -30,
+      }),
+    });
+    const ctx = makeContext({ dataQualityScore: 80 });
+    const { fired } = runGuardrailEngine(analysis, ctx, [V5_OwnModelDivergenceCaution]);
+    expect(fired.map(r => r.id)).not.toContain("V5");
+  });
+
+  test("does NOT fire when |gap|=20 (< 25 threshold)", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "own_model_more_bullish",
+        baseGapPct: -20,
+      }),
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V5_OwnModelDivergenceCaution]);
+    expect(fired.map(r => r.id)).not.toContain("V5");
+  });
+});
+
+// ─── V6: Missing current price ────────────────────────────────────────────────
+
+describe("V6_MissingCurrentPrice", () => {
+  test("fires when currentPrice=null and divergence is not null → nullifies divergence", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence(),
+    });
+    const ctx = makeContext({ currentPrice: null });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [V6_MissingCurrentPrice]);
+    expect(fired.map(r => r.id)).toContain("V6");
+    expect(result.valuation_divergence).toBeNull();
+  });
+
+  test("fires when currentPrice=0 → nullifies divergence", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence(),
+    });
+    const ctx = makeContext({ currentPrice: 0 });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [V6_MissingCurrentPrice]);
+    expect(fired.map(r => r.id)).toContain("V6");
+    expect(result.valuation_divergence).toBeNull();
+  });
+
+  test("does NOT fire when divergence is already null", () => {
+    const analysis = makeAnalysis({ valuation_divergence: null });
+    const ctx = makeContext({ currentPrice: null });
+    const { fired } = runGuardrailEngine(analysis, ctx, [V6_MissingCurrentPrice]);
+    expect(fired.map(r => r.id)).not.toContain("V6");
+  });
+
+  test("does NOT fire when currentPrice=150 (valid)", () => {
+    const analysis = makeAnalysis({ valuation_divergence: makeAvailableDivergence() });
+    const ctx = makeContext({ currentPrice: 150 });
+    const { fired } = runGuardrailEngine(analysis, ctx, [V6_MissingCurrentPrice]);
+    expect(fired.map(r => r.id)).not.toContain("V6");
+  });
+});
+
+// ─── V7: Low confidence divergence ───────────────────────────────────────────
+
+describe("V7_LowConfidenceDivergence", () => {
+  test("fires when div.status=available and modelConf=low → warning + convictionMax=6", () => {
+    const analysis = makeAnalysis({
+      conviction: 8,
+      valuation_confidence: "low",
+      valuation_divergence: makeAvailableDivergence(),
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, makeContext(), [V7_LowConfidenceDivergence]);
+    expect(fired.map(r => r.id)).toContain("V7");
+    expect(result.conviction).toBe(6);
+  });
+
+  test("does NOT fire when modelConf=medium", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "medium",
+      valuation_divergence: makeAvailableDivergence(),
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V7_LowConfidenceDivergence]);
+    expect(fired.map(r => r.id)).not.toContain("V7");
+  });
+
+  test("does NOT fire when div.status=missing_own_model", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "low",
+      valuation_divergence: { status: "missing_own_model", explanationSeed: "...", warnings: [] },
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V7_LowConfidenceDivergence]);
+    expect(fired.map(r => r.id)).not.toContain("V7");
+  });
+});
+
+// ─── V8: Consensus-only valuation ────────────────────────────────────────────
+
+describe("V8_ConsensusOnlyValuation", () => {
+  test("fires when hasAnalystConsensus=true and hasOwnModel=false → informational warning", () => {
+    const ctx = makeContext({ hasAnalystConsensus: true, hasOwnModel: false });
+    const { fired, analysis: result } = runGuardrailEngine(makeAnalysis(), ctx, [V8_ConsensusOnlyValuation]);
+    expect(fired.map(r => r.id)).toContain("V8");
+    expect(result.data_quality_guardrails.some(w => w.includes("Analystenkonsens"))).toBe(true);
+    // informational — no structural mutations
+    expect(result.conviction).toBe(8);
+  });
+
+  test("does NOT fire when both model and consensus present", () => {
+    const { fired } = runGuardrailEngine(makeAnalysis(), makeContext(), [V8_ConsensusOnlyValuation]);
+    expect(fired.map(r => r.id)).not.toContain("V8");
+  });
+});
+
+// ─── V9: Own model only valuation ────────────────────────────────────────────
+
+describe("V9_OwnModelOnlyValuation", () => {
+  test("fires when hasOwnModel=true and hasAnalystConsensus=false → informational warning", () => {
+    const ctx = makeContext({ hasOwnModel: true, hasAnalystConsensus: false });
+    const { fired, analysis: result } = runGuardrailEngine(makeAnalysis(), ctx, [V9_OwnModelOnlyValuation]);
+    expect(fired.map(r => r.id)).toContain("V9");
+    expect(result.data_quality_guardrails.some(w => w.includes("Modell"))).toBe(true);
+    expect(result.conviction).toBe(8);
+  });
+
+  test("does NOT fire when both model and consensus present", () => {
+    const { fired } = runGuardrailEngine(makeAnalysis(), makeContext(), [V9_OwnModelOnlyValuation]);
+    expect(fired.map(r => r.id)).not.toContain("V9");
+  });
+});
+
+// ─── V10: Scenario ordering invalid ──────────────────────────────────────────
+
+describe("V10_ScenarioOrderingInvalid", () => {
+  test("fires when modelBear > modelBase → removeTarget + convictionMax=5 + setValuationConfidenceLow + null divergence", () => {
+    const analysis = makeAnalysis({
+      conviction: 8,
+      valuation_confidence: "medium",
+      price_levels: { entry: 100, target: 130, stop_loss: 90, entry_rationale: "", target_rationale: "" },
+      valuation_divergence: makeAvailableDivergence(),
+    });
+    const ctx = makeContext({
+      modelBear: 150,   // bear > base → invalid
+      ownModelBase: 100,
+      modelBull: 200,
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [V10_ScenarioOrderingInvalid]);
+    expect(fired.map(r => r.id)).toContain("V10");
+    expect(result.price_levels?.target).toBeNull();
+    expect(result.conviction).toBe(5);
+    expect(result.valuation_confidence).toBe("low");
+    expect(result.valuation_divergence).toBeNull();
+  });
+
+  test("fires when consensusBull < consensusBase → same reset", () => {
+    const analysis = makeAnalysis({ conviction: 8 });
+    const ctx = makeContext({
+      analystConsensusBear: 90,
+      analystConsensusBase: 120,
+      analystConsensusBull: 100, // bull < base → invalid
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, [V10_ScenarioOrderingInvalid]);
+    expect(fired.map(r => r.id)).toContain("V10");
+    expect(result.conviction).toBe(5);
+    expect(result.valuation_confidence).toBe("low");
+  });
+
+  test("does NOT fire when bear ≤ base ≤ bull (valid ordering)", () => {
+    const ctx = makeContext({
+      modelBear: 80,
+      ownModelBase: 100,
+      modelBull: 130,
+      analystConsensusBear: 100,
+      analystConsensusBase: 120,
+      analystConsensusBull: 150,
+    });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, [V10_ScenarioOrderingInvalid]);
+    expect(fired.map(r => r.id)).not.toContain("V10");
+  });
+
+  test("does NOT fire when values are null (incomplete range — cannot validate)", () => {
+    const ctx = makeContext({
+      modelBear: null,
+      ownModelBase: 100,
+      modelBull: 130,
+    });
+    const { fired } = runGuardrailEngine(makeAnalysis(), ctx, [V10_ScenarioOrderingInvalid]);
+    expect(fired.map(r => r.id)).not.toContain("V10");
+  });
+
+  test("V10 fires → V12 does NOT fire (divergence nullified)", () => {
+    const analysis = makeAnalysis({
+      conviction: 8,
+      valuation_divergence: makeAvailableDivergence({
+        consensusUpsidePct: 20,
+        ownModelUpsidePct: 10,
+      }),
+    });
+    const ctx = makeContext({
+      modelBear: 150,   // invalid
+      ownModelBase: 100,
+      modelBull: 200,
+    });
+    const { fired } = runGuardrailEngine(analysis, ctx, [V10_ScenarioOrderingInvalid, V12_DivergenceLanguageGermanTemplate]);
+    const ids = fired.map(r => r.id);
+    expect(ids).toContain("V10");
+    expect(ids).not.toContain("V12"); // divergence was nullified by V10
+  });
+});
+
+// ─── V11: Extreme upside/downside ─────────────────────────────────────────────
+
+describe("V11_ExtremeUpsideDownside", () => {
+  test("fires when ownModelUpsidePct=80 (≥75) → warning + convictionMax=7", () => {
+    const analysis = makeAnalysis({
+      conviction: 9,
+      valuation_divergence: makeAvailableDivergence({ ownModelUpsidePct: 80, consensusUpsidePct: 30 }),
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, makeContext(), [V11_ExtremeUpsideDownside]);
+    expect(fired.map(r => r.id)).toContain("V11");
+    expect(result.conviction).toBe(7);
+  });
+
+  test("fires when consensusUpsidePct=-80 (|value|≥75) → warning + cap=7", () => {
+    const analysis = makeAnalysis({
+      conviction: 9,
+      valuation_divergence: makeAvailableDivergence({ ownModelUpsidePct: 10, consensusUpsidePct: -80 }),
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, makeContext(), [V11_ExtremeUpsideDownside]);
+    expect(fired.map(r => r.id)).toContain("V11");
+    expect(result.conviction).toBe(7);
+  });
+
+  test("does NOT fire when both upsides < 75", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence({ ownModelUpsidePct: 30, consensusUpsidePct: 20 }),
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V11_ExtremeUpsideDownside]);
+    expect(fired.map(r => r.id)).not.toContain("V11");
+  });
+});
+
+// ─── V12: German divergence template ─────────────────────────────────────────
+
+describe("V12_DivergenceLanguageGermanTemplate", () => {
+  test("fires when gapLabel=consensus_more_bullish → German text contains 'optimistischer'", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "consensus_more_bullish",
+        baseGapPct: 15,
+        consensusUpsidePct: 25,
+        ownModelUpsidePct: 10,
+      }),
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, makeContext(), [V12_DivergenceLanguageGermanTemplate]);
+    expect(fired.map(r => r.id)).toContain("V12");
+    expect(result.data_quality_guardrails.some(w => w.includes("optimistischer"))).toBe(true);
+    expect(result.data_quality_guardrails.some(w => w.includes("Bewertungsüberblick"))).toBe(true);
+  });
+
+  test("fires when gapLabel=aligned → German text contains 'übereinstimmend'", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "aligned",
+        baseGapPct: 2,
+        consensusUpsidePct: 15,
+        ownModelUpsidePct: 13,
+      }),
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, makeContext(), [V12_DivergenceLanguageGermanTemplate]);
+    expect(fired.map(r => r.id)).toContain("V12");
+    expect(result.data_quality_guardrails.some(w => w.includes("übereinstimmend"))).toBe(true);
+  });
+
+  test("does NOT fire when div.status=missing_own_model (no upside numbers)", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: { status: "missing_own_model", explanationSeed: "...", warnings: [] },
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V12_DivergenceLanguageGermanTemplate]);
+    expect(fired.map(r => r.id)).not.toContain("V12");
+  });
+
+  test("does NOT fire when upsidePct values are missing (partial divergence data)", () => {
+    // No consensusUpsidePct / ownModelUpsidePct set
+    const analysis = makeAnalysis({
+      valuation_divergence: {
+        status: "available",
+        baseGapPct: 10,
+        gapLabel: "consensus_more_bullish",
+        explanationSeed: "seed",
+        warnings: [],
+        // consensusUpsidePct and ownModelUpsidePct intentionally absent
+      },
+    });
+    const { fired } = runGuardrailEngine(analysis, makeContext(), [V12_DivergenceLanguageGermanTemplate]);
+    expect(fired.map(r => r.id)).not.toContain("V12");
+  });
+});
+
+// ─── Phase 3 integration — ALL_LIGHTWEIGHT_RULES ────────────────────────────
+
+describe("Phase 3 integration — ALL_LIGHTWEIGHT_RULES", () => {
+  test("Broadcom-like: extreme divergence (consensus bullish, own model conservative) → V rules fire", () => {
+    // Broadcom: consensus ~+50% upside, own model ~0% (very conservative), gap ~50pp
+    // G16 fires (|gap|≥40, medium conf → caps to 7)
+    // V5 does NOT fire (consensus_more_bullish, not own_model_more_bullish)
+    // V4 fires (consensus_more_bullish + gap≥25 + Kaufen + ownModelUpside≤0)
+    // V12 fires (adds German template)
+    const analysis = makeAnalysis({
+      recommendation: "Kaufen",
+      conviction: 9,
+      valuation_confidence: "medium",
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "consensus_more_bullish",
+        baseGapPct: 50,
+        consensusUpsidePct: 55,
+        ownModelUpsidePct: 5,  // own model shows slight upside, so V4 doesn't fire (ownModelUpside > 0)
+      }),
+    });
+    const ctx = makeContext({
+      hasOwnModel: true,
+      hasAnalystConsensus: true,
+      dataQualityScore: 70,
+      currentPrice: 100,
+    });
+    const { fired } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    const ids = fired.map(r => r.id);
+    // G16 fires for extreme divergence
+    expect(ids).toContain("G16");
+    // V12 adds German template
+    expect(ids).toContain("V12");
+    // V4 does NOT fire (ownModelUpsidePct=5 > 0)
+    expect(ids).not.toContain("V4");
+  });
+
+  test("V4 fires for Broadcom when own model shows no upside", () => {
+    const analysis = makeAnalysis({
+      recommendation: "Kaufen",
+      conviction: 9,
+      valuation_confidence: "medium",
+      valuation_divergence: makeAvailableDivergence({
+        gapLabel: "consensus_more_bullish",
+        baseGapPct: 50,
+        consensusUpsidePct: 50,
+        ownModelUpsidePct: -2,  // own model shows negative upside → V4 fires
+      }),
+    });
+    const ctx = makeContext({
+      hasOwnModel: true,
+      hasAnalystConsensus: true,
+      dataQualityScore: 70,
+      currentPrice: 100,
+    });
+    const { fired, analysis: result } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    const ids = fired.map(r => r.id);
+    expect(ids).toContain("V4");
+    expect(result.recommendation).toBe("Leicht kaufen");
+  });
+
+  test("V6 fires (missing price) → divergence nullified → V1/V7/V12 do NOT fire", () => {
+    const analysis = makeAnalysis({
+      valuation_confidence: "high",
+      valuation_divergence: makeAvailableDivergence({
+        baseGapPct: 45,
+        consensusUpsidePct: 50,
+        ownModelUpsidePct: 5,
+      }),
+    });
+    const ctx = makeContext({ currentPrice: null });
+    const { fired } = runGuardrailEngine(analysis, ctx, ALL_LIGHTWEIGHT_RULES);
+    const ids = fired.map(r => r.id);
+    expect(ids).toContain("V6");    // safety net fires
+    expect(ids).not.toContain("V1");  // needs div.status=available
+    expect(ids).not.toContain("V7");  // needs div.status=available
+    expect(ids).not.toContain("V12"); // needs div.status=available with upside numbers
+  });
+
+  test("Phase 3 rules are all synchronous (no LLM/VERA calls)", () => {
+    const analysis = makeAnalysis({
+      valuation_divergence: makeAvailableDivergence({
+        consensusUpsidePct: 20,
+        ownModelUpsidePct: 10,
+      }),
+    });
+    const start = Date.now();
+    runGuardrailEngine(analysis, makeContext(), ALL_LIGHTWEIGHT_RULES);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(100); // synchronous → completes in < 100ms
+  });
+
+  test("V8 fires for consensus-only analysis, V9 for model-only, V12 only when both available", () => {
+    // Consensus only
+    const ctxConsensusOnly = makeContext({ hasAnalystConsensus: true, hasOwnModel: false });
+    const analysisNoDiv = makeAnalysis({ valuation_divergence: null });
+    const { fired: f1 } = runGuardrailEngine(analysisNoDiv, ctxConsensusOnly, ALL_LIGHTWEIGHT_RULES);
+    expect(f1.map(r => r.id)).toContain("V8");
+    expect(f1.map(r => r.id)).not.toContain("V9");
+
+    // Model only
+    const ctxModelOnly = makeContext({ hasOwnModel: true, hasAnalystConsensus: false });
+    const { fired: f2 } = runGuardrailEngine(analysisNoDiv, ctxModelOnly, ALL_LIGHTWEIGHT_RULES);
+    expect(f2.map(r => r.id)).toContain("V9");
+    expect(f2.map(r => r.id)).not.toContain("V8");
+    // V12 needs div.status=available with upside numbers → not present here
+    expect(f2.map(r => r.id)).not.toContain("V12");
   });
 });

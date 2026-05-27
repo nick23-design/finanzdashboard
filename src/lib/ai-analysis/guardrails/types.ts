@@ -79,7 +79,19 @@ export type GuardrailIssueType =
   | "entry_quality_bearish_mismatch"
   | "news_sentiment_insufficient"
   | "technical_timing_insufficient"
-  | "extreme_divergence";
+  | "extreme_divergence"
+  // Phase 3 — valuation & divergence guardrails
+  | "conservative_model_disclaimer"
+  | "bull_bear_undercalibration"
+  | "consensus_auto_upside"
+  | "own_model_divergence_caution"
+  | "missing_current_price"
+  | "low_confidence_divergence"
+  | "consensus_only_valuation"
+  | "own_model_only_valuation"
+  | "scenario_ordering_invalid"
+  | "extreme_upside_downside"
+  | "divergence_language";
 
 /**
  * Mutable analysis slice that the guardrail engine operates on.
@@ -119,10 +131,14 @@ export interface GuardrailContext {
   analystConsensusBase?: number | null;
   /** Own model base value in USD (if available). */
   ownModelBase?: number | null;
-  /** Own model bear scenario in USD (for G8 scenario-range checks). */
+  /** Own model bear scenario in USD (for G8/V10 scenario-range checks). */
   modelBear?: number | null;
-  /** Own model bull scenario in USD (for G8 scenario-range checks). */
+  /** Own model bull scenario in USD (for G8/V10/V3 scenario-range checks). */
   modelBull?: number | null;
+  /** Analyst consensus bear scenario in USD (for V3/V10 checks). */
+  analystConsensusBear?: number | null;
+  /** Analyst consensus bull scenario in USD (for V10 ordering checks). */
+  analystConsensusBull?: number | null;
   /** Full valuation context (opaque for future extensibility). */
   valuationContext?: unknown;
   /** Full driver context (opaque for future extensibility). */
@@ -188,6 +204,11 @@ export interface GuardrailPatch {
     pattern: string;
     cap: number;
   };
+  /**
+   * If true, force valuation_confidence to "low".
+   * Used by V10 when scenario ordering is invalid.
+   */
+  setValuationConfidenceLow?: boolean;
   /**
    * Additional messages to append to data_quality_guardrails.
    */
