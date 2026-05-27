@@ -63,6 +63,12 @@ function applyPatch(
     result.recommendation = moreConservative(result.recommendation, patch.recommendation);
   }
 
+  // recommendationExact — unconditional override (last writer wins)
+  // Used only by G7 to moderate an unsupported strong bearish recommendation.
+  if (patch.recommendationExact !== undefined) {
+    result.recommendation = patch.recommendationExact;
+  }
+
   // conviction — lowest wins
   if (patch.convictionMax !== undefined) {
     result.conviction = Math.min(result.conviction, patch.convictionMax);
@@ -96,6 +102,17 @@ function applyPatch(
     const { sourceType, cap } = patch.claimCapBySourceType;
     result.claims = result.claims.map(c =>
       c.source_type === sourceType
+        ? { ...c, confidence: Math.min(c.confidence, cap) }
+        : c,
+    );
+  }
+
+  // claimCapByPattern — cap confidence for claims matching source type AND content pattern
+  if (patch.claimCapByPattern != null) {
+    const { sourceType, pattern, cap } = patch.claimCapByPattern;
+    const re = new RegExp(pattern);
+    result.claims = result.claims.map(c =>
+      c.source_type === sourceType && re.test(`${c.claim} ${c.evidence}`)
         ? { ...c, confidence: Math.min(c.confidence, cap) }
         : c,
     );

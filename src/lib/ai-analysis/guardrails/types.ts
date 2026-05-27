@@ -60,6 +60,7 @@ export type GuardrailScope =
 export type GuardrailSeverity = "info" | "warning" | "blocking";
 
 export type GuardrailIssueType =
+  // Phase 1
   | "analyst_consensus_missing"
   | "news_target_unverified"
   | "valuation_mixing"
@@ -69,7 +70,16 @@ export type GuardrailIssueType =
   | "entry_quality_mismatch"
   | "model_conservatism"
   | "sector_metric_mismatch"
-  | "unsupported_claim";
+  | "unsupported_claim"
+  // Phase 2 — global research guardrails
+  | "recommendation_unsupported"
+  | "scenario_range_too_wide"
+  | "model_low_confidence"
+  | "conviction_mismatch"
+  | "entry_quality_bearish_mismatch"
+  | "news_sentiment_insufficient"
+  | "technical_timing_insufficient"
+  | "extreme_divergence";
 
 /**
  * Mutable analysis slice that the guardrail engine operates on.
@@ -109,6 +119,10 @@ export interface GuardrailContext {
   analystConsensusBase?: number | null;
   /** Own model base value in USD (if available). */
   ownModelBase?: number | null;
+  /** Own model bear scenario in USD (for G8 scenario-range checks). */
+  modelBear?: number | null;
+  /** Own model bull scenario in USD (for G8 scenario-range checks). */
+  modelBull?: number | null;
   /** Full valuation context (opaque for future extensibility). */
   valuationContext?: unknown;
   /** Full driver context (opaque for future extensibility). */
@@ -125,6 +139,13 @@ export interface GuardrailPatch {
    * across all fired patches (Verkaufen < Leicht verkaufen < Halten < ...).
    */
   recommendation?: AllowedRecommendation;
+  /**
+   * Unconditional recommendation override — bypasses conservative merge.
+   * Last patch with this field wins. Use ONLY for moderating an unsupported
+   * strong bearish recommendation (e.g. "Verkaufen" → "Leicht verkaufen").
+   * Applied AFTER `recommendation` in the same patch cycle.
+   */
+  recommendationExact?: AllowedRecommendation;
   /**
    * Cap conviction to this maximum. Lowest wins across multiple patches.
    */
@@ -157,6 +178,15 @@ export interface GuardrailPatch {
     sourceType: AnalysisClaim["source_type"];
     pattern: string;
     prefix: string;
+  };
+  /**
+   * Cap confidence for claims where source_type matches AND claim+evidence text
+   * matches the regex `pattern`. More targeted than claimCapBySourceType.
+   */
+  claimCapByPattern?: {
+    sourceType: AnalysisClaim["source_type"];
+    pattern: string;
+    cap: number;
   };
   /**
    * Additional messages to append to data_quality_guardrails.

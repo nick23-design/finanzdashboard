@@ -3009,13 +3009,19 @@ function runLightweightGuardrails(
   };
 
   // ─── GuardrailContext: derived values for rules ──────────────────────────────
+  const modelUsd = valuationContext
+    ? getUsdMoneyRange(valuationContext.modelValuationRange)
+    : null;
   const ctx: GuardrailContext = {
     symbol: "",  // not available at this call site; no current rule needs it
     dataQualityScore: dataQuality?.completeness_score ?? null,
     hasAnalystConsensus: valuationContext?.analystConsensusRange != null,
     hasOwnModel: valuationContext?.modelValuationRange != null,
     analystConsensusBase: valuationContext?.analystConsensusRange?.base ?? null,
-    ownModelBase: valuationContext?.modelValuationRange?.base ?? null,
+    ownModelBase: modelUsd?.base ?? valuationContext?.modelValuationRange?.base ?? null,
+    // Phase 2: scenario range for G8 wide-spread check
+    modelBear: modelUsd?.bear ?? null,
+    modelBull: modelUsd?.bull ?? null,
     valuationContext,
   };
 
