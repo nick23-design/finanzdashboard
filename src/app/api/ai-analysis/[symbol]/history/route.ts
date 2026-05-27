@@ -19,7 +19,7 @@ export async function GET(
   const supabase = await createClient();
   const { data } = await supabase
     .from("ai_analyses")
-    .select("id, recommendation, conviction, fundamental_rating, news_sentiment, summary, analyzed_at")
+    .select("id, recommendation, conviction, fundamental_rating, news_sentiment, summary, analyzed_at, fact_check_status")
     .eq("symbol", parsed.data)
     .order("analyzed_at", { ascending: false })
     .limit(10);

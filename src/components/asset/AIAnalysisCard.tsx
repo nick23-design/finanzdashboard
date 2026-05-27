@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { AIAnalysisResult, DianaQualityReport, PriceLevels, ProtocolEntry, AnalysisTraceEntry } from "@/app/api/ai-analysis/[symbol]/route";
+import type { VeraFactCheckResult } from "@/types/vera";
 import { AgentAvatar, AgentAvatarGroup } from "@/components/ui/AgentAvatar";
 
 interface Props {
@@ -680,6 +681,93 @@ function VeraReviewCard({ entries }: { entries: ProtocolEntry[] }) {
   );
 }
 
+// ─── Fact-Check Status Badge ──────────────────────────────────────────────────
+
+const FACT_CHECK_STATUS_CONFIG: Record<string, { label: string; color: string; icon: string }> = {
+  pending_factcheck:      { label: "Factcheck ausstehend", color: "#6b7280", icon: "" },
+  running_factcheck:      { label: "Factcheck läuft", color: "#f59e0b", icon: "" },
+  verified:               { label: "Verifiziert", color: "#22c55e", icon: "✓" },
+  verified_with_warnings: { label: "Mit Hinweisen", color: "#f59e0b", icon: "⚠" },
+  needs_revision:         { label: "Überarbeitung empfohlen", color: "#f97316", icon: "!" },
+  failed_factcheck:       { label: "Factcheck fehlgeschlagen", color: "#ef4444", icon: "✗" },
+};
+
+function FactCheckStatusBadge({ status }: { status: string }) {
+  const cfg = FACT_CHECK_STATUS_CONFIG[status] ?? FACT_CHECK_STATUS_CONFIG.pending_factcheck;
+  return (
+    <span
+      className="text-[10px] px-1.5 py-0.5 rounded-full font-medium inline-flex items-center gap-1"
+      style={{ color: cfg.color, background: `${cfg.color}22`, border: `1px solid ${cfg.color}40` }}>
+      {cfg.icon && <span>{cfg.icon}</span>}
+      {cfg.label}
+    </span>
+  );
+}
+
+function FactCheckIssuesCard({ result }: { result: VeraFactCheckResult }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!result.issues.length) return null;
+
+  const sevColor: Record<string, string> = { low: "#6b7280", medium: "#f59e0b", high: "#ef4444" };
+
+  return (
+    <div
+      className="rounded-xl p-3 space-y-2"
+      style={{ background: "rgba(100,116,139,0.06)", border: "1px solid var(--card-border)" }}>
+      <button
+        type="button"
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center justify-between text-left"
+      >
+        <p className="text-xs font-semibold text-white">
+          VERA Hinweise ({result.issues.length})
+        </p>
+        <span className="text-[10px]" style={{ color: "var(--muted)" }}>
+          {expanded ? "▲ Einklappen" : "▼ Details"}
+        </span>
+      </button>
+      {expanded && (
+        <div className="space-y-2 mt-1">
+          {result.issues.map((issue, i) => {
+            const sev = (issue as unknown as { severity?: string }).severity ?? "low";
+            const color = sevColor[sev] ?? "#6b7280";
+            return (
+              <div
+                key={i}
+                className="rounded-lg p-2.5 space-y-1"
+                style={{ background: `${color}10`, border: `1px solid ${color}30` }}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                    style={{ color, background: `${color}22` }}>
+                    {sev}
+                  </span>
+                  <span className="text-[10px] font-medium" style={{ color: "var(--muted)" }}>
+                    {issue.type}
+                  </span>
+                  {issue.affectedSection && (
+                    <span className="text-[10px]" style={{ color: "var(--muted)" }}>
+                      · {issue.affectedSection}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+                  {issue.message}
+                </p>
+                {issue.suggestedFix && (
+                  <p className="text-[11px] leading-relaxed" style={{ color: "#38bdf8" }}>
+                    Vorschlag: {issue.suggestedFix}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AIAnalysisCard({ analysis }: Props) {
   const recStyle = RECOMMENDATION_STYLES[analysis.recommendation] ?? {
     bg: "#6b7280",
@@ -701,13 +789,18 @@ export function AIAnalysisCard({ analysis }: Props) {
       style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h3 className="font-semibold text-white">KI-Analyse</h3>
-        <span
-          className="text-xs px-2 py-0.5 rounded-full font-medium"
-          style={{ background: "rgba(139,92,246,0.2)", color: "#a78bfa" }}>
-          Beta
-        </span>
+        <div className="flex items-center gap-2 flex-wrap">
+          {analysis.fact_check_status && (
+            <FactCheckStatusBadge status={analysis.fact_check_status} />
+          )}
+          <span
+            className="text-xs px-2 py-0.5 rounded-full font-medium"
+            style={{ background: "rgba(139,92,246,0.2)", color: "#a78bfa" }}>
+            Beta
+          </span>
+        </div>
       </div>
 
       {/* Recommendation + Conviction */}
@@ -848,6 +941,17 @@ export function AIAnalysisCard({ analysis }: Props) {
       {analysis.claims && <ClaimsSection claims={analysis.claims} />}
 
       <VeraReviewCard entries={analysis.protocol ?? []} />
+
+      {/* Async VERA Fact-Check Issues */}
+      {analysis.fact_check_status &&
+        analysis.fact_check_status !== "pending_factcheck" &&
+        analysis.fact_check_status !== "running_factcheck" && (() => {
+          const fcResult = (analysis as unknown as { fact_check_result?: VeraFactCheckResult }).fact_check_result;
+          if (fcResult?.issues?.length) {
+            return <FactCheckIssuesCard result={fcResult} />;
+          }
+          return null;
+        })()}
 
       {/* Footer – KI-Team */}
       <div className="pt-2 border-t" style={{ borderColor: "var(--card-border)" }}>

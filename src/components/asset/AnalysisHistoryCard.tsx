@@ -11,6 +11,7 @@ interface HistoryEntry {
   news_sentiment: string;
   summary: string;
   analyzed_at: string;
+  fact_check_status?: string | null;
 }
 
 const REC_COLOR: Record<string, string> = {
@@ -336,8 +337,31 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
   const fmt = (n: number | null) => n != null ? `$${n.toFixed(2)}` : "—";
   const sentColor = SENTIMENT_COLOR[data.news_sentiment] ?? "var(--muted)";
 
+  const factCheckStatus = (data as unknown as { fact_check_status?: string }).fact_check_status;
+  const FACT_CHECK_LABELS: Record<string, { label: string; color: string; icon: string }> = {
+    pending_factcheck:      { label: "Factcheck ausstehend", color: "#6b7280", icon: "" },
+    running_factcheck:      { label: "Factcheck läuft", color: "#f59e0b", icon: "" },
+    verified:               { label: "Verifiziert", color: "#22c55e", icon: "✓" },
+    verified_with_warnings: { label: "Mit Hinweisen", color: "#f59e0b", icon: "⚠" },
+    needs_revision:         { label: "Überarbeitung empfohlen", color: "#f97316", icon: "!" },
+    failed_factcheck:       { label: "Factcheck fehlgeschlagen", color: "#ef4444", icon: "✗" },
+  };
+  const fcCfg = factCheckStatus ? (FACT_CHECK_LABELS[factCheckStatus] ?? FACT_CHECK_LABELS.pending_factcheck) : null;
+
   return (
     <div className="pt-3 space-y-3 text-xs" style={{ color: "var(--muted)" }}>
+
+      {/* Fact-Check Status */}
+      {fcCfg && (
+        <div className="flex items-center gap-2">
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium inline-flex items-center gap-1"
+            style={{ color: fcCfg.color, background: `${fcCfg.color}22`, border: `1px solid ${fcCfg.color}40` }}>
+            {fcCfg.icon && <span>{fcCfg.icon}</span>}
+            {fcCfg.label}
+          </span>
+        </div>
+      )}
 
       {/* Zusammenfassung */}
       <p className="leading-relaxed">{data.summary}</p>
@@ -583,7 +607,7 @@ export function AnalysisHistoryCard({ symbol }: { symbol: string }) {
                     className="w-full p-3 text-left"
                     onClick={() => setExpandedId(isOpen ? null : entry.id)}>
                     <div className="flex items-center justify-between flex-wrap gap-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-bold px-2 py-0.5 rounded-full"
                           style={{ background: color + "22", color }}>
                           {entry.recommendation}
@@ -594,6 +618,23 @@ export function AnalysisHistoryCard({ symbol }: { symbol: string }) {
                         <span className="text-xs" style={{ color: "var(--muted)" }}>
                           Fund. {entry.fundamental_rating}/10
                         </span>
+                        {entry.fact_check_status && entry.fact_check_status !== "pending_factcheck" && (() => {
+                          const HIST_FC: Record<string, { label: string; color: string; icon: string }> = {
+                            running_factcheck:      { label: "läuft", color: "#f59e0b", icon: "" },
+                            verified:               { label: "✓ Verifiziert", color: "#22c55e", icon: "" },
+                            verified_with_warnings: { label: "⚠ Hinweise", color: "#f59e0b", icon: "" },
+                            needs_revision:         { label: "! Revision", color: "#f97316", icon: "" },
+                            failed_factcheck:       { label: "✗ Fehlgeschlagen", color: "#ef4444", icon: "" },
+                          };
+                          const cfg = HIST_FC[entry.fact_check_status!];
+                          if (!cfg) return null;
+                          return (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                              style={{ color: cfg.color, background: `${cfg.color}22` }}>
+                              {cfg.label}
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs" style={{ color: "var(--muted)" }}>{date} {time}</span>

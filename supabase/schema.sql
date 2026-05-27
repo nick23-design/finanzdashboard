@@ -168,11 +168,24 @@ create table if not exists public.ai_analyses (
   news_themes           jsonb not null default '[]',
   sentiment_summary     text not null default '',
   extra_data            jsonb,
-  analyzed_at           timestamptz not null default now()
+  analyzed_at           timestamptz not null default now(),
+  fact_check_status     text not null default 'pending_factcheck',
+  fact_check_result     jsonb,
+  fact_checked_at       timestamptz
 );
+
+-- Add VERA fact-check columns if upgrading from earlier schema version
+alter table public.ai_analyses
+  add column if not exists fact_check_status    text not null default 'pending_factcheck',
+  add column if not exists fact_check_result    jsonb,
+  add column if not exists fact_checked_at      timestamptz;
 
 create index if not exists ai_analyses_symbol_analyzed_at
   on public.ai_analyses(symbol, analyzed_at desc);
+
+create index if not exists ai_analyses_fact_check_status
+  on public.ai_analyses(fact_check_status)
+  where fact_check_status = 'pending_factcheck';
 
 alter table public.ai_analyses enable row level security;
 

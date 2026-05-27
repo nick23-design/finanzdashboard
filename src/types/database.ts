@@ -168,6 +168,9 @@ export interface Database {
           sentiment_summary: string;
           extra_data: Json;
           analyzed_at: string;
+          fact_check_status: string;
+          fact_check_result: Json | null;
+          fact_checked_at: string | null;
         };
         Insert: {
           id?: string;
@@ -187,6 +190,9 @@ export interface Database {
           sentiment_summary: string;
           extra_data?: Json;
           analyzed_at?: string;
+          fact_check_status?: string;
+          fact_check_result?: Json | null;
+          fact_checked_at?: string | null;
         };
         Update: {
           id?: string;
@@ -206,6 +212,9 @@ export interface Database {
           sentiment_summary?: string;
           extra_data?: Json;
           analyzed_at?: string;
+          fact_check_status?: string;
+          fact_check_result?: Json | null;
+          fact_checked_at?: string | null;
         };
         Relationships: [];
       };

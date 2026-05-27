@@ -397,6 +397,7 @@ export interface AIAnalysisResult extends SynthesisResult {
   analyzed_at: string;
   from_cache: boolean;
   protocol: ProtocolEntry[];
+  fact_check_status?: string | null;
   trace?: AnalysisTraceEntry[];
 }
 
@@ -2316,12 +2317,13 @@ async function runAnalysisPipeline(
     );
     usedFallback = true;
   }
-  const rawSynthesis = await runStep(
+  const completedSynthesis = await runStep(
     "research_guardrails",
     "Research-Guardrails anwenden",
     78,
     async () => completeResearchFields(rawSynthesisBase, snapshot, marketIntel, analystData, dataQuality, fxContext, valuationContext),
   );
+  const rawSynthesis = runLightweightGuardrails(completedSynthesis, dataQuality, valuationContext);
   assertSynthesisQuality(rawSynthesis, usedFallback ? "Fallback-Synthese" : "Opus-Synthese");
   const rawConviction = clampConviction(rawSynthesis.conviction);
   const cappedConviction = Math.min(rawConviction, confidenceCap);
@@ -2759,53 +2761,15 @@ export async function runAnalysisJob(
     result.trace = getTrace();
     tlog("after saveAnalysis");
 
+    // VERA läuft per CRON — hier nicht mehr aufrufen.
+    // Job direkt als "completed" markieren.
     await serviceClient.from("analysis_jobs").update({
-      status: "reviewing",
-      current_step: "vera_pending",
+      status: "completed",
+      current_step: "completed",
       progress: 100,
       result: { ...result, trace: getTrace() } as unknown as import("@/types/database").Json,
       updated_at: ts(),
     }).eq("id", jobId).eq("user_id", userId);
-    tlog("starting runDeferredVeraCheck");
-
-    await runDeferredVeraCheck({
-      analysisId,
-      jobId,
-      userId,
-      symbol,
-      result,
-      analystData,
-      googleNews: googleNewsEnriched,
-      snapshot,
-      confidenceCap: diana.analysis_confidence_cap,
-      serviceClient,
-      startTrace,
-      finishTrace,
-      getTrace,
-    }).catch(async () => {
-      await markRunningTraceAsTimeout("Vera konnte nicht abgeschlossen werden").catch(() => {});
-      const skippedResult: AIAnalysisResult = {
-        ...result,
-        trace: getTrace(),
-        protocol: replaceVeraProtocolEntry(result.protocol, {
-          agent: "Vera",
-          status: "skipped",
-          detail: "Fact-Check konnte nachgelagert nicht abgeschlossen werden",
-        }),
-      };
-
-      try {
-        await serviceClient.from("analysis_jobs").update({
-          status: "completed",
-          current_step: "completed",
-          progress: 100,
-          result: skippedResult as unknown as import("@/types/database").Json,
-          updated_at: ts(),
-        }).eq("id", jobId).eq("user_id", userId);
-      } catch {
-        // The main result is already stored; Vera must never flip the job to failed.
-      }
-    });
     tlog("completed");
 
   } catch (err) {
@@ -2896,6 +2860,7 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
       trace: extra.analysis_trace as AnalysisTraceEntry[] ?? [],
       analyzed_at: data.analyzed_at,
       from_cache: true,
+      fact_check_status: (data as unknown as { fact_check_status?: string }).fact_check_status ?? "pending_factcheck",
     };
   } catch {
     return null;
@@ -2923,6 +2888,63 @@ async function saveOutcome(result: AIAnalysisResult, client?: SbClient): Promise
   }
 }
 
+// ─── Lightweight Guardrails (synchron, vor saveAnalysis) ─────────────────────
+// Schnelle, deterministisiche Prüfungen die ohne KI-Aufruf sofort laufen.
+// Tiefe VERA-Analyse läuft asynchron per CRON.
+
+function runLightweightGuardrails(
+  result: SynthesisResult,
+  dataQuality: DianaQualityReport | null,
+  valuationContext: ValuationContext | null,
+): SynthesisResult {
+  let rec = result.recommendation as string;
+  let conviction = result.conviction;
+  const guardrails = [...(result.data_quality_guardrails ?? [])];
+
+  // 1. Schema Validation: recommendation muss in erlaubten Werten stehen
+  if (!ALLOWED_RECOMMENDATIONS.includes(rec as AllowedRecommendation)) {
+    rec = "Halten";
+    guardrails.push("Empfehlung korrigiert: unbekannter Wert auf 'Halten' gesetzt.");
+  }
+
+  // 2. JSON Repair: Falls Felder fehlen, mit Fallback-Werten auffüllen
+  const summary = result.summary?.trim() || "Analyse wird verarbeitet.";
+  const bull_case = Array.isArray(result.bull_case) && result.bull_case.length >= 2
+    ? result.bull_case
+    : [...(Array.isArray(result.bull_case) ? result.bull_case : []), "Weitere Analyse erforderlich.", "Datenbasis wird ausgewertet."].slice(0, Math.max(2, result.bull_case?.length ?? 0));
+  const bear_case = Array.isArray(result.bear_case) && result.bear_case.length >= 2
+    ? result.bear_case
+    : [...(Array.isArray(result.bear_case) ? result.bear_case : []), "Risiken werden ausgewertet.", "Bewertungsrisiko beachten."].slice(0, Math.max(2, result.bear_case?.length ?? 0));
+
+  // 3. Analystenkonsens-Trennung: Prüfen ob Felder strukturell getrennt sind
+  if (valuationContext?.analystConsensusRange && valuationContext?.modelValuationRange) {
+    const analystBase = valuationContext.analystConsensusRange.base;
+    const modelBase = valuationContext.modelValuationRange.base;
+    if (analystBase != null && modelBase != null && analystBase === modelBase) {
+      guardrails.push("Analystenkonsens und eigenes Modell haben identischen Basiswert — möglicherweise vermischt.");
+    }
+  }
+
+  // 4. Konfidenz-Empfehlungs-Check: Bei schwacher Datenbasis keine Kauf-Empfehlung
+  if ((dataQuality?.completeness_score ?? 100) < 50) {
+    if (rec === "Kaufen") {
+      rec = "Leicht kaufen";
+      guardrails.push("Empfehlung von 'Kaufen' auf 'Leicht kaufen' korrigiert — Datenbasis < 50%.");
+    }
+    conviction = Math.min(conviction, 6);
+  }
+
+  return {
+    ...result,
+    recommendation: rec,
+    conviction,
+    summary,
+    bull_case,
+    bear_case,
+    data_quality_guardrails: guardrails,
+  };
+}
+
 async function saveAnalysis(result: AIAnalysisResult, client?: SbClient): Promise<string | null> {
   if (!validateBeforeSave(result)) return null;
   try {
@@ -2943,6 +2965,7 @@ async function saveAnalysis(result: AIAnalysisResult, client?: SbClient): Promis
       news_themes: result.sentiment.key_themes,
       sentiment_summary: result.sentiment.sentiment_summary,
       extra_data: buildAnalysisExtraData(result),
+      fact_check_status: "pending_factcheck",
     };
     const { data } = await supabase.from("ai_analyses").insert(payload).select("id").single();
     return data?.id ?? null;
