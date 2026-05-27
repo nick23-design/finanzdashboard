@@ -9,6 +9,16 @@ import type { Database, AssetSnapshot } from "@/types/database";
 type AssetSnapshotInsert = Database["public"]["Tables"]["asset_snapshots"]["Insert"];
 
 const CACHE_TTL_HOURS = 6;
+const INCOMPLETE_CACHE_REFRESH_MINUTES = 15;
+
+function isMissingCoreValuationMetrics(snapshot: AssetSnapshot): boolean {
+  return snapshot.pe_ratio == null || snapshot.debt_to_equity == null;
+}
+
+function isOlderThan(snapshot: AssetSnapshot, minutes: number): boolean {
+  if (!snapshot.fetched_at) return true;
+  return Date.now() - new Date(snapshot.fetched_at).getTime() > minutes * 60 * 1000;
+}
 
 async function getCachedSnapshot(symbol: string): Promise<AssetSnapshot | null> {
   const supabase = await createClient();
@@ -103,6 +113,24 @@ export async function GET(
 
   const cached = forceRefresh ? null : await getCachedSnapshot(symbol);
   if (cached) {
+    const shouldEnrichIncompleteSnapshot =
+      isMissingCoreValuationMetrics(cached) &&
+      isOlderThan(cached, INCOMPLETE_CACHE_REFRESH_MINUTES);
+    if (shouldEnrichIncompleteSnapshot) {
+      const rlLive = rateLimit({ key: `assets-enrich:${user.id}`, limit: 10, windowSecs: 600 });
+      if (rlLive.allowed) {
+        try {
+          const raw = await fetchAssetData(symbol);
+          if (!raw.isin) {
+            raw.isin = cached.isin ?? await getStoredIsin(symbol);
+          }
+          await saveSnapshot(raw);
+          return NextResponse.json({ ...raw, fromCache: false, refreshedIncompleteCache: true });
+        } catch {
+          // If enrichment fails, serve the cached snapshot instead of breaking the page.
+        }
+      }
+    }
     return NextResponse.json({ ...cached, fromCache: true });
   }
 

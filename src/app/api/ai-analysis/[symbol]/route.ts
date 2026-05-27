@@ -1777,16 +1777,43 @@ function sanitizeMarketIntelAnalysis(
   return { ...result, insider_signal: insiderSignal, key_observations };
 }
 
+function hasMarketIntelData(
+  trades: InsiderTrade[],
+  trends: TrendPoint[],
+  institutional: InstitutionalData | null,
+): boolean {
+  return (
+    trades.length > 0 ||
+    trends.length > 0 ||
+    (institutional != null &&
+      (institutional.pct_institutions != null ||
+        institutional.pct_insider != null ||
+        institutional.top_holders.length > 0))
+  );
+}
+
+function buildMarcoProtocolDetail(
+  marketIntel: MarketIntelAnalysis,
+  hasData: boolean,
+): { status: ProtocolEntry["status"]; detail: string } {
+  if (!hasData || marketIntel.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar") {
+    return {
+      status: "skipped",
+      detail: "Keine Market-Intelligence-Daten geliefert (Provider/Ingestion)",
+    };
+  }
+  return {
+    status: "ok",
+    detail: `Insider: ${marketIntel.insider_signal} · Institutionen: ${marketIntel.institutional_trend} · Trends: ${marketIntel.trends_momentum}`,
+  };
+}
+
 async function runMarketIntelAgent(
   trades: InsiderTrade[],
   trends: TrendPoint[],
   institutional: InstitutionalData | null,
 ): Promise<MarketIntelAnalysis> {
-  const hasInstitutionalData =
-    institutional != null &&
-    (institutional.pct_institutions != null || institutional.top_holders.length > 0);
-  const noData = trades.length === 0 && trends.length === 0 && !hasInstitutionalData;
-  if (noData) {
+  if (!hasMarketIntelData(trades, trends, institutional)) {
     return {
       insider_signal: "neutral",
       institutional_trend: "stable",
@@ -2191,11 +2218,13 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
       } else if (toolUse.name === "analyze_market_intelligence") {
         marketIntel = await runMarketIntelAgent(insiderTrades, trends, institutional);
         content = JSON.stringify(marketIntel);
-        const noData = marketIntel.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar";
+        const marcoProtocol = buildMarcoProtocolDetail(
+          marketIntel,
+          hasMarketIntelData(insiderTrades, trends, institutional),
+        );
         protocol.push({
           agent: "Marco",
-          status: noData ? "skipped" : "ok",
-          detail: noData ? "Keine Daten verfügbar (nur für US-Aktien)" : `Insider: ${marketIntel.insider_signal} · Institutionen: ${marketIntel.institutional_trend} · Trends: ${marketIntel.trends_momentum}`,
+          ...marcoProtocol,
         });
       } else {
         content = JSON.stringify({ error: "Unbekanntes Tool" });
@@ -2214,8 +2243,10 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
   if (!fundamental) protocol.push({ agent: "Felix", status: "ok", detail: `Wachstumsbewertung ${fb_f.growth_rating}/10 (Fallback)` });
   if (!sentiment) protocol.push({ agent: "Nina", status: "ok", detail: `Sentiment: ${fb_s.sentiment} (Fallback)` });
   if (!marketIntel) {
-    const noData = fb_m.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar";
-    protocol.push({ agent: "Marco", status: noData ? "skipped" : "ok", detail: noData ? "Keine Daten verfügbar" : `Insider: ${fb_m.insider_signal} (Fallback)` });
+    protocol.push({
+      agent: "Marco",
+      ...buildMarcoProtocolDetail(fb_m, hasMarketIntelData(insiderTrades, trends, institutional)),
+    });
   }
   const fallbackValuationContext = buildValuationContext(
     symbol,
@@ -2354,11 +2385,14 @@ async function runAnalysisPipeline(
   );
 
   const withExcerpts = googleNews.filter(n => n.description).length;
-  const noMarcoData = marketIntel.key_observations[0] === "Keine Markt-Intelligenz-Daten verfügbar";
+  const marcoProtocol = buildMarcoProtocolDetail(
+    marketIntel,
+    hasMarketIntelData(insiderTrades, trends, institutional),
+  );
 
   protocol.push({ agent: "Felix", status: "ok", detail: `Wachstumsbewertung ${fundamental.growth_rating}/10 · ${fundamental.key_positives.length} Stärken, ${fundamental.key_risks.length} Risiken${peerContext ? " · Peer-Kontext vorhanden" : ""}` });
   protocol.push({ agent: "Nina", status: "ok", detail: `Sentiment: ${sentiment.sentiment} · ${sentiment.key_themes.length} Themen · ${withExcerpts}/${googleNews.length} Artikel mit Jina-Excerpt` });
-  protocol.push({ agent: "Marco", status: noMarcoData ? "skipped" : "ok", detail: noMarcoData ? "Keine Daten verfügbar (nur für US-Aktien)" : `Insider: ${marketIntel.insider_signal} · Institutionen: ${marketIntel.institutional_trend} · Trends: ${marketIntel.trends_momentum}` });
+  protocol.push({ agent: "Marco", ...marcoProtocol });
 
   const valuationContext = await runStep(
     "valuation_model",
