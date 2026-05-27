@@ -33,7 +33,19 @@ export type {
 
 import { G1_AnalystClaimsWithoutConsensus, G2_NewsPriceTargetUnverified } from "./global.guardrails";
 import { G3_ConsensusModelMixing, G4_DivergenceWithoutOwnModel } from "./valuation.guardrails";
-import { G5a_WeakDataBasis, G5b_LowConfidenceTarget } from "./data-quality.guardrails";
+import {
+  G5a_WeakDataBasis,
+  G5b_LowConfidenceTarget,
+  D3_ValuationInputsCapConfidence,
+  D4_MissingConsensusLanguageInClaims,
+  D6_MissingFilingDataWeakensGrowthClaims,
+  D7_MissingInsiderDataBlocksSignal,
+  D8_LargeCapDataGapIsProviderLimitation,
+  D9_StaleDataFreshnessWarning,
+  D11_MissingDataNotNegativeThesis,
+  D12_WeakDataLanguage,
+  DATA_QUALITY_PHASE4_RULES,
+} from "./data-quality.guardrails";
 import { G6_EntryQualityMismatch } from "./research.guardrails";
 import {
   G7_NoStrongRecommendationWithoutSupport,
@@ -107,6 +119,16 @@ import type { GuardrailRule } from "./types";
  *   30. V14 — Data quality gaps = provider limitation (Phase 3 fine-tuning)
  *   31. V12 — German divergence template (runs last)
  *
+ * Phase 4 — data quality guardrails (after Phase 3):
+ *   32. D3  — Single valuation source missing + high confidence → cap to "medium"
+ *   33. D4  — No analyst consensus → mark consensus-language claims as unsupported
+ *   34. D6  — EDGAR quarterly data missing → cap growth/margin/FCF claims to ≤5
+ *   35. D7  — Insider + institutional data both absent → unassessable signal warning
+ *   36. D8  — Large-cap (>50B) + dq<70 → data gaps as provider limitation
+ *   37. D9  — Stale data fields detected → freshness warning + conviction ≤7
+ *   38. D11 — Missing data as negative business thesis → unsupported claim
+ *   39. D12 — dq<60 + hard valuation certainty language → cautious note
+ *
  * + Sector rules (future)
  *
  * Critical ordering constraints:
@@ -139,6 +161,8 @@ export const ALL_LIGHTWEIGHT_RULES: GuardrailRule[] = [
   G16_ExtremeDivergenceRequiresExplanation,
   // Phase 3 — valuation & divergence guardrails
   ...VALUATION_DIVERGENCE_RULES,
+  // Phase 4 — data quality guardrails
+  ...DATA_QUALITY_PHASE4_RULES,
   // Sector rules (future)
   ...SECTOR_RULES,
 ];
@@ -178,5 +202,15 @@ export {
   V13_BothValuationSourcesMissing,
   V14_DataQualityProviderLimitation,
   VALUATION_DIVERGENCE_RULES,
+  // Phase 4
+  D3_ValuationInputsCapConfidence,
+  D4_MissingConsensusLanguageInClaims,
+  D6_MissingFilingDataWeakensGrowthClaims,
+  D7_MissingInsiderDataBlocksSignal,
+  D8_LargeCapDataGapIsProviderLimitation,
+  D9_StaleDataFreshnessWarning,
+  D11_MissingDataNotNegativeThesis,
+  D12_WeakDataLanguage,
+  DATA_QUALITY_PHASE4_RULES,
   SECTOR_RULES,
 };

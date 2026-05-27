@@ -93,7 +93,16 @@ export type GuardrailIssueType =
   | "extreme_upside_downside"
   | "divergence_language"
   | "valuation_data_insufficient"
-  | "data_quality_provider_limitation";
+  | "data_quality_provider_limitation"
+  // Phase 4 — data quality guardrails
+  | "missing_valuation_source"
+  | "missing_consensus_language"
+  | "missing_filing_data"
+  | "missing_market_intel_data"
+  | "large_cap_provider_limitation"
+  | "stale_data"
+  | "missing_data_negative_thesis"
+  | "weak_data_valuation_language";
 
 /**
  * Mutable analysis slice that the guardrail engine operates on.
@@ -145,6 +154,32 @@ export interface GuardrailContext {
   valuationContext?: unknown;
   /** Full driver context (opaque for future extensibility). */
   driverContext?: unknown;
+  // ─── Phase 4 — data quality context ──────────────────────────────────────────
+  /**
+   * Diana missing_fields list (e.g. ["EDGAR-Quartalsdaten", "KGV"]).
+   * Used by D6 (filing data), D10 (quality summary).
+   */
+  missingFields?: string[];
+  /**
+   * Number of stale fields detected by Diana (stale_fields.length).
+   * Used by D9 (freshness warning).
+   */
+  staleFieldCount?: number;
+  /**
+   * Company market capitalisation in absolute USD (e.g. 500_000_000_000 = 500B).
+   * Null when not available. Used by D8 (large-cap provider limitation).
+   */
+  marketCapUsd?: number | null;
+  /**
+   * True if insider-trade data was available for this analysis run.
+   * Used by D7 (missing market-intel signal).
+   */
+  hasInsiderData?: boolean;
+  /**
+   * True if institutional-holding data was available for this analysis run.
+   * Used by D7 (missing market-intel signal).
+   */
+  hasInstitutionalData?: boolean;
 }
 
 /**
@@ -211,6 +246,28 @@ export interface GuardrailPatch {
    * Used by V10 when scenario ordering is invalid.
    */
   setValuationConfidenceLow?: boolean;
+  /**
+   * Cap valuation_confidence to the given level (conservative: never raises it).
+   * "high" → cap to "high"   (no-op, high is maximum)
+   * "medium" → set to "medium" only when current is "high"
+   * "low"    → same as setValuationConfidenceLow (always sets to "low")
+   * Applied BEFORE setValuationConfidenceLow in the same patch cycle.
+   * Multiple patches: lowest (most conservative) cap wins.
+   * Phase 4: D3 uses this to cap to "medium" when one primary source is missing.
+   */
+  valuationConfidenceCap?: ValuationConfidence;
+  /**
+   * Cap confidence for claims across MULTIPLE source types where claim+evidence
+   * matches the regex `pattern`. Each entry is applied independently.
+   * Array version of `claimCapByPattern` — allows one rule to cap multiple
+   * source types without needing separate patches.
+   * Phase 4: D4/D6/D11/D12 use this for multi-source-type caps.
+   */
+  claimCapsByPattern?: Array<{
+    sourceType: AnalysisClaim["source_type"];
+    pattern: string;
+    cap: number;
+  }>;
   /**
    * Additional messages to append to data_quality_guardrails.
    */

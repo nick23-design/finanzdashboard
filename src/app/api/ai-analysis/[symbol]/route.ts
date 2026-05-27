@@ -2391,7 +2391,11 @@ async function runAnalysisPipeline(
     78,
     async () => completeResearchFields(rawSynthesisBase, snapshot, marketIntel, analystData, dataQuality, fxContext, valuationContext),
   );
-  const rawSynthesis = runLightweightGuardrails(completedSynthesis, dataQuality, valuationContext);
+  const rawSynthesis = runLightweightGuardrails(completedSynthesis, dataQuality, valuationContext, {
+    marketCapUsd: snapshot.market_cap ?? null,
+    hasInsiderData: insiderTrades.length > 0,
+    hasInstitutionalData: institutional != null,
+  });
   assertSynthesisQuality(rawSynthesis, usedFallback ? "Fallback-Synthese" : "Opus-Synthese");
   const rawConviction = clampConviction(rawSynthesis.conviction);
   const cappedConviction = Math.min(rawConviction, confidenceCap);
@@ -2967,6 +2971,12 @@ function runLightweightGuardrails(
   result: SynthesisResult,
   dataQuality: DianaQualityReport | null,
   valuationContext: ValuationContext | null,
+  /** Phase 4 extra context — optional, safe to omit in tests. */
+  extraCtx?: {
+    marketCapUsd?: number | null;
+    hasInsiderData?: boolean;
+    hasInstitutionalData?: boolean;
+  },
 ): SynthesisResult {
   // ─── Basis-Checks (vor der Engine) ──────────────────────────────────────────
   // Schema Validation + JSON Repair laufen vor der Guardrail-Engine,
@@ -3035,6 +3045,12 @@ function runLightweightGuardrails(
     // Phase 3: consensus bear/bull for V3 (undercalibration) and V10 (ordering)
     analystConsensusBear: consensusUsd?.bear ?? null,
     analystConsensusBull: consensusUsd?.bull ?? null,
+    // Phase 4: data quality context
+    missingFields: dataQuality?.missing_fields ?? [],
+    staleFieldCount: dataQuality?.stale_fields?.length ?? 0,
+    marketCapUsd: extraCtx?.marketCapUsd ?? null,
+    hasInsiderData: extraCtx?.hasInsiderData,
+    hasInstitutionalData: extraCtx?.hasInstitutionalData,
     valuationContext,
   };
 

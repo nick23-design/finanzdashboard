@@ -7,12 +7,15 @@
  * to work correctly without multi-pass logic.
  *
  * Conservative merge semantics:
- *   - recommendation:  most defensive value wins (Verkaufen < … < Kaufen)
- *   - convictionMax:   lowest value wins
- *   - removeTarget:    once true, stays true
- *   - valuationDivergence: once null, stays null
- *   - entryQuality:    last patch wins (at most one rule sets it today)
- *   - warnings:        all appended
+ *   - recommendation:          most defensive value wins (Verkaufen < … < Kaufen)
+ *   - convictionMax:           lowest value wins
+ *   - removeTarget:            once true, stays true
+ *   - valuationDivergence:     once null, stays null
+ *   - entryQuality:            last patch wins (at most one rule sets it today)
+ *   - valuationConfidenceCap:  lowest (most conservative) level wins; never raises
+ *   - setValuationConfidenceLow: always forces "low" (wins over valuationConfidenceCap)
+ *   - claimCapsByPattern:      all entries applied (lowest cap per matching claim wins)
+ *   - warnings:                all appended
  *
  * No LLM calls. No VERA logic. Fully deterministic.
  */
@@ -134,9 +137,33 @@ function applyPatch(
     });
   }
 
+  // valuationConfidenceCap — conservatively caps valuation_confidence to a maximum level.
+  // Never raises confidence (low stays low even if cap is "medium").
+  // Applied before setValuationConfidenceLow so "low" always wins.
+  if (patch.valuationConfidenceCap !== undefined && result.valuation_confidence != null) {
+    const CONF_RANK: Record<string, number> = { low: 0, medium: 1, high: 2 };
+    const curRank = CONF_RANK[result.valuation_confidence] ?? 1;
+    const capRank = CONF_RANK[patch.valuationConfidenceCap] ?? 1;
+    if (curRank > capRank) {
+      result.valuation_confidence = patch.valuationConfidenceCap;
+    }
+  }
+
   // setValuationConfidenceLow — forces valuation_confidence to "low" (V10 scenario-ordering reset)
   if (patch.setValuationConfidenceLow === true) {
     result.valuation_confidence = "low";
+  }
+
+  // claimCapsByPattern — array version of claimCapByPattern (multi-source-type caps per rule)
+  if (patch.claimCapsByPattern?.length) {
+    for (const { sourceType, pattern, cap } of patch.claimCapsByPattern) {
+      const re = new RegExp(pattern, "i");
+      result.claims = result.claims.map(c =>
+        c.source_type === sourceType && re.test(`${c.claim} ${c.evidence}`)
+          ? { ...c, confidence: Math.min(c.confidence, cap) }
+          : c,
+      );
+    }
   }
 
   // warnings — appended to data_quality_guardrails
