@@ -33,7 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,30}$")
+TICKER_RE = re.compile(r"^[A-Z0-9.\-=]{1,30}$")
 EDGAR_COMPANYFACTS_TIMEOUT_SECS = 8
 EDGAR_CONCEPT_TIMEOUT_SECS = 4
 INSIDER_SUBMISSIONS_TIMEOUT_SECS = 7
@@ -1146,6 +1146,11 @@ def get_institutional(symbol: str):
         pct_insider: Optional[float] = None
         pct_institutions: Optional[float] = None
         top_holders: list[dict] = []
+        quote_summary: dict[str, Any] = {}
+        try:
+            quote_summary = _fetch_yahoo_quote_summary(symbol, ["majorHoldersBreakdown", "institutionOwnership"])
+        except Exception:
+            quote_summary = {}
 
         try:
             major = ticker.major_holders
@@ -1171,6 +1176,10 @@ def get_institutional(symbol: str):
                         pct_institutions = val
         except Exception:
             pass
+
+        major_breakdown = quote_summary.get("majorHoldersBreakdown", {})
+        pct_insider = pct_insider or _raw_float(major_breakdown.get("insidersPercentHeld"))
+        pct_institutions = pct_institutions or _raw_float(major_breakdown.get("institutionsPercentHeld"))
 
         try:
             inst_df = ticker.institutional_holders
@@ -1208,6 +1217,18 @@ def get_institutional(symbol: str):
                         top_holders.append({"holder": holder, "pct_held": pct, "shares": shares})
         except Exception:
             pass
+
+        if not top_holders:
+            ownership_list = (quote_summary.get("institutionOwnership") or {}).get("ownershipList") or []
+            for item in ownership_list[:5]:
+                holder = item.get("organization") or item.get("name")
+                if not holder:
+                    continue
+                top_holders.append({
+                    "holder": str(holder),
+                    "pct_held": _raw_float(item.get("pctHeld")),
+                    "shares": _raw_int(item.get("position")),
+                })
 
         return InstitutionalData(
             pct_insider=pct_insider,
