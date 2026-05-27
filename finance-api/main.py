@@ -10,7 +10,7 @@ import re
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -34,6 +34,12 @@ app.add_middleware(
 )
 
 TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,30}$")
+EDGAR_COMPANYFACTS_TIMEOUT_SECS = 8
+EDGAR_CONCEPT_TIMEOUT_SECS = 4
+INSIDER_SUBMISSIONS_TIMEOUT_SECS = 7
+INSIDER_FORM4_TIMEOUT_SECS = 4
+INSIDER_FORM4_SCAN_LIMIT = 10
+INSIDER_PARSE_BUDGET_SECS = 9
 
 
 class AssetResponse(BaseModel):
@@ -665,7 +671,7 @@ def _fetch_edgar_concept(cik: str, concept: str, max_items: int = 8) -> list[dic
     req = urllib.request.Request(
         url, headers={"User-Agent": "Finanzdashboard/1.0 contact@nexthorizon-ai.com"}
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=EDGAR_CONCEPT_TIMEOUT_SECS) as resp:
         data = json.loads(resp.read())
 
     usd_units = data.get("units", {}).get("USD", [])
@@ -688,7 +694,7 @@ def _fetch_edgar_companyfacts(cik: str) -> dict:
     req = urllib.request.Request(
         url, headers={"User-Agent": "Finanzdashboard/1.0 contact@nexthorizon-ai.com"}
     )
-    with urllib.request.urlopen(req, timeout=12) as resp:
+    with urllib.request.urlopen(req, timeout=EDGAR_COMPANYFACTS_TIMEOUT_SECS) as resp:
         return json.loads(resp.read())
 
 
@@ -798,30 +804,36 @@ def get_edgar_facts(symbol: str):
         "OperatingRevenues",
     ]
 
-    for concept in revenue_concepts:
-        try:
-            result["revenue"] = _fetch_edgar_concept(cik, concept)
-            break
-        except Exception:
-            continue
+    companyfacts_available = False
+    try:
+        facts = _fetch_edgar_companyfacts(cik)
+        companyfacts_available = True
+        result["revenue"] = _extract_companyfacts_concepts(facts, revenue_concepts)
+        result["net_income"] = _extract_companyfacts_concepts(facts, ["NetIncomeLoss"])
+        result["gross_profit"] = _extract_companyfacts_concepts(facts, ["GrossProfit"])
+    except Exception:
+        # SEC companyfacts is the fast path. If it times out, do not spend more
+        # time on multiple SEC concept calls; fall through to yfinance statements.
+        pass
 
-    for concept, key in [("NetIncomeLoss", "net_income"), ("GrossProfit", "gross_profit")]:
-        try:
-            result[key] = _fetch_edgar_concept(cik, concept)
-        except Exception:
-            pass
-
-    if not result["revenue"] or not result["net_income"] or not result["gross_profit"]:
-        try:
-            facts = _fetch_edgar_companyfacts(cik)
-            if not result["revenue"]:
-                result["revenue"] = _extract_companyfacts_concepts(facts, revenue_concepts)
-            if not result["net_income"]:
-                result["net_income"] = _extract_companyfacts_concepts(facts, ["NetIncomeLoss"])
-            if not result["gross_profit"]:
-                result["gross_profit"] = _extract_companyfacts_concepts(facts, ["GrossProfit"])
-        except Exception:
-            pass
+    # If companyfacts responded but a single concept was absent, try a short
+    # companyconcept fallback for the missing field only.
+    if companyfacts_available:
+        if not result["revenue"]:
+            for concept in revenue_concepts[:3]:
+                try:
+                    result["revenue"] = _fetch_edgar_concept(cik, concept)
+                    if result["revenue"]:
+                        break
+                except Exception:
+                    continue
+        for concept, key in [("NetIncomeLoss", "net_income"), ("GrossProfit", "gross_profit")]:
+            if result[key]:
+                continue
+            try:
+                result[key] = _fetch_edgar_concept(cik, concept)
+            except Exception:
+                pass
 
     if not result["revenue"]:
         try:
@@ -996,7 +1008,7 @@ def _parse_form4(cik_int: str, accession: str, primary_doc: str) -> list[dict]:
     req = urllib.request.Request(
         url, headers={"User-Agent": "Finanzdashboard/1.0 contact@nexthorizon-ai.com"}
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
+    with urllib.request.urlopen(req, timeout=INSIDER_FORM4_TIMEOUT_SECS) as resp:
         root = ET.fromstring(resp.read())
 
     # Extract owner info
@@ -1058,7 +1070,7 @@ def get_insider_trades(symbol: str):
         req = urllib.request.Request(
             url, headers={"User-Agent": "Finanzdashboard/1.0 contact@nexthorizon-ai.com"}
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=INSIDER_SUBMISSIONS_TIMEOUT_SECS) as resp:
             submissions = json.loads(resp.read())
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1068,25 +1080,30 @@ def get_insider_trades(symbol: str):
     accessions = recent.get("accessionNumber", [])
     primary_docs = recent.get("primaryDocument", [])
 
-    # Scan up to 30 most recent Form 4 filings (executives at large firms file many
-    # non-P/S transactions like grants and option exercises before an open-market trade)
+    # Keep Marco bounded: Form 4 parsing is useful context, but it must never
+    # consume the full analysis budget for large-cap companies with many filings.
     form4_list = [
         (accessions[i], primary_docs[i])
         for i, f in enumerate(forms)
         if f in ("4", "4/A") and i < len(accessions) and i < len(primary_docs)
-    ][:30]
+    ][:INSIDER_FORM4_SCAN_LIMIT]
 
     all_trades: list[dict] = []
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    pool = ThreadPoolExecutor(max_workers=4)
+    try:
         futures = {
             pool.submit(_parse_form4, cik_int, acc, doc): (acc, doc)
             for acc, doc in form4_list
         }
-        for future in as_completed(futures):
+        for future in as_completed(futures, timeout=INSIDER_PARSE_BUDGET_SECS):
             try:
                 all_trades.extend(future.result())
             except Exception:
                 continue
+    except FuturesTimeoutError:
+        pass
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     all_trades.sort(key=lambda t: t.get("date", ""), reverse=True)
     return all_trades[:20]

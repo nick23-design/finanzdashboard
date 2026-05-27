@@ -10,6 +10,8 @@ const FINANCE_API_URL =
 const PRIMARY_ATTEMPT_MS  = 20_000;  // pro Versuch; 2 Versuche → max ~42s
 const IMPORTANT_TIMEOUT_MS = 15_000;
 const SECONDARY_TIMEOUT_MS = 12_000;
+const EDGAR_TIMEOUT_MS = 25_000;
+const INSIDER_TIMEOUT_MS = 18_000;
 
 function apiSignal(ms: number) {
   return AbortSignal.timeout(ms);
@@ -130,9 +132,12 @@ export interface InstitutionalData {
 export async function fetchInsiderTrades(symbol: string): Promise<InsiderTrade[]> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/insider-trades`, {
     next: { revalidate: 0 },
-    signal: apiSignal(SECONDARY_TIMEOUT_MS),
+    signal: apiSignal(INSIDER_TIMEOUT_MS),
   });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${res.status}`);
+  }
   return res.json();
 }
 
@@ -166,9 +171,12 @@ export async function fetchGoogleNews(symbol: string): Promise<GoogleNewsItem[]>
 export async function fetchEdgarFacts(symbol: string): Promise<EdgarFacts | null> {
   const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}/edgar-facts`, {
     next: { revalidate: 0 },
-    signal: apiSignal(IMPORTANT_TIMEOUT_MS),
+    signal: apiSignal(EDGAR_TIMEOUT_MS),
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${res.status}`);
+  }
   return res.json();
 }
 

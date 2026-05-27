@@ -9,6 +9,7 @@ export const PEER_MAP: Record<string, string[]> = {
   NVDA:  ["AMD", "INTC", "QCOM"],
   AMD:   ["NVDA", "INTC", "QCOM"],
   INTC:  ["NVDA", "AMD", "QCOM"],
+  AVGO:  ["NVDA", "AMD", "QCOM", "MRVL"],
   TSLA:  ["GM", "F", "RIVN"],
   NFLX:  ["DIS", "WBD", "PARA"],
   CRM:   ["ORCL", "SAP", "NOW"],
