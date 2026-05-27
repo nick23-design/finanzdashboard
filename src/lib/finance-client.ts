@@ -6,7 +6,8 @@
 const FINANCE_API_URL =
   process.env.FINANCE_API_URL || "http://localhost:8000";
 
-const PRIMARY_TIMEOUT_MS = 20_000;
+// Timeouts: Primärer Fetch hat Retry-Logik (s.u.), daher pro Versuch kürzer.
+const PRIMARY_ATTEMPT_MS  = 20_000;  // pro Versuch; 2 Versuche → max ~42s
 const IMPORTANT_TIMEOUT_MS = 15_000;
 const SECONDARY_TIMEOUT_MS = 12_000;
 
@@ -60,16 +61,34 @@ export async function fetchMarketIndices(): Promise<MarketIndex[]> {
   }
 }
 
+/**
+ * Marktdaten für ein Symbol laden.
+ * Bis zu 2 Versuche mit je 20s Timeout — fängt Cold-Starts und kurze
+ * Aussetzer der Finance-API ab. Wirft erst nach dem letzten Versuch.
+ */
 export async function fetchAssetData(symbol: string) {
-  const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}`, {
-    next: { revalidate: 0 },
-    signal: apiSignal(PRIMARY_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `HTTP ${res.status}`);
+  const MAX_ATTEMPTS = 2;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}`, {
+        next: { revalidate: 0 },
+        signal: apiSignal(PRIMARY_ATTEMPT_MS),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    } catch (err) {
+      lastError = err;
+      if (attempt < MAX_ATTEMPTS) {
+        // kurze Pause vor Retry (hilft bei Cold-Starts)
+        await new Promise(r => setTimeout(r, 2_000));
+      }
+    }
   }
-  return res.json();
+  throw lastError;
 }
 
 export async function fetchNews(symbol: string): Promise<NewsItem[]> {
@@ -194,7 +213,7 @@ export async function fetchPriceHistory(
 ) {
   const res = await fetch(
     `${FINANCE_API_URL}/assets/${symbol}/history?period=${period}`,
-    { next: { revalidate: 0 }, signal: apiSignal(PRIMARY_TIMEOUT_MS) }
+    { next: { revalidate: 0 }, signal: apiSignal(PRIMARY_ATTEMPT_MS) }
   );
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

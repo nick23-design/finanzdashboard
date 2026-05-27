@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { AssetSnapshot, AnalysisScore } from "@/types/database";
@@ -387,6 +387,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [aiTrace, setAiTrace] = useState<AnalysisTraceEntry[]>([]);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [, startTransition] = useTransition();
   const [earnings, setEarnings] = useState<EarningsCalendar | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -559,11 +560,15 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   }
 
   async function runAIAnalysis() {
+    // setAiLoading sofort — deaktiviert den Button unmittelbar (kein Doppelklick)
     setAiLoading(true);
-    setAiError(null);
-    setAiProgress(0);
-    setAiCurrentStep("queued");
-    setAiTrace([]);
+    // Rest der Resets als nicht-dringende Transition — gibt Browser Zeit zum Rendern
+    startTransition(() => {
+      setAiError(null);
+      setAiProgress(0);
+      setAiCurrentStep("queued");
+      setAiTrace([]);
+    });
 
     try {
       const res = await fetch(`/api/ai-analysis/${symbol}`, { method: "POST" });
