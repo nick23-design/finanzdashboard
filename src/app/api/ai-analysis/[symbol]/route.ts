@@ -88,6 +88,10 @@ import {
   type RawValuationRange,
   type ValueDriver,
 } from "@/lib/ai-analysis/valuation-model";
+import {
+  validateAndRepairSynthesis,
+  SynthesisValidationSchema,
+} from "@/lib/ai-analysis/synthesis-validator";
 import type { AssetSnapshot, Database, Json } from "@/types/database";
 
 export const maxDuration = 10;
@@ -1389,11 +1393,57 @@ Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
   });
 
   const toolInput = extractToolInput<unknown>(response.content, "complete_synthesis");
-  const parsed = toolInput
-    ? normalizeSynthesisFromUnknown(toolInput, s.currency ?? "USD")
-    : parseSynthesisFromText(extractText(response.content), s.currency ?? "USD");
-  assertSynthesisQuality(parsed, "Opus");
-  return parsed;
+  const rawText = extractText(response.content);
+  const fallbackCurrency = s.currency ?? "USD";
+
+  // Try the tool-input path first (structured response from Opus)
+  if (toolInput) {
+    try {
+      const parsed = normalizeSynthesisFromUnknown(toolInput, fallbackCurrency);
+      assertSynthesisQuality(parsed, "Opus");
+      return parsed;
+    } catch {
+      // Tool input failed validation → fall through to repair pipeline below
+    }
+  }
+
+  // Text path (or tool input failed): run validation + repair pipeline
+  // We use a minimal schema subset to validate the core fields; full normalization
+  // runs via normalizeSynthesisFromUnknown after a successful validation.
+  const { result: repairResult, source } = await validateAndRepairSynthesis(
+    rawText || (toolInput ? JSON.stringify(toolInput) : ""),
+    SynthesisValidationSchema as z.ZodSchema<unknown>,
+    () => runSynthesisFastAgent(symbol, s, fundamental, sentiment, marketIntel, analystData, dataQuality),
+    process.env.ANTHROPIC_API_KEY ?? "",
+  );
+
+  if (source === "opus" || source === "repaired") {
+    // Parse into the full SynthesisResult shape
+    try {
+      const fullParsed = normalizeSynthesisFromUnknown(repairResult, fallbackCurrency);
+      assertSynthesisQuality(fullParsed, source === "repaired" ? "Repair-Agent" : "Opus");
+      return fullParsed;
+    } catch {
+      // normalizeSynthesisFromUnknown threw → build a minimal result from validated fields
+    }
+    const minimalObj = repairResult as Record<string, unknown>;
+    return {
+      recommendation: String(minimalObj.recommendation ?? "Halten"),
+      conviction: typeof minimalObj.conviction === "number" ? minimalObj.conviction : 4,
+      summary: String(minimalObj.summary ?? ""),
+      bull_case: Array.isArray(minimalObj.bull_case) ? (minimalObj.bull_case as string[]) : [],
+      bear_case: Array.isArray(minimalObj.bear_case) ? (minimalObj.bear_case as string[]) : [],
+      growth_outlook: String(minimalObj.growth_outlook ?? ""),
+      price_levels: null,
+      data_quality_guardrails: [
+        `Synthese-Quelle: ${source}. Vollständige Feldnormalisierung nicht möglich.`,
+      ],
+      claims: [],
+    };
+  }
+
+  // haiku_fallback or deterministic_fallback: already a SynthesisResult-compatible object
+  return repairResult as unknown as SynthesisResult;
 }
 
 async function runFactCheckAgent(
