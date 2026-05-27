@@ -117,11 +117,18 @@ const ENTRY_QUALITY_LABELS = [
 
 const VALUATION_CONFIDENCE = ["high", "medium", "low"] as const;
 
+function normalizeConfidenceValue(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return 5;
+  if (n >= 0 && n <= 1) return Math.max(1, Math.round(n * 10));
+  return Math.min(10, Math.max(1, Math.round(n)));
+}
+
 const ClaimSchema = z.object({
   claim: z.string().min(1),
   evidence: z.string().min(1),
   source_type: z.enum(["metrics", "news", "analyst", "market_intel", "inference"]),
-  confidence: z.number().min(1).max(10),
+  confidence: z.preprocess(normalizeConfidenceValue, z.number().min(1).max(10)),
 });
 
 const PriceLevelsSchema = z.object({
@@ -168,6 +175,7 @@ const CompleteAnalysisSchema = z.object({
 type CompleteAnalysisInput = z.infer<typeof CompleteAnalysisSchema>;
 
 const SynthesisOutputSchema = CompleteAnalysisSchema.extend({
+  growth_outlook: z.string().optional(),
   price_levels: PriceLevelsSchema,
 });
 
@@ -460,8 +468,12 @@ function normalizeSynthesisFromUnknown(raw: unknown, fallbackCurrency: string): 
         base: parsed.valuation_range.base,
         bull: parsed.valuation_range.bull,
         rationale: parsed.valuation_range.rationale,
-      }
+    }
     : parsed.valuation_range;
+  const growthOutlook = parsed.growth_outlook?.trim()
+    || parsed.time_horizon_view?.long_term?.trim()
+    || parsed.time_horizon_view?.medium_term?.trim()
+    || "Mittelfristig hängt der Investment-Case davon ab, ob Wachstum, Margen und Free Cashflow die aktuelle Bewertung stützen.";
 
   return {
     recommendation: parsed.recommendation,
@@ -469,7 +481,7 @@ function normalizeSynthesisFromUnknown(raw: unknown, fallbackCurrency: string): 
     summary: parsed.summary,
     bull_case: parsed.bull_case,
     bear_case: parsed.bear_case,
-    growth_outlook: parsed.growth_outlook,
+    growth_outlook: growthOutlook,
     price_levels: priceLevels,
     thesis_type: parsed.thesis_type ?? null,
     time_horizon_view: parsed.time_horizon_view ?? null,
@@ -1122,7 +1134,7 @@ Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kerna
               claim: { type: "string" },
               evidence: { type: "string" },
               source_type: { type: "string", enum: ["metrics", "news", "analyst", "market_intel", "inference"] },
-              confidence: { type: "number" },
+              confidence: { type: "number", description: "Claim-Konfidenz auf Skala 1-10, nicht 0-1." },
             },
             required: ["claim", "evidence", "source_type", "confidence"],
           },
