@@ -486,6 +486,15 @@ function getVeraReview(entries: ProtocolEntry[]): { status: VeraReviewStatus; en
   }
 
   if (
+    entry.status === "skipped" ||
+    detail.includes("nicht verfügbar") ||
+    detail.includes("timeout") ||
+    detail.includes("übersprungen")
+  ) {
+    return { status: "failed", entry };
+  }
+
+  if (
     entry.status === "ok" ||
     detail.includes("keine korrektur") ||
     detail.includes("keine belegten fehler") ||

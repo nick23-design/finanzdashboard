@@ -124,6 +124,14 @@ const ClaimSchema = z.object({
   confidence: z.number().min(1).max(10),
 });
 
+const PriceLevelsSchema = z.object({
+  entry: z.number().nullable().optional(),
+  target: z.number().nullable().optional(),
+  stop_loss: z.number().nullable().optional(),
+  entry_rationale: z.string().optional(),
+  target_rationale: z.string().optional(),
+}).nullable().optional();
+
 const CompleteAnalysisSchema = z.object({
   recommendation: z.enum(["Kaufen", "Leicht kaufen", "Halten", "Leicht verkaufen", "Verkaufen"]),
   conviction: z.number().min(1).max(10),
@@ -158,6 +166,10 @@ const CompleteAnalysisSchema = z.object({
   claims: z.array(ClaimSchema).max(6).optional(),
 });
 type CompleteAnalysisInput = z.infer<typeof CompleteAnalysisSchema>;
+
+const SynthesisOutputSchema = CompleteAnalysisSchema.extend({
+  price_levels: PriceLevelsSchema,
+});
 
 // --- Peer context ---
 
@@ -407,7 +419,8 @@ function validateRecommendation(r: string): AllowedRecommendation {
 }
 
 function validateBeforeSave(r: AIAnalysisResult): boolean {
-  return !!(r.symbol?.trim() && r.summary?.trim() && r.recommendation?.trim());
+  return !!(r.symbol?.trim() && r.summary?.trim() && r.recommendation?.trim())
+    && getSynthesisQualityIssues(r).filter(issue => issue.severity === "blocker").length === 0;
 }
 
 function cloneTrace(trace: AnalysisTraceEntry[]): AnalysisTraceEntry[] {
@@ -416,6 +429,101 @@ function cloneTrace(trace: AnalysisTraceEntry[]): AnalysisTraceEntry[] {
 
 function tracePayload(trace: AnalysisTraceEntry[]): Json {
   return { trace: cloneTrace(trace) } as unknown as Json;
+}
+
+function normalizeSynthesisFromUnknown(raw: unknown, fallbackCurrency: string): SynthesisResult {
+  const parsed = SynthesisOutputSchema.parse(raw);
+  const priceLevelSource = parsed.price_levels ?? (
+    parsed.entry != null || parsed.target != null || parsed.stop_loss != null
+      ? {
+          entry: parsed.entry,
+          target: parsed.target,
+          stop_loss: parsed.stop_loss,
+          entry_rationale: parsed.entry_rationale,
+          target_rationale: parsed.target_rationale,
+        }
+      : null
+  );
+  const priceLevels: PriceLevels | null = priceLevelSource
+    ? {
+        entry: priceLevelSource.entry ?? null,
+        target: priceLevelSource.target ?? null,
+        stop_loss: priceLevelSource.stop_loss ?? null,
+        entry_rationale: priceLevelSource.entry_rationale ?? "",
+        target_rationale: priceLevelSource.target_rationale ?? "",
+      }
+    : null;
+  const valuationRange = parsed.valuation_range
+    ? {
+        currency: normalizeCurrency(parsed.valuation_range.currency ?? fallbackCurrency),
+        bear: parsed.valuation_range.bear,
+        base: parsed.valuation_range.base,
+        bull: parsed.valuation_range.bull,
+        rationale: parsed.valuation_range.rationale,
+      }
+    : parsed.valuation_range;
+
+  return {
+    recommendation: parsed.recommendation,
+    conviction: parsed.conviction,
+    summary: parsed.summary,
+    bull_case: parsed.bull_case,
+    bear_case: parsed.bear_case,
+    growth_outlook: parsed.growth_outlook,
+    price_levels: priceLevels,
+    thesis_type: parsed.thesis_type ?? null,
+    time_horizon_view: parsed.time_horizon_view ?? null,
+    entry_quality: parsed.entry_quality ?? null,
+    valuation_confidence: parsed.valuation_confidence ?? null,
+    valuation_range: valuationRange ?? null,
+    data_quality_guardrails: parsed.data_quality_guardrails ?? [],
+    claims: parsed.claims ?? [],
+  };
+}
+
+function parseSynthesisFromText(rawText: string, fallbackCurrency: string): SynthesisResult {
+  return normalizeSynthesisFromUnknown(parseJSON<unknown>(rawText), fallbackCurrency);
+}
+
+function getSynthesisQualityIssues(result: Pick<SynthesisResult, "summary" | "bull_case" | "bear_case" | "growth_outlook">): { severity: "blocker" | "warning"; message: string }[] {
+  const issues: { severity: "blocker" | "warning"; message: string }[] = [];
+  const summary = String(result.summary ?? "").trim();
+  const growth = String(result.growth_outlook ?? "").trim();
+  const combined = `${summary} ${growth}`.toLowerCase();
+  const failureMarkers = [
+    "analyse konnte nicht erstellt",
+    "analyse konnte nicht vollständig erstellt",
+    "konnte nicht verarbeitet",
+    "keine ausreichenden timing-daten",
+  ];
+
+  if (failureMarkers.some(marker => combined.includes(marker))) {
+    issues.push({ severity: "blocker", message: "Synthese enthält generische Fallback-Texte." });
+  }
+  if (growth.toLowerCase() === "nicht verfügbar") {
+    issues.push({ severity: "blocker", message: "Wachstumsausblick fehlt." });
+  }
+  if (summary.length < 80) {
+    issues.push({ severity: "blocker", message: "Zusammenfassung ist zu dünn für eine belastbare Analyse." });
+  }
+  if (!Array.isArray(result.bull_case) || result.bull_case.filter(Boolean).length < 2) {
+    issues.push({ severity: "blocker", message: "Bull-Case enthält zu wenige substanzielle Punkte." });
+  }
+  if (!Array.isArray(result.bear_case) || result.bear_case.filter(Boolean).length < 2) {
+    issues.push({ severity: "blocker", message: "Bear-Case enthält zu wenige substanzielle Punkte." });
+  }
+  if (growth.length < 60) {
+    issues.push({ severity: "warning", message: "Wachstumsausblick ist knapp." });
+  }
+
+  return issues;
+}
+
+function assertSynthesisQuality(result: SynthesisResult, source: string): void {
+  const blockers = getSynthesisQualityIssues(result).filter(issue => issue.severity === "blocker");
+  if (blockers.length) {
+    throw new Error(`${source} quality gate failed: ${blockers.map(i => i.message).join(" ")}`);
+  }
 }
 
 function roundMoney(value: number | null): number | null {
@@ -559,6 +667,89 @@ function buildDefaultClaims(
     },
   ];
   return claims;
+}
+
+function buildHeuristicSynthesis(
+  symbol: string,
+  s: AssetSnapshot,
+  fundamental: FundamentalAnalysis,
+  sentiment: SentimentAnalysis,
+  marketIntel: MarketIntelAnalysis | null,
+  analystData: AnalystData | null,
+  dataQuality: DianaQualityReport | null | undefined,
+  reason: string,
+): SynthesisResult {
+  const thesis = inferThesisType(s, marketIntel);
+  const entry = inferEntryQuality(s);
+  const valuationConfidence = inferValuationConfidence(s, analystData, dataQuality);
+  const positives = fundamental.key_positives.filter(Boolean);
+  const risks = fundamental.key_risks.filter(Boolean);
+  const bullishNews = sentiment.sentiment === "bullish";
+  const bearishSignals = [
+    sentiment.sentiment === "bearish",
+    marketIntel?.insider_signal === "bearish",
+    marketIntel?.trends_momentum === "declining",
+    entry.label === "nicht hinterherrennen",
+    entry.label === "nur spekulativ",
+  ].filter(Boolean).length;
+  const constructiveSignals = [
+    fundamental.growth_rating >= 7,
+    bullishNews,
+    s.free_cashflow != null && s.free_cashflow > 0,
+    s.revenue_growth != null && s.revenue_growth > 0.05,
+    entry.label === "attraktiv",
+  ].filter(Boolean).length;
+  const recommendation: AllowedRecommendation =
+    constructiveSignals >= 4 && bearishSignals <= 1 ? "Leicht kaufen"
+    : bearishSignals >= 3 && constructiveSignals <= 2 ? "Leicht verkaufen"
+    : "Halten";
+  const convictionBase = recommendation === "Halten" ? 5 : 6;
+  const conviction = Math.min(dataQuality?.analysis_confidence_cap ?? 10, convictionBase);
+  const bullCase = (positives.length ? positives : [
+    s.free_cashflow != null && s.free_cashflow > 0 ? "Positiver Free Cashflow stützt die finanzielle Qualität." : null,
+    s.revenue_growth != null && s.revenue_growth > 0 ? `Umsatzwachstum von ${(s.revenue_growth * 100).toFixed(1)}% spricht für Nachfrage oder Preissetzung.` : null,
+    bullishNews ? "Nachrichtenlage wirkt aktuell konstruktiv." : null,
+  ].filter((item): item is string => !!item)).slice(0, 4);
+  const bearCase = (risks.length ? risks : [
+    s.pe_ratio != null && s.pe_ratio > 35 ? `Hohes KGV von ${s.pe_ratio.toFixed(1)} erhöht Bewertungsrisiko.` : null,
+    s.price != null && s.moving_average_200 != null && s.price < s.moving_average_200 ? "Kurs liegt unter dem 200-Tage-Durchschnitt; langfristiger Trend ist noch nicht bestätigt." : null,
+    marketIntel?.trends_momentum === "declining" ? "Retail-Interesse laut Google Trends rückläufig; nur schwaches Zusatzsignal." : null,
+  ].filter((item): item is string => !!item)).slice(0, 4);
+
+  while (bullCase.length < 2) bullCase.push("Fundamentaldaten liefern zumindest eine prüfbare Basis für weitere Research-Arbeit.");
+  while (bearCase.length < 2) bearCase.push("Bewertung und operative Entwicklung müssen gegen aktuelle Erwartungen validiert werden.");
+
+  const sentimentLabel = sentiment.sentiment === "bullish" ? "positiver" : sentiment.sentiment === "bearish" ? "negativer" : "neutraler";
+  const summary = `${symbol} wird konservativ mit ${recommendation} und Conviction ${conviction}/10 eingestuft, weil die primäre Opus-Synthese nicht belastbar verarbeitet werden konnte (${reason}). Die Einschätzung basiert daher regelbasiert auf Fundamentalbewertung ${fundamental.growth_rating}/10, ${sentimentLabel} Nachrichtenlage, technischen Timing-Daten und verfügbaren Markt-Signalen.`;
+  const growthOutlook = fundamental.valuation_comment?.trim().length > 60
+    ? fundamental.valuation_comment
+    : `Mittelfristig hängt die These davon ab, ob ${symbol} Wachstum, Margen und Free Cashflow gegen die aktuelle Bewertung verteidigen kann; diese Einschätzung ersetzt kein vollständiges Bewertungsmodell.`;
+
+  return {
+    recommendation,
+    conviction,
+    summary,
+    bull_case: bullCase,
+    bear_case: bearCase,
+    growth_outlook: growthOutlook,
+    price_levels: {
+      entry: s.price ?? null,
+      target: null,
+      stop_loss: s.price != null ? roundMoney(s.price * 0.9) : null,
+      entry_rationale: "Aktuelles Niveau als Beobachtungsmarke",
+      target_rationale: "Kein präzises Ziel im Fallback",
+    },
+    thesis_type: thesis,
+    time_horizon_view: buildDefaultTimeHorizonView(s, entry, thesis),
+    entry_quality: entry,
+    valuation_confidence: valuationConfidence === "high" ? "medium" : valuationConfidence,
+    valuation_range: null,
+    data_quality_guardrails: [
+      `Synthese-Fallback: ${reason}. Ergebnis konservativ interpretieren.`,
+      "Keine personalisierte Anlageberatung; bei Unsicherheit Datenlage manuell prüfen.",
+    ],
+    claims: [],
+  };
 }
 
 function buildValuationRange(
@@ -893,31 +1084,9 @@ Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.`,
     ],
   });
 
-  const fallback: SynthesisResult = {
-    recommendation: "Halten",
-    conviction: 5,
-    summary: "Analyse konnte nicht erstellt werden.",
-    bull_case: [],
-    bear_case: [],
-    growth_outlook: "Nicht verfügbar",
-    thesis_type: "Speculative",
-    time_horizon_view: {
-      short_term: "Kurzfristige Einschätzung nicht verfügbar.",
-      medium_term: "Mittelfristige Einschätzung nicht verfügbar.",
-      long_term: "Langfristige Einschätzung nicht verfügbar.",
-    },
-    entry_quality: { label: "fair", rationale: "Keine ausreichenden Timing-Daten verfügbar." },
-    valuation_confidence: "low",
-    valuation_range: null,
-    data_quality_guardrails: ["Analyse konnte nicht vollständig erstellt werden."],
-    claims: [],
-  };
-
-  try {
-    return parseJSON<SynthesisResult>(extractText(response.content));
-  } catch {
-    return fallback;
-  }
+  const parsed = parseSynthesisFromText(extractText(response.content), s.currency ?? "USD");
+  assertSynthesisQuality(parsed, "Opus");
+  return parsed;
 }
 
 async function runFactCheckAgent(
@@ -1194,6 +1363,31 @@ function formatMarketIntel(
   return lines.join("\n\n");
 }
 
+function sanitizeMarketIntelAnalysis(
+  result: MarketIntelAnalysis,
+  trades: InsiderTrade[],
+): MarketIntelAnalysis {
+  const hasActualInsiderTrades = trades.length > 0;
+  const insiderSignal = !hasActualInsiderTrades && result.insider_signal === "bearish"
+    ? "neutral"
+    : result.insider_signal;
+  const key_observations = result.key_observations.map(obs => {
+    let next = obs
+      .replace(/fehlende Management-Conviction/gi, "kein harter Beleg für Management-Conviction")
+      .replace(/klassisches Bearish-Signal/gi, "schwaches Kontextsignal")
+      .replace(/konsistenter Retail-Interest-Rückgang/gi, "schwaches Retail-Sentiment-Signal");
+    if (/BlackRock|Vanguard|State Street/i.test(next) && !/passiv|Index|ETF/i.test(next)) {
+      next += " Passive Index-/ETF-Flüsse nicht überinterpretieren.";
+    }
+    return next;
+  });
+  if (!hasActualInsiderTrades && result.insider_signal === "bearish") {
+    key_observations.unshift("Keine aktuellen Insider-Transaktionen: niedrige Insider-Ownership allein wird nicht als stark bearish gewertet.");
+  }
+
+  return { ...result, insider_signal: insiderSignal, key_observations };
+}
+
 async function runMarketIntelAgent(
   trades: InsiderTrade[],
   trends: TrendPoint[],
@@ -1218,7 +1412,14 @@ async function runMarketIntelAgent(
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
-    system: "Du bist ein Marktanalyse-Experte. Bewerte Insider-Aktivität und institutionelle Positionierung als primäre Marktsignale. Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf nie als Kernargument gewertet werden. Antworte ausschließlich mit validem JSON.",
+    system: `Du bist ein vorsichtiger Marktanalyse-Experte. Bewerte Insider-Aktivität und institutionelle Positionierung nüchtern.
+Regeln:
+- Niedrige Insider-Ownership ist bei Mega-Caps und Gründer-/Index-getriebenen Unternehmen NICHT automatisch bearish.
+- BlackRock, Vanguard, State Street und ähnliche Top-Holder sind meist passive Index-/ETF-Positionen; nicht als aktive Conviction interpretieren.
+- Insider-Verkäufe sind nur stark bearish, wenn sie groß, gehäuft und nicht plausibel planbasiert sind.
+- Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf nie als Kernargument gewertet werden.
+- Formuliere Beobachtungen als "Hinweis" oder "schwaches Signal", wenn die Daten keine harte Aussage tragen.
+Antworte ausschließlich mit validem JSON.`,
     messages: [
       {
         role: "user",
@@ -1228,7 +1429,7 @@ async function runMarketIntelAgent(
   });
 
   try {
-    return parseJSON<MarketIntelAnalysis>(extractText(response.content));
+    return sanitizeMarketIntelAnalysis(parseJSON<MarketIntelAnalysis>(extractText(response.content)), trades);
   } catch {
     return {
       insider_signal: "neutral",
@@ -1652,7 +1853,7 @@ async function runSynthesisFastAgent(
   analystData: AnalystData | null,
   dataQuality?: DianaQualityReport | null,
 ): Promise<SynthesisResult> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 12_000 });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 12_000, maxRetries: 0 });
 
   const analystLine = analystData?.mean_target != null
     ? `Analysten-Kursziel: Ø $${analystData.mean_target.toFixed(2)}`
@@ -1673,26 +1874,6 @@ async function runSynthesisFastAgent(
     analystLine, miLine, dianaLine,
   ].filter(Boolean).join("\n");
 
-  const fallback: SynthesisResult = {
-    recommendation: "Halten",
-    conviction: 5,
-    summary: "Analyse konnte nicht erstellt werden.",
-    bull_case: [],
-    bear_case: [],
-    growth_outlook: "Nicht verfügbar",
-    thesis_type: "Speculative",
-    time_horizon_view: {
-      short_term: "Kurzfristige Einschätzung nicht verfügbar.",
-      medium_term: "Mittelfristige Einschätzung nicht verfügbar.",
-      long_term: "Langfristige Einschätzung nicht verfügbar.",
-    },
-    entry_quality: { label: "fair", rationale: "Keine ausreichenden Timing-Daten verfügbar." },
-    valuation_confidence: "low",
-    valuation_range: null,
-    data_quality_guardrails: ["Schnell-Analyse (Haiku-Fallback): Opus überschritt das Zeitbudget."],
-    claims: [],
-  };
-
   try {
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -1704,17 +1885,27 @@ async function runSynthesisFastAgent(
       }],
     });
 
-    const parsed = parseJSON<SynthesisResult>(extractText(response.content));
+    const parsed = parseSynthesisFromText(extractText(response.content), s.currency ?? "USD");
+    assertSynthesisQuality(parsed, "Haiku-Fallback");
     return {
       ...parsed,
-      valuation_confidence: "low",
+      valuation_confidence: parsed.valuation_confidence === "high" ? "medium" : parsed.valuation_confidence ?? "medium",
       data_quality_guardrails: [
         ...(parsed.data_quality_guardrails ?? []),
         "Schnell-Analyse (Haiku-Fallback): Opus überschritt das Zeitbudget.",
       ],
     };
-  } catch {
-    return fallback;
+  } catch (err) {
+    return buildHeuristicSynthesis(
+      symbol,
+      s,
+      fundamental,
+      sentiment,
+      marketIntel,
+      analystData,
+      dataQuality,
+      err instanceof Error ? err.message : "Haiku-Fallback nicht verwertbar",
+    );
   }
 }
 
@@ -1800,6 +1991,7 @@ async function runAnalysisPipeline(
     78,
     async () => completeResearchFields(rawSynthesisBase, snapshot, marketIntel, analystData, dataQuality, fxContext),
   );
+  assertSynthesisQuality(rawSynthesis, usedFallback ? "Fallback-Synthese" : "Opus-Synthese");
   const rawConviction = clampConviction(rawSynthesis.conviction);
   const cappedConviction = Math.min(rawConviction, confidenceCap);
   const capNote = rawConviction > confidenceCap ? ` · Conviction ${rawConviction}→${cappedConviction} (Diana-Cap)` : "";
@@ -1943,10 +2135,13 @@ async function runDeferredVeraCheck({
   }
 
   if (veraTrace && finishTrace) {
+    const veraUnavailable = factCheck.entry.status === "skipped";
     await finishTrace(
       veraTrace,
-      factCheck.findings.length ? "warning" : "ok",
-      factCheck.findings.length
+      veraUnavailable ? "warning" : factCheck.findings.length ? "warning" : "ok",
+      veraUnavailable
+        ? factCheck.entry.detail
+        : factCheck.findings.length
         ? `${factCheck.findings.length} Korrektur(en) oder Findings`
         : "Keine belegten Fehler gefunden",
     ).catch(() => {});
