@@ -300,30 +300,42 @@ function ValuationRangeSection({
   );
 }
 
+const GAP_LABEL_DE: Record<string, string> = {
+  own_model_more_bullish: "Eigenes Modell optimistischer als Konsens",
+  consensus_more_bullish: "Konsens optimistischer als eigenes Modell",
+  aligned: "Konsens und eigenes Modell weitgehend einig",
+};
+
+const STATUS_LABEL_DE: Record<string, string> = {
+  missing_consensus: "Kein strukturierter Analystenkonsens verfügbar",
+  missing_own_model: "Kein eigenes Bewertungsmodell berechnet",
+  missing_both: "Keine Bewertungsdaten für Divergenz",
+  insufficient_data: "Bewertungsdaten für Divergenz unvollständig",
+};
+
 function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }) {
   const analyst = analysis.analyst_consensus_range;
   const model = analysis.model_valuation_range;
-  const divergence = analysis.valuation_divergence;
+  const div = analysis.valuation_divergence;
 
-  if (!analyst && !model && !divergence) return null;
+  if (!analyst && !model && !div) return null;
 
-  // Show divergence card only when status is "available" (both ranges present + numbers ok)
-  const showDivergence = divergence?.status === "available";
+  // ─── Backward-compat: detect legacy format (pre-DivergenceResult)
+  // Old format has `difference_pct` / `interpretation` but no `status`.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const legacy = (div as any);
+  const isLegacy = div != null && div.status == null && legacy?.difference_pct !== undefined;
+  const isNewAvailable = div?.status === "available";
 
-  const divergenceColor =
-    divergence?.baseGapPct == null
-      ? "#64748b"
-      : Math.abs(divergence.baseGapPct) < 5
-      ? "#38bdf8"   // aligned → blue
-      : "#f59e0b";  // diverging → amber
+  // Gap value to color (positive = consensus more bullish = amber, aligned = blue)
+  const gapPct = isNewAvailable ? div!.baseGapPct : (isLegacy ? legacy.difference_pct : null);
+  const divColor = gapPct == null ? "#64748b"
+    : Math.abs(gapPct) < 5 ? "#38bdf8"
+    : "#f59e0b";
 
-  // Status-badge for non-available divergence states
-  const STATUS_LABEL: Record<string, string> = {
-    missing_consensus: "Kein Analystenkonsens",
-    missing_own_model: "Kein eigenes Modell",
-    missing_both: "Keine Bewertungsdaten",
-    insufficient_data: "Daten unvollständig",
-  };
+  // Conservative model note: own model base scenario is >25% below current price
+  const modelVeryConservative =
+    isNewAvailable && div!.ownModelUpsidePct !== undefined && div!.ownModelUpsidePct <= -25;
 
   return (
     <div className="space-y-2">
@@ -335,54 +347,92 @@ function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }
         />
       )}
       {model && (
-        <ValuationRangeSection
-          range={model}
-          levels={analysis.price_levels}
-          title="Eigenes Modell"
-          subtitle="Deterministische FCF-/Multiple-Szenarien"
-        />
-      )}
-      {showDivergence && divergence && (
-        <div
-          className="rounded-xl p-3"
-          style={{ background: `${divergenceColor}12`, border: `1px solid ${divergenceColor}35` }}>
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-semibold text-white">
-              Divergenz
-              {divergence.gapLabel && divergence.gapLabel !== "not_calculable" && (
-                <span className="ml-1.5 text-[10px] font-normal opacity-70">
-                  {divergence.gapLabel === "aligned" ? "· Aligned" :
-                   divergence.gapLabel === "consensus_more_bullish" ? "· Konsens bullisher" :
-                   "· Modell bullisher"}
-                </span>
-              )}
-            </p>
-            <span className="text-xs font-semibold" style={{ color: divergenceColor }}>
-              {formatSignedPct(divergence.baseGapPct)}
-            </span>
-          </div>
-          {divergence.consensusUpsidePct != null && divergence.ownModelUpsidePct != null && (
-            <div className="flex gap-3 mt-1.5">
-              <span className="text-[10px]" style={{ color: "var(--muted)" }}>
-                Konsens: <span className="font-semibold text-white">{formatSignedPct(divergence.consensusUpsidePct)}</span>
-              </span>
-              <span className="text-[10px]" style={{ color: "var(--muted)" }}>
-                Modell: <span className="font-semibold text-white">{formatSignedPct(divergence.ownModelUpsidePct)}</span>
-              </span>
+        <>
+          <ValuationRangeSection
+            range={model}
+            levels={analysis.price_levels}
+            title="Eigenes Modell"
+            subtitle="Konservative FCF-/Multiple-Szenarien (kein Optionalitätswert)"
+          />
+          {modelVeryConservative && (
+            <div className="rounded-xl px-3 py-2"
+              style={{ background: "rgba(245,158,11,0.06)", border: "1px solid #f59e0b30" }}>
+              <p className="text-[10px] leading-relaxed" style={{ color: "#f59e0b" }}>
+                ⚠ Das eigene Modell liegt deutlich unter dem Marktpreis. Es bewertet ausschließlich
+                aktuelle FCF-/Multiple-Kennzahlen — strategische Optionalität (AI, M&A, Plattformprämien)
+                ist nicht modelliert. Der Konsens spiegelt diese Erwartungen wider.
+              </p>
             </div>
           )}
+        </>
+      )}
+
+      {/* ─── New format divergence card ─────────────────────────────────── */}
+      {isNewAvailable && div && (
+        <div className="rounded-xl p-3 space-y-2.5"
+          style={{ background: `${divColor}10`, border: `1px solid ${divColor}40` }}>
+          {/* Headline: human-readable gap label */}
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs font-semibold text-white leading-snug">
+              {GAP_LABEL_DE[div.gapLabel ?? ""] ?? "Divergenz Konsens vs. Modell"}
+            </p>
+            <span className="shrink-0 text-xs font-bold px-2 py-0.5 rounded-full"
+              style={{ color: divColor, background: `${divColor}20` }}>
+              {formatSignedPct(div.baseGapPct)}
+            </span>
+          </div>
+          {/* 3-column grid: Konsens-Upside / Gap / Modell-Upside */}
+          {div.consensusUpsidePct != null && div.ownModelUpsidePct != null && (
+            <div className="grid grid-cols-3 gap-1 text-center rounded-xl py-2"
+              style={{ background: "rgba(0,0,0,0.15)" }}>
+              <div>
+                <p className="text-[10px] mb-0.5" style={{ color: "var(--muted)" }}>Konsens-Upside</p>
+                <p className="text-sm font-bold text-white">{formatSignedPct(div.consensusUpsidePct)}</p>
+              </div>
+              <div className="border-x" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+                <p className="text-[10px] mb-0.5" style={{ color: "var(--muted)" }}>Gap</p>
+                <p className="text-sm font-bold" style={{ color: divColor }}>{formatSignedPct(div.baseGapPct)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] mb-0.5" style={{ color: "var(--muted)" }}>Modell-Upside</p>
+                <p className="text-sm font-bold text-white">{formatSignedPct(div.ownModelUpsidePct)}</p>
+              </div>
+            </div>
+          )}
+          <p className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
+            {div.explanationSeed}
+          </p>
+          {div.warnings?.length > 0 && (
+            <p className="text-[10px] leading-relaxed" style={{ color: "#f59e0b" }}>
+              ⚠ {div.warnings[0]}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ─── Legacy format divergence card (cached pre-refactor analyses) ── */}
+      {isLegacy && legacy.difference_pct != null && (
+        <div className="rounded-xl p-3"
+          style={{ background: `${divColor}10`, border: `1px solid ${divColor}35` }}>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-white">Divergenz</p>
+            <span className="text-xs font-semibold" style={{ color: divColor }}>
+              {formatSignedPct(legacy.difference_pct)}
+            </span>
+          </div>
           <p className="text-[11px] mt-1 leading-relaxed" style={{ color: "var(--muted)" }}>
-            {divergence.explanationSeed}
+            {legacy.interpretation}
           </p>
         </div>
       )}
-      {!showDivergence && divergence && divergence.status !== "missing_both" && (
-        <div
-          className="rounded-xl px-3 py-2 flex items-center gap-2"
+
+      {/* ─── Status badge for non-available new-format states ─────────────── */}
+      {!isNewAvailable && !isLegacy && div && div.status !== "missing_both" && div.status != null && (
+        <div className="rounded-xl px-3 py-2"
           style={{ background: "rgba(100,116,139,0.08)", border: "1px solid var(--card-border)" }}>
-          <span className="text-[10px]" style={{ color: "var(--muted)" }}>
-            ⓘ {STATUS_LABEL[divergence.status] ?? "Divergenz nicht verfügbar"}
-          </span>
+          <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+            ⓘ {STATUS_LABEL_DE[div.status] ?? "Divergenz nicht verfügbar"}
+          </p>
         </div>
       )}
     </div>
