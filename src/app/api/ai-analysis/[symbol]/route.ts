@@ -371,6 +371,11 @@ export interface AnalysisTraceEntry {
   error?: string;
 }
 
+interface OptionalFetchResult<T> {
+  data: T;
+  error: string | null;
+}
+
 export interface DianaQualityReport {
   completeness_score: number;
   stale_fields: string[];
@@ -489,6 +494,20 @@ function cloneTrace(trace: AnalysisTraceEntry[]): AnalysisTraceEntry[] {
 
 function tracePayload(trace: AnalysisTraceEntry[]): Json {
   return { trace: cloneTrace(trace) } as unknown as Json;
+}
+
+async function captureOptionalFetch<T>(
+  fn: () => Promise<T>,
+  fallback: T,
+): Promise<OptionalFetchResult<T>> {
+  try {
+    return { data: await fn(), error: null };
+  } catch (err) {
+    return {
+      data: fallback,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 function normalizeSynthesisFromUnknown(raw: unknown, fallbackCurrency: string): SynthesisResult {
@@ -1194,6 +1213,81 @@ async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, p
 }
 
 type NewsItemWithDesc = GoogleNewsItem & { description?: string | null };
+
+function buildDataDiagnostics(
+  snapshot: AssetSnapshot,
+  googleNews: NewsItemWithDesc[],
+  edgarFacts: EdgarFacts | null,
+  insiderTrades: InsiderTrade[],
+  trends: TrendPoint[],
+  institutional: InstitutionalData | null,
+  analystData: AnalystData | null,
+  peerContext: string,
+  fetchErrors: Record<string, string | null>,
+  fxContext: FxContext,
+): { status: AnalysisTraceEntry["status"]; detail: string } {
+  const missingCore = [
+    snapshot.pe_ratio == null ? "KGV" : null,
+    snapshot.debt_to_equity == null ? "Debt/Equity" : null,
+    snapshot.free_cashflow == null ? "FCF" : null,
+    snapshot.revenue_growth == null ? "Umsatzwachstum" : null,
+  ].filter((item): item is string => item != null);
+
+  const edgarRows =
+    (edgarFacts?.revenue.length ?? 0) +
+    (edgarFacts?.net_income.length ?? 0) +
+    (edgarFacts?.gross_profit.length ?? 0);
+  const hasYfFilingFallback = [
+    ...(edgarFacts?.revenue ?? []),
+    ...(edgarFacts?.net_income ?? []),
+    ...(edgarFacts?.gross_profit ?? []),
+  ].some(item => String(item.form ?? "").startsWith("YF"));
+  const edgarLabel = edgarRows > 0
+    ? `${edgarFacts?.revenue.length ?? 0} Umsatz-Q${hasYfFilingFallback ? " (Yahoo-Fallback)" : " (SEC)"}`
+    : "fehlt";
+
+  const analystRatings =
+    (analystData?.strong_buy ?? 0) +
+    (analystData?.buy ?? 0) +
+    (analystData?.hold ?? 0) +
+    (analystData?.sell ?? 0) +
+    (analystData?.strong_sell ?? 0);
+  const hasAnalystConsensus = analystData != null && (analystData.mean_target != null || analystRatings > 0);
+  const institutionalCount = institutional?.top_holders.length ?? 0;
+  const hasInstitutional = institutional != null &&
+    (institutional.pct_institutions != null || institutional.pct_insider != null || institutionalCount > 0);
+  const newsWithExcerpt = googleNews.filter(n => n.description).length;
+
+  const diagnostics = [
+    `Asset: ${missingCore.length ? `fehlend ${missingCore.join(", ")}` : "Kernkennzahlen ok"}`,
+    `EDGAR/Quartal: ${edgarLabel}`,
+    `Analysten: ${hasAnalystConsensus ? `Ziel ${analystData?.mean_target?.toFixed(2) ?? "N/A"}, Ratings ${analystRatings}` : "fehlt"}`,
+    `Marco-Inputs: Insider ${insiderTrades.length}, Institutionen ${hasInstitutional ? institutionalCount || "Quote" : "fehlt"}, Trends ${trends.length}`,
+    `News: ${googleNews.length}, Excerpts ${newsWithExcerpt}`,
+    `Peers: ${peerContext ? "vorhanden" : "fehlt"}`,
+    `FX: ${fxContext.source}`,
+  ];
+
+  const errors = Object.entries(fetchErrors)
+    .filter(([, error]) => Boolean(error))
+    .map(([source, error]) => `${source}: ${String(error).slice(0, 140)}`);
+
+  const warnings = [
+    missingCore.length > 0,
+    edgarRows === 0,
+    !hasAnalystConsensus,
+    !hasMarketIntelData(insiderTrades, trends, institutional),
+    !peerContext,
+    errors.length > 0,
+  ].some(Boolean);
+
+  return {
+    status: warnings ? "warning" : "ok",
+    detail: errors.length
+      ? `${diagnostics.join(" · ")} · Fehler: ${errors.join(" | ")}`
+      : diagnostics.join(" · "),
+  };
+}
 
 async function runSentimentAgent(news: NewsItemWithDesc[]): Promise<SentimentAnalysis> {
   if (news.length === 0) {
@@ -2759,18 +2853,49 @@ export async function runAnalysisJob(
 
   try {
     tlog("start");
-    const [assetData, googleNews, edgarFacts, insiderTrades, trends, institutional, analystData, fxContext] =
+    const fallbackFxContext: FxContext = {
+      eurUsd: EUR_USD_FALLBACK,
+      source: "fallback",
+      asOf: new Date().toISOString(),
+    };
+    const [
+      assetData,
+      googleNewsResult,
+      edgarFactsResult,
+      insiderTradesResult,
+      trendsResult,
+      institutionalResult,
+      analystDataResult,
+      fxContextResult,
+    ] =
       await traceStep("fetch_data", "Markt-, News- und Zusatzdaten laden", 10, () => Promise.all([
         fetchAssetData(symbol),
-        fetchGoogleNews(symbol).catch(() => [] as GoogleNewsItem[]),
-        fetchEdgarFacts(symbol).catch(() => null),
-        fetchInsiderTrades(symbol).catch(() => [] as InsiderTrade[]),
-        fetchTrends(symbol).catch(() => [] as TrendPoint[]),
-        fetchInstitutional(symbol).catch(() => null),
-        fetchAnalystData(symbol).catch(() => null as AnalystData | null),
-        fetchFxContext().catch(() => ({ eurUsd: EUR_USD_FALLBACK, source: "fallback" as const, asOf: new Date().toISOString() })),
+        captureOptionalFetch(() => fetchGoogleNews(symbol), [] as GoogleNewsItem[]),
+        captureOptionalFetch(() => fetchEdgarFacts(symbol), null as EdgarFacts | null),
+        captureOptionalFetch(() => fetchInsiderTrades(symbol), [] as InsiderTrade[]),
+        captureOptionalFetch(() => fetchTrends(symbol), [] as TrendPoint[]),
+        captureOptionalFetch(() => fetchInstitutional(symbol), null as InstitutionalData | null),
+        captureOptionalFetch(() => fetchAnalystData(symbol), null as AnalystData | null),
+        captureOptionalFetch(() => fetchFxContext(), fallbackFxContext),
       ]));
     tlog("after Promise.all data fetch");
+
+    const googleNews = googleNewsResult.data;
+    const edgarFacts = edgarFactsResult.data;
+    const insiderTrades = insiderTradesResult.data;
+    const trends = trendsResult.data;
+    const institutional = institutionalResult.data;
+    const analystData = analystDataResult.data;
+    const fxContext = fxContextResult.data;
+    const dataFetchErrors: Record<string, string | null> = {
+      news: googleNewsResult.error,
+      edgar: edgarFactsResult.error,
+      insider: insiderTradesResult.error,
+      trends: trendsResult.error,
+      institutional: institutionalResult.error,
+      analyst: analystDataResult.error,
+      fx: fxContextResult.error,
+    };
 
     const snapshot: AssetSnapshot = {
       id: "",
@@ -2806,6 +2931,21 @@ export async function runAnalysisJob(
       () => fetchPeerContext(symbol, serviceClient).catch(() => ""),
     );
     tlog("after fetchPeerContext");
+
+    const diagnosticsEntry = await startTrace("data_diagnostics", "Datenkanäle prüfen", 28);
+    const diagnostics = buildDataDiagnostics(
+      snapshot,
+      googleNewsEnriched,
+      edgarFacts,
+      insiderTrades,
+      trends,
+      institutional,
+      analystData,
+      peerContext,
+      dataFetchErrors,
+      fxContext,
+    );
+    await finishTrace(diagnosticsEntry, diagnostics.status, diagnostics.detail);
 
     const diana = await traceStep(
       "diana_check",

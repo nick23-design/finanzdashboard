@@ -287,6 +287,7 @@ const JOB_STEP_LABELS: Record<string, string> = {
   fetch_data:   "Marktdaten werden geladen…",
   enrich_news:  "Nachrichten werden angereichert…",
   peer_context: "Vergleichsunternehmen werden geladen…",
+  data_diagnostics: "Datenkanäle werden geprüft…",
   diana_check:  "Datenqualität wird bewertet…",
   load_guardrails: "Historische Guardrails werden geladen…",
   run_agents:   "Felix, Nina & Marco analysieren…",
