@@ -779,6 +779,9 @@ export function buildOwnModelValuation(
   const confidence = inferModelConfidence(snapshot, methods, dataQuality, drivers.sector_template);
   const limitations = [
     "Lightweight-Modell: keine vollständige DCF- oder Segmentmodellierung.",
+    (dataQuality?.missing_fields?.length ?? 0) > 0
+      ? `Fehlende Providerdaten (${dataQuality?.missing_fields?.slice(0, 4).join(", ")}) reduzieren die Modellkonfidenz, sind aber kein operatives Unternehmensrisiko.`
+      : null,
     drivers.sector_template === "mega_cap_cloud_software"
       ? "AI-Capex und Margen werden qualitativ berücksichtigt, aber nicht quartalsgenau modelliert."
       : null,

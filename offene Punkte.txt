@@ -50,3 +50,14 @@ Empfohlene Reihenfolge:
 3. Lint-Script fixen.
 4. Oeffentliche Routen bewusst entscheiden.
 5. Danach erst neue Features/Agenten.
+
+Backlog 2026-05-27:
+
+Investigate AVGO data ingestion quality:
+- Warum fehlt KGV?
+- Warum fehlen EDGAR-Quartalsdaten?
+- Warum fehlt strukturierter Analystenkonsens?
+- Warum fehlt Debt/Equity?
+- Betrifft das nur AVGO oder mehrere Large Caps?
+
+Hinweis: Solche Luecken als Provider-/Ingestion-Limitation behandeln, nicht als operatives Unternehmensrisiko.

@@ -692,10 +692,10 @@ function buildDataQualityGuardrails(
     guardrails.push(`Conviction auf maximal ${dataQuality.analysis_confidence_cap}/10 begrenzt.`);
   }
   if (dataQuality.completeness_score < 70) {
-    guardrails.push("Datenbasis lückenhaft: präzise Kursziele vermeiden und nur Szenario-Spannen verwenden.");
+    guardrails.push("Datenbasis lückenhaft: als Datenprovider-/Ingestion-Limitation behandeln, präzise Kursziele vermeiden und nur Szenario-Spannen verwenden.");
   }
   if (dataQuality.missing_fields.length) {
-    guardrails.push(`Fehlende Daten: ${dataQuality.missing_fields.slice(0, 4).join(", ")}.`);
+    guardrails.push(`Fehlende Providerdaten: ${dataQuality.missing_fields.slice(0, 4).join(", ")}. Nicht als operatives Unternehmensrisiko werten.`);
   }
   if (valuationConfidence === "low") {
     guardrails.push("Bewertungskonfidenz niedrig: Kursbereich nur als grobe Orientierung interpretieren.");
@@ -1391,11 +1391,12 @@ WICHTIG:
 - Beziehe dich ausschließlich auf die bereitgestellten Daten. Erfinde keine Deals, Produkte, Margen oder Ereignisse.
 - Google Trends ist nur ein schwaches Retail-Sentiment-Signal. Verwende es nie als Kernargument.
 - Wenn Datenqualität lückenhaft ist: Conviction begrenzen, valuation_confidence niedrig/mittel setzen und keine pseudo-präzisen Kursziele formulieren.
+- Fehlende Kennzahlen, EDGAR-Daten oder Analystendaten sind Provider-/Ingestion-Limitationen. Behandle sie als Datenqualitätsproblem, nicht als operatives Unternehmensrisiko.
 - Analystenkonsens ist nur Marktmeinung. Gib ihn niemals als eigenes Bewertungsmodell aus.
 - Das eigene Bewertungsmodell ist die primäre Bewertungsgrundlage. Wenn es fehlt oder low confidence ist, erkläre die Unsicherheit statt ein präzises Ziel zu formulieren.
 - valuation_range soll das eigene Modell widerspiegeln, wenn vorhanden; sonst null oder ausdrücklich sehr vorsichtig. Keine Konsens-Ziele als eigene Fair-Value-Spanne ausgeben.
 - price_levels.entry und stop_loss dürfen als Timing-/Risikomarken gesetzt werden; price_levels.target nur wenn valuation_confidence nicht low ist.
-- Nutze die gelieferten Werttreiber und Red Flags. Für Hyperscaler z.B. AI-Capex/Margenlogik; für Semis Zyklus/Inventar/Margen; für spekulative Growth-Titel Cashburn/Execution.
+- Nutze die gelieferten Werttreiber und Red Flags. Für Hyperscaler z.B. AI-Capex/Margenlogik; für Semis Zyklus/Inventar/Margen; für spekulative Growth-Titel Cashburn/Execution. Diese Guardrails dürfen nur auf echte Analyseinhalte reagieren, nicht auf fehlende Providerdaten.
 - claims müssen konkrete, prüfbare Aussagen sein, jeweils mit Evidenz aus Kennzahlen, News, Analysten oder Inferenz.
 - Keine Anlageberatung, keine Garantien.
 
@@ -1575,7 +1576,8 @@ REGELN — Autoritative Daten & Artikel-Freshness:
 7. Wenn die Datenbasis lückenhaft ist, sind hohe Conviction und präzise Kursziele verdächtig. Eine breite Szenario-Spanne ist dagegen zulässig.
 8. Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf keine Kernthese stützen.
 9. Analystenkonsens und eigenes Bewertungsmodell dürfen nicht vermischt werden. Konsens-Kursziele sind Marktmeinung, kein Fair Value aus eigenem Modell.
-10. Prüfe, ob die verwendeten Werttreiber zum Unternehmenstyp passen, z.B. Hyperscaler mit AI-Capex/Margenlogik, Semis mit Zyklus/Inventar/Margen, spekulative Growth-Titel mit Cashburn/Execution.`;
+10. Prüfe, ob die verwendeten Werttreiber zum Unternehmenstyp passen, z.B. Hyperscaler mit AI-Capex/Margenlogik, Semis mit Zyklus/Inventar/Margen, spekulative Growth-Titel mit Cashburn/Execution.
+11. Fehlende Kennzahlen, EDGAR-Daten oder Analystendaten sind Provider-/Ingestion-Limitationen. Sie dürfen nicht als operative Unternehmensrisiken oder Bear-Case-Punkte bewertet werden.`;
 
   const fetchArticleLine = skipArticleFetch
     ? "Kein Artikel-Nachladen in diesem Lauf. Prüfe nur gegen die gelieferten Excerpts und autoritativen Daten."
