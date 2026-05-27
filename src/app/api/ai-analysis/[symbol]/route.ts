@@ -94,7 +94,7 @@ const EUR_USD_FALLBACK = 1.08;
 // Opus ist die qualitative Hauptsynthese. Keine SDK-Retries: Ein sauberer
 // Versuch, danach Haiku-Fallback statt versteckter 3x-Timeouts.
 const SYNTHESIS_OPUS_MODEL = "claude-opus-4-7";
-const SYNTHESIS_OPUS_TIMEOUT_MS = 90_000;
+const SYNTHESIS_OPUS_TIMEOUT_MS = 150_000;
 
 type AIAnalysisInsert = Database["public"]["Tables"]["ai_analyses"]["Insert"];
 
@@ -483,6 +483,14 @@ function normalizeSynthesisFromUnknown(raw: unknown, fallbackCurrency: string): 
 
 function parseSynthesisFromText(rawText: string, fallbackCurrency: string): SynthesisResult {
   return normalizeSynthesisFromUnknown(parseJSON<unknown>(rawText), fallbackCurrency);
+}
+
+function extractToolInput<T>(content: Anthropic.Messages.ContentBlock[], toolName: string): T | null {
+  const toolUse = content.find(
+    (block): block is Anthropic.Messages.ToolUseBlock =>
+      block.type === "tool_use" && block.name === toolName,
+  );
+  return toolUse ? toolUse.input as T : null;
 }
 
 function getSynthesisQualityIssues(result: Pick<SynthesisResult, "summary" | "bull_case" | "bear_case" | "growth_outlook">): { severity: "blocker" | "warning"; message: string }[] {
@@ -1044,6 +1052,99 @@ Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kerna
     : "";
 
   const analystSection = formatAnalystData(analystData);
+  const synthesisTool: Anthropic.Messages.Tool = {
+    name: "complete_synthesis",
+    description: "Gibt die finale, strukturierte Research-Synthese zurück. Muss vollständig und inhaltlich substantiell sein.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        recommendation: {
+          type: "string",
+          enum: ["Kaufen", "Leicht kaufen", "Halten", "Leicht verkaufen", "Verkaufen"],
+        },
+        conviction: { type: "number", description: "Überzeugung 1-10, nie höher als Datenqualitäts-Cap." },
+        summary: { type: "string", description: "2-3 konkrete Sätze, keine generischen Fallback-Texte." },
+        bull_case: { type: "array", items: { type: "string" }, description: "Mindestens 2 substanzielle Pro-Argumente." },
+        bear_case: { type: "array", items: { type: "string" }, description: "Mindestens 2 substanzielle Contra-Argumente." },
+        growth_outlook: { type: "string", description: "Konkreter mittel-/langfristiger Wachstumsausblick." },
+        price_levels: {
+          type: "object",
+          properties: {
+            entry: { anyOf: [{ type: "number" }, { type: "null" }] },
+            target: { anyOf: [{ type: "number" }, { type: "null" }] },
+            stop_loss: { anyOf: [{ type: "number" }, { type: "null" }] },
+            entry_rationale: { type: "string" },
+            target_rationale: { type: "string" },
+          },
+        },
+        thesis_type: { type: "string", enum: THESIS_TYPES },
+        time_horizon_view: {
+          type: "object",
+          properties: {
+            short_term: { type: "string" },
+            medium_term: { type: "string" },
+            long_term: { type: "string" },
+          },
+          required: ["short_term", "medium_term", "long_term"],
+        },
+        entry_quality: {
+          type: "object",
+          properties: {
+            label: { type: "string", enum: ENTRY_QUALITY_LABELS },
+            rationale: { type: "string" },
+          },
+          required: ["label", "rationale"],
+        },
+        valuation_confidence: { type: "string", enum: VALUATION_CONFIDENCE },
+        valuation_range: {
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                currency: { type: "string" },
+                bear: { anyOf: [{ type: "number" }, { type: "null" }] },
+                base: { anyOf: [{ type: "number" }, { type: "null" }] },
+                bull: { anyOf: [{ type: "number" }, { type: "null" }] },
+                rationale: { type: "string" },
+              },
+              required: ["currency", "bear", "base", "bull", "rationale"],
+            },
+            { type: "null" },
+          ],
+        },
+        data_quality_guardrails: { type: "array", items: { type: "string" } },
+        claims: {
+          type: "array",
+          maxItems: 6,
+          items: {
+            type: "object",
+            properties: {
+              claim: { type: "string" },
+              evidence: { type: "string" },
+              source_type: { type: "string", enum: ["metrics", "news", "analyst", "market_intel", "inference"] },
+              confidence: { type: "number" },
+            },
+            required: ["claim", "evidence", "source_type", "confidence"],
+          },
+        },
+      },
+      required: [
+        "recommendation",
+        "conviction",
+        "summary",
+        "bull_case",
+        "bear_case",
+        "growth_outlook",
+        "thesis_type",
+        "time_horizon_view",
+        "entry_quality",
+        "valuation_confidence",
+        "valuation_range",
+        "data_quality_guardrails",
+        "claims",
+      ],
+    },
+  };
 
   const currentPriceRef = s.price != null ? `AKTUELLER KURS: ${s.price.toFixed(2)} ${s.currency ?? "USD"} (nicht mit Kurszielen verwechseln)\n\n` : "";
   const context = `AKTIE: ${symbol}
@@ -1075,16 +1176,21 @@ WICHTIG:
 - claims müssen konkrete, prüfbare Aussagen sein, jeweils mit Evidenz aus Kennzahlen, News, Analysten oder Inferenz.
 - Keine Anlageberatung, keine Garantien.
 
-Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.`,
+Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
+    tools: [synthesisTool],
+    tool_choice: { type: "tool", name: "complete_synthesis" } as Anthropic.Messages.ToolChoiceTool,
     messages: [
       {
         role: "user",
-        content: `Erstelle eine strukturierte Research-Analyse:\n\n${context}\n\nJSON-Format:\n{"recommendation":"Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen","conviction":<1-10>,"summary":"2-3 Sätze","bull_case":["...","...","..."],"bear_case":["...","..."],"growth_outlook":"Ausblick","price_levels":{"entry":<Zahl|null>,"target":<Zahl|null>,"stop_loss":<Zahl|null>,"entry_rationale":"Kurzbegründung","target_rationale":"Kurzbegründung"},"thesis_type":"Quality Compounder"|"Story Growth"|"Turnaround"|"Cyclical"|"Momentum"|"Speculative","time_horizon_view":{"short_term":"...","medium_term":"...","long_term":"..."},"entry_quality":{"label":"attraktiv"|"fair"|"überhitzt"|"Rücksetzer abwarten"|"nicht hinterherrennen"|"nur spekulativ","rationale":"..."},"valuation_confidence":"high"|"medium"|"low","valuation_range":null|{"currency":"${s.currency ?? "USD"}","bear":<Zahl|null>,"base":<Zahl|null>,"bull":<Zahl|null>,"rationale":"Warum diese Spanne belastbar oder unsicher ist"},"data_quality_guardrails":["..."],"claims":[{"claim":"konkrete prüfbare Aussage","evidence":"konkreter Datenbeleg","source_type":"metrics"|"news"|"analyst"|"market_intel"|"inference","confidence":<1-10>}]}`,
+        content: `Erstelle eine strukturierte Research-Analyse und rufe danach zwingend das Tool complete_synthesis auf.\n\n${context}\n\nQualitätsanforderungen:\n- Summary, Bull-Case, Bear-Case und Wachstumsausblick müssen substantiell sein.\n- Wenn kein belastbares Bewertungsmodell möglich ist: valuation_confidence auf low/medium, valuation_range null oder klar als Analystenkonsens erklären.\n- Entry Quality muss aus RSI, Kurs relativ zu MA50/MA200 und These abgeleitet sein.\n- Keine Fallback-Sätze wie "Analyse konnte nicht erstellt werden" oder "Nicht verfügbar".`,
       },
     ],
   });
 
-  const parsed = parseSynthesisFromText(extractText(response.content), s.currency ?? "USD");
+  const toolInput = extractToolInput<unknown>(response.content, "complete_synthesis");
+  const parsed = toolInput
+    ? normalizeSynthesisFromUnknown(toolInput, s.currency ?? "USD")
+    : parseSynthesisFromText(extractText(response.content), s.currency ?? "USD");
   assertSynthesisQuality(parsed, "Opus");
   return parsed;
 }
