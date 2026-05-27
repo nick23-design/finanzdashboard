@@ -12,7 +12,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import yfinance as yf
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -75,6 +75,122 @@ def _safe_float(value) -> Optional[float]:
 def _safe_int(value) -> Optional[int]:
     f = _safe_float(value)
     return int(f) if f is not None else None
+
+
+def _raw_value(value):
+    """Extract Yahoo Finance's nested {raw, fmt} values."""
+    if isinstance(value, dict):
+        return value.get("raw", value.get("fmt"))
+    return value
+
+
+def _raw_float(value) -> Optional[float]:
+    return _safe_float(_raw_value(value))
+
+
+def _raw_int(value) -> Optional[int]:
+    return _safe_int(_raw_value(value))
+
+
+def _fetch_yahoo_quote_summary(symbol: str, modules: list[str]) -> dict[str, Any]:
+    """Direct Yahoo quoteSummary fallback for fields yfinance sometimes omits."""
+    if not modules:
+        return {}
+    url = (
+        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
+        f"{urllib.parse.quote(symbol)}?modules={urllib.parse.quote(','.join(modules))}"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        data = json.loads(resp.read())
+    result = (data.get("quoteSummary") or {}).get("result") or []
+    return result[0] if result else {}
+
+
+def _statement_row_latest(frame, labels: list[str]) -> Optional[float]:
+    """Read the latest available row value from a yfinance statement dataframe."""
+    if frame is None or getattr(frame, "empty", True):
+        return None
+    for label in labels:
+        if label not in frame.index:
+            continue
+        values = frame.loc[label].dropna()
+        if len(values) == 0:
+            continue
+        return _safe_float(values.iloc[0])
+    return None
+
+
+def _statement_row_series(frame, labels: list[str], max_items: int = 8, form: str = "YF-Q") -> list[dict]:
+    """Convert a yfinance statement row into EdgarFacts-compatible periods."""
+    if frame is None or getattr(frame, "empty", True):
+        return []
+    for label in labels:
+        if label not in frame.index:
+            continue
+        values = frame.loc[label].dropna()
+        items = []
+        for period, value in values.items():
+            val = _safe_int(value)
+            if val is None:
+                continue
+            try:
+                period_str = period.strftime("%Y-%m-%d")
+            except Exception:
+                period_str = str(period)[:10]
+            items.append({"period": period_str, "value": val, "form": form})
+        return sorted(items, key=lambda x: x["period"], reverse=True)[:max_items]
+    return []
+
+
+def _fallback_pe_from_statements(ticker: yf.Ticker, last_price: Optional[float]) -> Optional[float]:
+    if not last_price:
+        return None
+    try:
+        quarterly = ticker.get_income_stmt(freq="quarterly")
+        if quarterly is not None and not quarterly.empty:
+            for label in ["DilutedEPS", "Diluted EPS", "BasicEPS", "Basic EPS"]:
+                if label not in quarterly.index:
+                    continue
+                values = [_safe_float(v) for v in quarterly.loc[label].dropna().tolist()[:4]]
+                eps_sum = sum(v for v in values if v is not None)
+                if eps_sum > 0:
+                    return round(last_price / eps_sum, 2)
+    except Exception:
+        pass
+    try:
+        yearly = ticker.get_income_stmt(freq="yearly")
+        eps = _statement_row_latest(yearly, ["DilutedEPS", "Diluted EPS", "BasicEPS", "Basic EPS"])
+        if eps and eps > 0:
+            return round(last_price / eps, 2)
+    except Exception:
+        pass
+    return None
+
+
+def _fallback_debt_to_equity(ticker: yf.Ticker) -> Optional[float]:
+    """Return Yahoo-compatible Debt/Equity in percent (debt / equity * 100)."""
+    for freq in ("quarterly", "yearly"):
+        try:
+            bs = ticker.get_balance_sheet(freq=freq)
+            total_debt = _statement_row_latest(bs, [
+                "TotalDebt", "Total Debt",
+                "LongTermDebtAndFinanceLeaseObligation", "Long Term Debt And Finance Lease Obligation",
+            ])
+            if total_debt is None:
+                long_debt = _statement_row_latest(bs, ["LongTermDebt", "Long Term Debt"])
+                current_debt = _statement_row_latest(bs, ["CurrentDebt", "Current Debt"])
+                if long_debt is not None or current_debt is not None:
+                    total_debt = (long_debt or 0) + (current_debt or 0)
+            equity = _statement_row_latest(bs, [
+                "StockholdersEquity", "Stockholders Equity",
+                "TotalEquityGrossMinorityInterest", "Total Equity Gross Minority Interest",
+            ])
+            if total_debt is not None and equity and equity != 0:
+                return round((total_debt / equity) * 100, 3)
+        except Exception:
+            continue
+    return None
 
 
 # ── ISIN helpers ─────────────────────────────────────────────────────────────
@@ -266,6 +382,16 @@ def get_asset(symbol: str, request: Request):
 
     try:
         ticker = yf.Ticker(symbol)
+        quote_summary: dict[str, Any] = {}
+        try:
+            quote_summary = _fetch_yahoo_quote_summary(symbol, [
+                "price",
+                "summaryDetail",
+                "defaultKeyStatistics",
+                "financialData",
+            ])
+        except Exception:
+            quote_summary = {}
 
         # ticker.info kann bei Yahoo-Änderungen leer/fehlerhaft sein – separat abfangen
         try:
@@ -285,8 +411,15 @@ def get_asset(symbol: str, request: Request):
             close_prices = []
 
         # Preis aus History falls .info leer
+        price_module = quote_summary.get("price", {})
+        financial_data = quote_summary.get("financialData", {})
+        summary_detail = quote_summary.get("summaryDetail", {})
+        default_stats = quote_summary.get("defaultKeyStatistics", {})
+
         last_price = (
             _safe_float(info.get("currentPrice") or info.get("regularMarketPrice"))
+            or _raw_float(financial_data.get("currentPrice"))
+            or _raw_float(price_module.get("regularMarketPrice"))
             or (_safe_float(close_prices[-1]) if close_prices else None)
         )
 
@@ -341,16 +474,27 @@ def get_asset(symbol: str, request: Request):
         except Exception:
             pass
 
-        market_cap = _safe_int(info.get("marketCap")) or fast_market_cap
-        currency = info.get("currency") or fast_currency or "USD"
+        market_cap = _safe_int(info.get("marketCap")) or _raw_int(price_module.get("marketCap")) or fast_market_cap
+        currency = info.get("currency") or price_module.get("currency") or fast_currency or "USD"
 
-        pe_ratio = _safe_float(info.get("trailingPE") or info.get("forwardPE"))
+        pe_ratio = (
+            _safe_float(info.get("trailingPE") or info.get("forwardPE"))
+            or _raw_float(summary_detail.get("trailingPE"))
+            or _raw_float(default_stats.get("trailingPE"))
+            or _raw_float(default_stats.get("forwardPE"))
+        )
         if pe_ratio is None and last_price:
-            eps = _safe_float(info.get("trailingEps") or info.get("forwardEps"))
+            eps = (
+                _safe_float(info.get("trailingEps") or info.get("forwardEps"))
+                or _raw_float(default_stats.get("trailingEps"))
+                or _raw_float(default_stats.get("forwardEps"))
+            )
             if eps and eps > 0:
                 pe_ratio = round(last_price / eps, 2)
+        if pe_ratio is None:
+            pe_ratio = _fallback_pe_from_statements(ticker, last_price)
 
-        rev_growth = _safe_float(info.get("revenueGrowth"))
+        rev_growth = _safe_float(info.get("revenueGrowth")) or _raw_float(financial_data.get("revenueGrowth"))
         if rev_growth is None:
             try:
                 income = ticker.get_income_stmt(freq="yearly")
@@ -366,7 +510,7 @@ def get_asset(symbol: str, request: Request):
             except Exception:
                 pass
 
-        fcf = _safe_int(info.get("freeCashflow"))
+        fcf = _safe_int(info.get("freeCashflow")) or _raw_int(financial_data.get("freeCashflow"))
         if fcf is None:
             try:
                 cf = ticker.get_cash_flow(freq="yearly")
@@ -388,6 +532,12 @@ def get_asset(symbol: str, request: Request):
             except Exception:
                 pass
 
+        debt_to_equity = (
+            _safe_float(info.get("debtToEquity"))
+            or _raw_float(financial_data.get("debtToEquity"))
+            or _fallback_debt_to_equity(ticker)
+        )
+
         return AssetResponse(
             symbol=symbol,
             name=info.get("longName") or info.get("shortName") or symbol,
@@ -397,7 +547,7 @@ def get_asset(symbol: str, request: Request):
             description=description,
             pe_ratio=pe_ratio,
             market_cap=market_cap,
-            debt_to_equity=_safe_float(info.get("debtToEquity")),
+            debt_to_equity=debt_to_equity,
             revenue_growth=rev_growth,
             free_cashflow=fcf,
             rsi=rsi,
@@ -476,6 +626,11 @@ class EdgarFacts(BaseModel):
 
 # Module-level CIK cache – loaded once per server start
 _cik_map: Optional[dict] = None
+CIK_OVERRIDES = {
+    # Some SEC/Yahoo environments intermittently miss large-cap tickers in
+    # company_tickers.json lookups. Keep minimal stable overrides for known gaps.
+    "AVGO": "0001730168",
+}
 
 
 def _load_cik_map() -> dict:
@@ -496,8 +651,11 @@ def _load_cik_map() -> dict:
 
 
 def _get_cik(ticker: str) -> Optional[str]:
+    base = ticker.upper().split(".")[0]
+    if base in CIK_OVERRIDES:
+        return CIK_OVERRIDES[base]
     try:
-        return _load_cik_map().get(ticker.upper())
+        return _load_cik_map().get(ticker.upper()) or _load_cik_map().get(base)
     except Exception:
         return None
 
@@ -523,6 +681,52 @@ def _fetch_edgar_concept(cik: str, concept: str, max_items: int = 8) -> list[dic
 
     items = sorted(seen.values(), key=lambda x: x["period"], reverse=True)
     return items[:max_items]
+
+
+def _fetch_edgar_companyfacts(cik: str) -> dict:
+    url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Finanzdashboard/1.0 contact@nexthorizon-ai.com"}
+    )
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        return json.loads(resp.read())
+
+
+def _extract_companyfacts_concepts(facts: dict, concepts: list[str], max_items: int = 8) -> list[dict]:
+    us_gaap = (facts.get("facts") or {}).get("us-gaap") or {}
+    for concept in concepts:
+        concept_data = us_gaap.get(concept)
+        if not concept_data:
+            continue
+        usd_units = (concept_data.get("units") or {}).get("USD", [])
+        seen: dict[str, dict] = {}
+        for entry in usd_units:
+            form = entry.get("form", "")
+            if form not in ("10-Q", "10-K"):
+                continue
+            period = entry.get("end", "")
+            filed = entry.get("filed", "")
+            if not period:
+                continue
+            if period not in seen or filed > seen[period]["filed"]:
+                seen[period] = {"period": period, "value": entry.get("val", 0), "form": form}
+        items = sorted(seen.values(), key=lambda x: x["period"], reverse=True)
+        if items:
+            return items[:max_items]
+    return []
+
+
+def _fetch_yfinance_quarterly_facts(symbol: str) -> dict:
+    ticker = yf.Ticker(symbol)
+    income = ticker.get_income_stmt(freq="quarterly")
+    return {
+        "revenue": _statement_row_series(income, [
+            "TotalRevenue", "Total Revenue",
+            "OperatingRevenue", "Operating Revenue",
+        ]),
+        "net_income": _statement_row_series(income, ["NetIncome", "Net Income"]),
+        "gross_profit": _statement_row_series(income, ["GrossProfit", "Gross Profit"]),
+    }
 
 
 @app.get("/assets/{symbol}/google-news", response_model=list[GoogleNewsItem])
@@ -585,7 +789,16 @@ def get_edgar_facts(symbol: str):
 
     result: dict = {"cik": cik, "revenue": [], "net_income": [], "gross_profit": []}
 
-    for concept in ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"]:
+    revenue_concepts = [
+        "Revenues",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "SalesRevenueNet",
+        "SalesRevenueGoodsNet",
+        "SalesRevenueServicesNet",
+        "OperatingRevenues",
+    ]
+
+    for concept in revenue_concepts:
         try:
             result["revenue"] = _fetch_edgar_concept(cik, concept)
             break
@@ -595,6 +808,27 @@ def get_edgar_facts(symbol: str):
     for concept, key in [("NetIncomeLoss", "net_income"), ("GrossProfit", "gross_profit")]:
         try:
             result[key] = _fetch_edgar_concept(cik, concept)
+        except Exception:
+            pass
+
+    if not result["revenue"] or not result["net_income"] or not result["gross_profit"]:
+        try:
+            facts = _fetch_edgar_companyfacts(cik)
+            if not result["revenue"]:
+                result["revenue"] = _extract_companyfacts_concepts(facts, revenue_concepts)
+            if not result["net_income"]:
+                result["net_income"] = _extract_companyfacts_concepts(facts, ["NetIncomeLoss"])
+            if not result["gross_profit"]:
+                result["gross_profit"] = _extract_companyfacts_concepts(facts, ["GrossProfit"])
+        except Exception:
+            pass
+
+    if not result["revenue"]:
+        try:
+            yf_facts = _fetch_yfinance_quarterly_facts(symbol)
+            result["revenue"] = yf_facts["revenue"]
+            result["net_income"] = result["net_income"] or yf_facts["net_income"]
+            result["gross_profit"] = result["gross_profit"] or yf_facts["gross_profit"]
         except Exception:
             pass
 
@@ -665,6 +899,11 @@ def get_analyst_data(symbol: str):
         ticker = yf.Ticker(symbol)
         mean_t = high_t = low_t = None
         strong_buy = buy = hold = sell = strong_sell = 0
+        quote_summary: dict[str, Any] = {}
+        try:
+            quote_summary = _fetch_yahoo_quote_summary(symbol, ["financialData", "recommendationTrend"])
+        except Exception:
+            quote_summary = {}
 
         try:
             targets = ticker.analyst_price_targets
@@ -674,6 +913,11 @@ def get_analyst_data(symbol: str):
                 low_t = _safe_float(targets.get("low"))
         except Exception:
             pass
+
+        financial_data = quote_summary.get("financialData", {})
+        mean_t = mean_t or _raw_float(financial_data.get("targetMeanPrice"))
+        high_t = high_t or _raw_float(financial_data.get("targetHighPrice"))
+        low_t = low_t or _raw_float(financial_data.get("targetLowPrice"))
 
         try:
             rec = ticker.recommendations_summary
@@ -687,6 +931,27 @@ def get_analyst_data(symbol: str):
                 strong_sell = int(_safe_float(row.get("strongSell", 0)) or 0)
         except Exception:
             pass
+
+        if strong_buy + buy + hold + sell + strong_sell == 0:
+            try:
+                trend = ((quote_summary.get("recommendationTrend") or {}).get("trend") or [])
+                row = next((r for r in trend if r.get("period") == "0m"), trend[0] if trend else {})
+                strong_buy = int(_raw_float(row.get("strongBuy")) or 0)
+                buy = int(_raw_float(row.get("buy")) or 0)
+                hold = int(_raw_float(row.get("hold")) or 0)
+                sell = int(_raw_float(row.get("sell")) or 0)
+                strong_sell = int(_raw_float(row.get("strongSell")) or 0)
+            except Exception:
+                pass
+
+        if mean_t is None or high_t is None or low_t is None:
+            try:
+                info = ticker.info or {}
+                mean_t = mean_t or _safe_float(info.get("targetMeanPrice"))
+                high_t = high_t or _safe_float(info.get("targetHighPrice"))
+                low_t = low_t or _safe_float(info.get("targetLowPrice"))
+            except Exception:
+                pass
 
         return AnalystData(
             mean_target=mean_t, high_target=high_t, low_target=low_t,

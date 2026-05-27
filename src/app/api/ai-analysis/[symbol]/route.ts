@@ -1122,6 +1122,12 @@ function formatMetrics(s: AssetSnapshot): string {
 
 function formatEdgarTrend(facts: EdgarFacts | null): string {
   if (!facts) return "";
+  const hasYfFallback = [
+    ...facts.revenue,
+    ...facts.net_income,
+    ...facts.gross_profit,
+  ].some(item => String(item.form ?? "").startsWith("YF"));
+  const sourceLabel = hasYfFallback ? "Quartalsdaten (Yahoo-Financials-Fallback)" : "SEC EDGAR";
   const fmtVal = (v: number) => {
     if (Math.abs(v) >= 1e12) return `$${(v / 1e12).toFixed(1)}T`;
     if (Math.abs(v) >= 1e9) return `$${(v / 1e9).toFixed(1)} Mrd.`;
@@ -1129,7 +1135,7 @@ function formatEdgarTrend(facts: EdgarFacts | null): string {
   };
   const lines: string[] = [];
   if (facts.revenue.length > 0) {
-    lines.push("SEC EDGAR Umsatz (letzte Quartale): " +
+    lines.push(`${sourceLabel} Umsatz (letzte Quartale): ` +
       facts.revenue.slice(0, 6).map(r => `${r.period}: ${fmtVal(r.value)}`).join(" | "));
   }
   if (facts.net_income.length > 0) {
