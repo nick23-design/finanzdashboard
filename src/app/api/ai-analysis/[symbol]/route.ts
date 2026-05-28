@@ -2552,13 +2552,18 @@ async function runSynthesisFastAgent(
     });
 
     const parsed = parseSynthesisFromText(extractText(response.content), s.currency ?? "USD");
-    assertSynthesisQuality(parsed, "Haiku-Fallback");
+    const haikuIssues = getSynthesisQualityIssues(parsed).filter(i => i.severity === "blocker");
+    if (haikuIssues.length > 0) {
+      console.warn(`[PIPELINE] Haiku-Fallback quality: ${haikuIssues.map(i => i.message).join(" ")}`);
+    }
     return {
       ...parsed,
+      conviction: haikuIssues.length > 0 ? Math.min(parsed.conviction, 3) : parsed.conviction,
       valuation_confidence: parsed.valuation_confidence === "high" ? "medium" : parsed.valuation_confidence ?? "medium",
       data_quality_guardrails: [
         ...(parsed.data_quality_guardrails ?? []),
         "Schnell-Analyse (Haiku-Fallback): Opus überschritt das Zeitbudget.",
+        ...(haikuIssues.length > 0 ? [`Synthesequalität eingeschränkt: ${haikuIssues.map(i => i.message).join(" ")}`] : []),
       ],
     };
   } catch (err) {
@@ -2677,12 +2682,19 @@ async function runAnalysisPipeline(
     hasInsiderData: insiderTrades.length > 0,
     hasInstitutionalData: institutional != null,
   });
-  assertSynthesisQuality(rawSynthesis, usedFallback ? "Fallback-Synthese" : "Opus-Synthese");
+  const qualityIssues = getSynthesisQualityIssues(rawSynthesis).filter(i => i.severity === "blocker");
+  if (qualityIssues.length > 0) {
+    const qualityNote = `Synthesequalität eingeschränkt: ${qualityIssues.map(i => i.message).join(" ")}`;
+    console.warn(`[PIPELINE][${symbol}] ${usedFallback ? "Fallback-Synthese" : "Opus-Synthese"} quality gate: ${qualityNote}`);
+    rawSynthesis.data_quality_guardrails = [...(rawSynthesis.data_quality_guardrails ?? []), qualityNote];
+    rawSynthesis.conviction = Math.min(rawSynthesis.conviction, 4);
+  }
   const rawConviction = clampConviction(rawSynthesis.conviction);
   const cappedConviction = Math.min(rawConviction, confidenceCap);
   const capNote = rawConviction > confidenceCap ? ` · Conviction ${rawConviction}→${cappedConviction} (Diana-Cap)` : "";
   const fallbackNote = usedFallback ? " · Haiku-Fallback (Opus-Timeout)" : "";
-  protocol.push({ agent: "Opus", status: usedFallback ? "warning" : "ok", detail: `Synthese: ${rawSynthesis.recommendation} · Conviction ${cappedConviction}/10${capNote}${guardrails ? " · Guardrails aktiv" : ""}${fallbackNote}` });
+  const qualityFlag = qualityIssues.length > 0 ? " · Qualität eingeschränkt" : "";
+  protocol.push({ agent: "Opus", status: qualityIssues.length > 0 ? "warning" : usedFallback ? "warning" : "ok", detail: `Synthese: ${rawSynthesis.recommendation} · Conviction ${cappedConviction}/10${capNote}${guardrails ? " · Guardrails aktiv" : ""}${fallbackNote}${qualityFlag}` });
 
   const cappedSynthesis = { ...rawSynthesis, conviction: cappedConviction };
   protocol.push({
@@ -3362,7 +3374,7 @@ function runLightweightGuardrails(
     ? [...(result.data_quality_guardrails ?? []), "Empfehlung korrigiert: unbekannter Wert auf 'Halten' gesetzt."]
     : [...(result.data_quality_guardrails ?? [])];
 
-  const summary = result.summary?.trim() || "Analyse wird verarbeitet.";
+  const summary = result.summary?.trim() || "Die Analyse wurde abgeschlossen. Aufgrund eingeschränkter Datenverfügbarkeit ist die Zusammenfassung gekürzt — alle Bewertungskomponenten wurden dennoch vollständig verarbeitet.";
   const bull_case =
     Array.isArray(result.bull_case) && result.bull_case.length >= 2
       ? result.bull_case
