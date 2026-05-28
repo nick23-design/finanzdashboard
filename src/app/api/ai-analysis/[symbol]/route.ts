@@ -1373,7 +1373,7 @@ function buildDataDiagnostics(
   const diagnostics = [
     `Asset: ${missingCore.length ? `fehlend ${missingCore.join(", ")}` : "Kernkennzahlen ok"}`,
     `EDGAR/Quartal: ${edgarLabel}`,
-    `Analysten: ${hasAnalystConsensus ? `Ziel ${analystData?.mean_target?.toFixed(2) ?? "N/A"}, Ratings ${analystRatings || (analystData?.rating_count ?? 0)}${sourceLabel(analystData?.source) ? ` (${sourceLabel(analystData?.source)})` : ""}` : "fehlt"}`,
+    `Analysten: ${hasAnalystConsensus ? `Ziel ${analystData?.mean_target?.toFixed(2) ?? "N/A"}, ${analystRatings > 0 ? `${analystRatings} Ratings (B/H/S)` : (analystData?.rating_count ?? 0) > 0 ? `${analystData!.rating_count} Analysten (kein B/H/S)` : "Anzahl unbekannt"}${sourceLabel(analystData?.source) ? ` (${sourceLabel(analystData?.source)})` : ""}` : "fehlt"}`,
     `Marco-Inputs: Insider ${insiderTrades.length}, Institutionen ${hasInstitutional ? `${institutionalCount || "Quote"}${sourceLabel(institutional?.source) ? ` (${sourceLabel(institutional?.source)})` : ""}` : "fehlt"}, Trends ${trends.length}`,
     `News: ${googleNews.length}, Excerpts ${newsWithExcerpt}`,
     `Peers: ${peerContext ? "vorhanden" : "fehlt"}`,
