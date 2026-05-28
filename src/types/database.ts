@@ -476,6 +476,204 @@ export interface Database {
         };
         Relationships: [];
       };
+      analyst_consensus: {
+        Row: {
+          id: string;
+          symbol: string;
+          provider: string;
+          mean_target: number | null;
+          high_target: number | null;
+          low_target: number | null;
+          rating_count: number | null;
+          strong_buy: number;
+          buy: number;
+          hold: number;
+          sell: number;
+          strong_sell: number;
+          raw: Json | null;
+          fetched_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          symbol: string;
+          provider: string;
+          mean_target?: number | null;
+          high_target?: number | null;
+          low_target?: number | null;
+          rating_count?: number | null;
+          strong_buy?: number;
+          buy?: number;
+          hold?: number;
+          sell?: number;
+          strong_sell?: number;
+          raw?: Json | null;
+          fetched_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          symbol?: string;
+          provider?: string;
+          mean_target?: number | null;
+          high_target?: number | null;
+          low_target?: number | null;
+          rating_count?: number | null;
+          strong_buy?: number;
+          buy?: number;
+          hold?: number;
+          sell?: number;
+          strong_sell?: number;
+          raw?: Json | null;
+          fetched_at?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      institutional_ownership: {
+        Row: {
+          id: string;
+          symbol: string;
+          provider: string;
+          pct_insider: number | null;
+          pct_institutions: number | null;
+          top_holders: Json;
+          raw: Json | null;
+          fetched_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          symbol: string;
+          provider: string;
+          pct_insider?: number | null;
+          pct_institutions?: number | null;
+          top_holders?: Json;
+          raw?: Json | null;
+          fetched_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          symbol?: string;
+          provider?: string;
+          pct_insider?: number | null;
+          pct_institutions?: number | null;
+          top_holders?: Json;
+          raw?: Json | null;
+          fetched_at?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      fundamental_facts: {
+        Row: {
+          id: string;
+          symbol: string;
+          provider: string;
+          cik: string | null;
+          revenue: Json;
+          net_income: Json;
+          gross_profit: Json;
+          raw: Json | null;
+          fetched_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          symbol: string;
+          provider: string;
+          cik?: string | null;
+          revenue?: Json;
+          net_income?: Json;
+          gross_profit?: Json;
+          raw?: Json | null;
+          fetched_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          symbol?: string;
+          provider?: string;
+          cik?: string | null;
+          revenue?: Json;
+          net_income?: Json;
+          gross_profit?: Json;
+          raw?: Json | null;
+          fetched_at?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      provider_runs: {
+        Row: {
+          id: string;
+          provider: string;
+          job_type: string;
+          status: "running" | "ok" | "partial" | "error";
+          symbols: Json;
+          started_at: string;
+          finished_at: string | null;
+          duration_ms: number | null;
+          details: Json | null;
+          error: string | null;
+        };
+        Insert: {
+          id?: string;
+          provider: string;
+          job_type: string;
+          status: "running" | "ok" | "partial" | "error";
+          symbols?: Json;
+          started_at?: string;
+          finished_at?: string | null;
+          duration_ms?: number | null;
+          details?: Json | null;
+          error?: string | null;
+        };
+        Update: {
+          id?: string;
+          provider?: string;
+          job_type?: string;
+          status?: "running" | "ok" | "partial" | "error";
+          symbols?: Json;
+          started_at?: string;
+          finished_at?: string | null;
+          duration_ms?: number | null;
+          details?: Json | null;
+          error?: string | null;
+        };
+        Relationships: [];
+      };
+      provider_field_status: {
+        Row: {
+          id: string;
+          symbol: string;
+          provider: string;
+          field: string;
+          status: "ok" | "missing" | "error" | "skipped";
+          detail: string | null;
+          fetched_at: string;
+        };
+        Insert: {
+          id?: string;
+          symbol: string;
+          provider: string;
+          field: string;
+          status: "ok" | "missing" | "error" | "skipped";
+          detail?: string | null;
+          fetched_at?: string;
+        };
+        Update: {
+          id?: string;
+          symbol?: string;
+          provider?: string;
+          field?: string;
+          status?: "ok" | "missing" | "error" | "skipped";
+          detail?: string | null;
+          fetched_at?: string;
+        };
+        Relationships: [];
+      };
       analysis_jobs: {
         Row: {
           id: string;
@@ -571,5 +769,10 @@ export type PushSubscription = Database["public"]["Tables"]["push_subscriptions"
 export type FactCheckFinding = Database["public"]["Tables"]["fact_check_findings"]["Row"];
 export type AnalysisOutcome = Database["public"]["Tables"]["analysis_outcomes"]["Row"];
 export type RadarSignal = Database["public"]["Tables"]["radar_signals"]["Row"];
+export type AnalystConsensus = Database["public"]["Tables"]["analyst_consensus"]["Row"];
+export type InstitutionalOwnership = Database["public"]["Tables"]["institutional_ownership"]["Row"];
+export type FundamentalFacts = Database["public"]["Tables"]["fundamental_facts"]["Row"];
+export type ProviderRun = Database["public"]["Tables"]["provider_runs"]["Row"];
+export type ProviderFieldStatus = Database["public"]["Tables"]["provider_field_status"]["Row"];
 export type NHSelectDaily = Database["public"]["Tables"]["nh_select_daily"]["Row"];
 export type AnalysisJob = Database["public"]["Tables"]["analysis_jobs"]["Row"];

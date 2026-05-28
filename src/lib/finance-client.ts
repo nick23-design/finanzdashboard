@@ -41,6 +41,7 @@ export interface EdgarFacts {
   revenue: EdgarFactPeriod[];
   net_income: EdgarFactPeriod[];
   gross_profit: EdgarFactPeriod[];
+  source?: string;
 }
 
 export interface MarketIndex {
@@ -127,6 +128,7 @@ export interface InstitutionalData {
   pct_insider: number | null;
   pct_institutions: number | null;
   top_holders: InstitutionalHolder[];
+  source?: string;
 }
 
 export async function fetchInsiderTrades(symbol: string): Promise<InsiderTrade[]> {
@@ -184,11 +186,13 @@ export interface AnalystData {
   mean_target: number | null;
   high_target: number | null;
   low_target: number | null;
+  rating_count?: number | null;
   strong_buy: number;
   buy: number;
   hold: number;
   sell: number;
   strong_sell: number;
+  source?: string;
 }
 
 export interface EarningsCalendar {

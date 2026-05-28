@@ -80,6 +80,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { rateLimit } from "@/lib/rate-limit";
 import { PEER_MAP } from "@/lib/peer-map";
 import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
+import { loadCachedResearchData } from "@/lib/research-cache";
 import {
   buildAnalystConsensusValuation,
   buildBusinessDriverAnalysis,
@@ -1141,12 +1142,9 @@ function formatMetrics(s: AssetSnapshot): string {
 
 function formatEdgarTrend(facts: EdgarFacts | null): string {
   if (!facts) return "";
-  const hasYfFallback = [
-    ...facts.revenue,
-    ...facts.net_income,
-    ...facts.gross_profit,
-  ].some(item => String(item.form ?? "").startsWith("YF"));
-  const sourceLabel = hasYfFallback ? "Quartalsdaten (Yahoo-Financials-Fallback)" : "SEC EDGAR";
+  const hasYfFallback = hasYahooFilingFallback(facts);
+  const source = sourceLabel(facts.source);
+  const sourceName = source || (hasYfFallback ? "Quartalsdaten (Yahoo-Financials-Fallback)" : "SEC EDGAR");
   const fmtVal = (v: number) => {
     if (Math.abs(v) >= 1e12) return `$${(v / 1e12).toFixed(1)}T`;
     if (Math.abs(v) >= 1e9) return `$${(v / 1e9).toFixed(1)} Mrd.`;
@@ -1154,7 +1152,7 @@ function formatEdgarTrend(facts: EdgarFacts | null): string {
   };
   const lines: string[] = [];
   if (facts.revenue.length > 0) {
-    lines.push(`${sourceLabel} Umsatz (letzte Quartale): ` +
+    lines.push(`${sourceName} Umsatz (letzte Quartale): ` +
       facts.revenue.slice(0, 6).map(r => `${r.period}: ${fmtVal(r.value)}`).join(" | "));
   }
   if (facts.net_income.length > 0) {
@@ -1214,6 +1212,43 @@ async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, p
 
 type NewsItemWithDesc = GoogleNewsItem & { description?: string | null };
 
+function hasAnalystConsensusData(data: AnalystData | null): boolean {
+  const ratingCount =
+    (data?.strong_buy ?? 0) +
+    (data?.buy ?? 0) +
+    (data?.hold ?? 0) +
+    (data?.sell ?? 0) +
+    (data?.strong_sell ?? 0);
+  return data != null && (data.mean_target != null || ratingCount > 0 || (data.rating_count ?? 0) > 0);
+}
+
+function hasQuarterlyFacts(data: EdgarFacts | null): boolean {
+  return Boolean(
+    data &&
+    (data.revenue.length > 0 || data.net_income.length > 0 || data.gross_profit.length > 0),
+  );
+}
+
+function hasYahooFilingFallback(data: EdgarFacts | null): boolean {
+  if (!data) return false;
+  return [
+    ...data.revenue,
+    ...data.net_income,
+    ...data.gross_profit,
+  ].some(item => String(item.form ?? "").startsWith("YF"));
+}
+
+function sourceLabel(source: string | null | undefined): string {
+  if (!source) return "";
+  return source
+    .replace("sec_finance_api_cache", "SEC-Cache")
+    .replace("finance_api_yahoo_fallback_cache", "Yahoo-Cache")
+    .replace("finance_api_cache", "Finance-API-Cache")
+    .replace("fmp_cache", "FMP-Cache")
+    .replace("fmp", "FMP")
+    .replace("finance_api", "Finance-API");
+}
+
 function buildDataDiagnostics(
   snapshot: AssetSnapshot,
   googleNews: NewsItemWithDesc[],
@@ -1237,13 +1272,10 @@ function buildDataDiagnostics(
     (edgarFacts?.revenue.length ?? 0) +
     (edgarFacts?.net_income.length ?? 0) +
     (edgarFacts?.gross_profit.length ?? 0);
-  const hasYfFilingFallback = [
-    ...(edgarFacts?.revenue ?? []),
-    ...(edgarFacts?.net_income ?? []),
-    ...(edgarFacts?.gross_profit ?? []),
-  ].some(item => String(item.form ?? "").startsWith("YF"));
+  const factSource = sourceLabel(edgarFacts?.source);
+  const hasYfFilingFallback = hasYahooFilingFallback(edgarFacts);
   const edgarLabel = edgarRows > 0
-    ? `${edgarFacts?.revenue.length ?? 0} Umsatz-Q${hasYfFilingFallback ? " (Yahoo-Fallback)" : " (SEC)"}`
+    ? `${edgarFacts?.revenue.length ?? 0} Umsatz-Q${factSource ? ` (${factSource})` : hasYfFilingFallback ? " (Yahoo-Fallback)" : " (SEC)"}`
     : "fehlt";
 
   const analystRatings =
@@ -1252,7 +1284,7 @@ function buildDataDiagnostics(
     (analystData?.hold ?? 0) +
     (analystData?.sell ?? 0) +
     (analystData?.strong_sell ?? 0);
-  const hasAnalystConsensus = analystData != null && (analystData.mean_target != null || analystRatings > 0);
+  const hasAnalystConsensus = hasAnalystConsensusData(analystData);
   const institutionalCount = institutional?.top_holders.length ?? 0;
   const hasInstitutional = institutional != null &&
     (institutional.pct_institutions != null || institutional.pct_insider != null || institutionalCount > 0);
@@ -1261,8 +1293,8 @@ function buildDataDiagnostics(
   const diagnostics = [
     `Asset: ${missingCore.length ? `fehlend ${missingCore.join(", ")}` : "Kernkennzahlen ok"}`,
     `EDGAR/Quartal: ${edgarLabel}`,
-    `Analysten: ${hasAnalystConsensus ? `Ziel ${analystData?.mean_target?.toFixed(2) ?? "N/A"}, Ratings ${analystRatings}` : "fehlt"}`,
-    `Marco-Inputs: Insider ${insiderTrades.length}, Institutionen ${hasInstitutional ? institutionalCount || "Quote" : "fehlt"}, Trends ${trends.length}`,
+    `Analysten: ${hasAnalystConsensus ? `Ziel ${analystData?.mean_target?.toFixed(2) ?? "N/A"}, Ratings ${analystRatings || (analystData?.rating_count ?? 0)}${sourceLabel(analystData?.source) ? ` (${sourceLabel(analystData?.source)})` : ""}` : "fehlt"}`,
+    `Marco-Inputs: Insider ${insiderTrades.length}, Institutionen ${hasInstitutional ? `${institutionalCount || "Quote"}${sourceLabel(institutional?.source) ? ` (${sourceLabel(institutional?.source)})` : ""}` : "fehlt"}, Trends ${trends.length}`,
     `News: ${googleNews.length}, Excerpts ${newsWithExcerpt}`,
     `Peers: ${peerContext ? "vorhanden" : "fehlt"}`,
     `FX: ${fxContext.source}`,
@@ -2881,11 +2913,11 @@ export async function runAnalysisJob(
     tlog("after Promise.all data fetch");
 
     const googleNews = googleNewsResult.data;
-    const edgarFacts = edgarFactsResult.data;
+    let edgarFacts = edgarFactsResult.data;
     const insiderTrades = insiderTradesResult.data;
     const trends = trendsResult.data;
-    const institutional = institutionalResult.data;
-    const analystData = analystDataResult.data;
+    let institutional = institutionalResult.data;
+    let analystData = analystDataResult.data;
     const fxContext = fxContextResult.data;
     const dataFetchErrors: Record<string, string | null> = {
       news: googleNewsResult.error,
@@ -2896,6 +2928,36 @@ export async function runAnalysisJob(
       analyst: analystDataResult.error,
       fx: fxContextResult.error,
     };
+
+    const cachedResearch = await traceStep(
+      "research_cache",
+      "Research-Cache prüfen",
+      14,
+      () => loadCachedResearchData(serviceClient, symbol).catch(() => ({
+        analystData: null,
+        institutional: null,
+        fundamentalFacts: null,
+      })),
+    );
+    const cacheNotes: string[] = [];
+    if (!hasAnalystConsensusData(analystData) && cachedResearch.analystData) {
+      analystData = cachedResearch.analystData;
+      dataFetchErrors.analyst = null;
+      cacheNotes.push("Analysten aus Cache");
+    }
+    if (!hasMarketIntelData([], [], institutional) && cachedResearch.institutional) {
+      institutional = cachedResearch.institutional;
+      dataFetchErrors.institutional = null;
+      cacheNotes.push("Institutionen aus Cache");
+    }
+    if ((!hasQuarterlyFacts(edgarFacts) || hasYahooFilingFallback(edgarFacts)) && cachedResearch.fundamentalFacts) {
+      edgarFacts = cachedResearch.fundamentalFacts;
+      dataFetchErrors.edgar = null;
+      cacheNotes.push("Quartalsdaten aus Cache");
+    }
+    if (cacheNotes.length) {
+      dataFetchErrors.cache = null;
+    }
 
     const snapshot: AssetSnapshot = {
       id: "",
