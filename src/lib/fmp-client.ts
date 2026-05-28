@@ -72,6 +72,12 @@ async function fetchJson(url: string): Promise<unknown> {
   if (isRecord(json) && typeof json["Error Message"] === "string") {
     throw new Error(String(json["Error Message"]));
   }
+  if (isRecord(json) && typeof json.error === "string") {
+    throw new Error(String(json.error));
+  }
+  if (isRecord(json) && typeof json.message === "string" && Object.keys(json).length <= 3) {
+    throw new Error(String(json.message));
+  }
   return json;
 }
 
@@ -137,20 +143,26 @@ export async function fetchFmpAnalystConsensus(symbol: string): Promise<FmpAnaly
 
   const targetRow = firstWithNumber(rows, [
     "targetConsensus",
+    "targetMedian",
     "targetMean",
     "targetAverage",
+    "median",
     "priceTargetAverage",
     "priceTargetAvg",
+    "priceTargetMedian",
     "estimatedPriceTargetAvg",
   ]);
   if (!targetRow) return null;
 
   const meanTarget = numberFrom(targetRow, [
     "targetConsensus",
+    "targetMedian",
     "targetMean",
     "targetAverage",
+    "median",
     "priceTargetAverage",
     "priceTargetAvg",
+    "priceTargetMedian",
     "estimatedPriceTargetAvg",
   ]);
   const highTarget = numberFrom(targetRow, [
@@ -242,31 +254,49 @@ export async function fetchFmpInstitutionalOwnership(symbol: string): Promise<Fm
   );
 
   const [holdersResult, ...summaryResults] = await Promise.allSettled([
+    fetchJson(stableUrl("institutional-ownership/symbol-ownership", {
+      symbol: upper,
+      includeCurrentQuarter: "false",
+    })),
     fetchJson(legacyUrl(`institutional-holder/${encodeURIComponent(upper)}`)),
     ...quarterUrls.map(url => fetchJson(url)),
   ]);
 
-  const holdersRaw = holdersResult.status === "fulfilled" ? holdersResult.value : null;
+  const symbolOwnershipRaw = holdersResult.status === "fulfilled" ? holdersResult.value : null;
+  const holdersRaw = summaryResults[0]?.status === "fulfilled" ? summaryResults[0].value : null;
   const summaryRaw = summaryResults
+    .slice(1)
     .filter((result): result is PromiseFulfilledResult<unknown> => result.status === "fulfilled")
     .map(result => result.value);
 
-  const topHolders = records(holdersRaw)
+  const topHolders = [
+    ...records(symbolOwnershipRaw),
+    ...records(holdersRaw),
+  ]
     .map(parseInstitutionalHolder)
     .filter((item): item is InstitutionalHolder => item != null)
     .slice(0, 10);
 
-  const summaryRows = summaryRaw.flatMap(records);
+  const summaryRows = [
+    ...records(symbolOwnershipRaw),
+    ...summaryRaw.flatMap(records),
+  ];
   const summary = firstWithNumber(summaryRows, [
     "ownershipPercent",
     "institutionalOwnershipPercentage",
     "percentOfSharesOutstanding",
+    "percentage",
+    "ownershipPercentage",
+    "institutionalOwnership",
     "pct_institutions",
   ]);
   const pctInstitutions = normalizePct(numberFrom(summary, [
     "ownershipPercent",
     "institutionalOwnershipPercentage",
     "percentOfSharesOutstanding",
+    "percentage",
+    "ownershipPercentage",
+    "institutionalOwnership",
     "pct_institutions",
   ]));
 
@@ -277,7 +307,7 @@ export async function fetchFmpInstitutionalOwnership(symbol: string): Promise<Fm
     pct_institutions: pctInstitutions,
     top_holders: topHolders,
     source: "fmp",
-    raw: combineRaw({ holders: holdersRaw, summary: summaryRaw }),
+    raw: combineRaw({ symbolOwnership: symbolOwnershipRaw, holders: holdersRaw, summary: summaryRaw }),
   };
 }
 
