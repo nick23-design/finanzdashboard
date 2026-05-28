@@ -8,6 +8,7 @@ import type {
 
 const FMP_STABLE_BASE = "https://financialmodelingprep.com/stable";
 const FMP_LEGACY_BASE = "https://financialmodelingprep.com/api/v3";
+const FMP_LEGACY_V4_BASE = "https://financialmodelingprep.com/api/v4";
 const FMP_TIMEOUT_MS = 12_000;
 
 export interface FmpAnalystConsensus extends AnalystData {
@@ -41,6 +42,15 @@ function stableUrl(path: string, params: Record<string, string | number | null |
 
 function legacyUrl(path: string, params: Record<string, string | number | null | undefined> = {}): string {
   const url = new URL(path.replace(/^\//, ""), `${FMP_LEGACY_BASE}/`);
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null) url.searchParams.set(key, String(value));
+  }
+  url.searchParams.set("apikey", getApiKey());
+  return url.toString();
+}
+
+function legacyV4Url(path: string, params: Record<string, string | number | null | undefined> = {}): string {
+  const url = new URL(path.replace(/^\//, ""), `${FMP_LEGACY_V4_BASE}/`);
   for (const [key, value] of Object.entries(params)) {
     if (value != null) url.searchParams.set(key, String(value));
   }
@@ -126,19 +136,27 @@ function combineRaw(parts: Record<string, unknown>): unknown {
 
 export async function fetchFmpAnalystConsensus(symbol: string): Promise<FmpAnalystConsensus | null> {
   const upper = symbol.toUpperCase();
-  const [consensusResult, summaryResult, estimatesResult] = await Promise.allSettled([
+  const [consensusResult, summaryResult, estimatesResult, legacyConsensusResult, legacySummaryResult, legacyTargetsResult] = await Promise.allSettled([
     fetchJson(stableUrl("price-target-consensus", { symbol: upper })),
     fetchJson(stableUrl("price-target-summary", { symbol: upper })),
     fetchJson(stableUrl("analyst-estimates", { symbol: upper, period: "annual", page: 0, limit: 5 })),
+    fetchJson(legacyV4Url("price-target-consensus", { symbol: upper })),
+    fetchJson(legacyV4Url("price-target-summary", { symbol: upper })),
+    fetchJson(legacyV4Url("price-target", { symbol: upper })),
   ]);
 
   const consensusRaw = consensusResult.status === "fulfilled" ? consensusResult.value : null;
   const summaryRaw = summaryResult.status === "fulfilled" ? summaryResult.value : null;
   const estimatesRaw = estimatesResult.status === "fulfilled" ? estimatesResult.value : null;
+  const legacyConsensusRaw = legacyConsensusResult.status === "fulfilled" ? legacyConsensusResult.value : null;
+  const legacySummaryRaw = legacySummaryResult.status === "fulfilled" ? legacySummaryResult.value : null;
+  const legacyTargetsRaw = legacyTargetsResult.status === "fulfilled" ? legacyTargetsResult.value : null;
   const rows = [
     ...records(consensusRaw),
     ...records(summaryRaw),
     ...records(estimatesRaw),
+    ...records(legacyConsensusRaw),
+    ...records(legacySummaryRaw),
   ];
 
   const targetRow = firstWithNumber(rows, [
@@ -187,20 +205,42 @@ export async function fetchFmpAnalystConsensus(symbol: string): Promise<FmpAnaly
     "analysts",
   ]);
 
-  if (meanTarget == null && highTarget == null && lowTarget == null) return null;
+  const individualTargets = records(legacyTargetsRaw)
+    .map(row => numberFrom(row, [
+      "priceTarget",
+      "priceTargetNew",
+      "targetPrice",
+      "target",
+      "targetTo",
+    ]))
+    .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+  const individualMean = individualTargets.length
+    ? individualTargets.reduce((sum, value) => sum + value, 0) / individualTargets.length
+    : null;
+  const individualHigh = individualTargets.length ? Math.max(...individualTargets) : null;
+  const individualLow = individualTargets.length ? Math.min(...individualTargets) : null;
+
+  if (meanTarget == null && highTarget == null && lowTarget == null && individualMean == null) return null;
 
   return {
-    mean_target: meanTarget,
-    high_target: highTarget,
-    low_target: lowTarget,
-    rating_count: ratingCount,
+    mean_target: meanTarget ?? individualMean,
+    high_target: highTarget ?? individualHigh,
+    low_target: lowTarget ?? individualLow,
+    rating_count: ratingCount ?? (individualTargets.length || null),
     strong_buy: 0,
     buy: 0,
     hold: 0,
     sell: 0,
     strong_sell: 0,
     source: "fmp",
-    raw: combineRaw({ consensus: consensusRaw, summary: summaryRaw, estimates: estimatesRaw }),
+    raw: combineRaw({
+      consensus: consensusRaw,
+      summary: summaryRaw,
+      estimates: estimatesRaw,
+      legacyConsensus: legacyConsensusRaw,
+      legacySummary: legacySummaryRaw,
+      legacyTargets: legacyTargetsRaw,
+    }),
   };
 }
 
@@ -258,19 +298,25 @@ export async function fetchFmpInstitutionalOwnership(symbol: string): Promise<Fm
       symbol: upper,
       includeCurrentQuarter: "false",
     })),
+    fetchJson(legacyV4Url("institutional-ownership/symbol-ownership", {
+      symbol: upper,
+      includeCurrentQuarter: "false",
+    })),
     fetchJson(legacyUrl(`institutional-holder/${encodeURIComponent(upper)}`)),
     ...quarterUrls.map(url => fetchJson(url)),
   ]);
 
   const symbolOwnershipRaw = holdersResult.status === "fulfilled" ? holdersResult.value : null;
-  const holdersRaw = summaryResults[0]?.status === "fulfilled" ? summaryResults[0].value : null;
+  const legacySymbolOwnershipRaw = summaryResults[0]?.status === "fulfilled" ? summaryResults[0].value : null;
+  const holdersRaw = summaryResults[1]?.status === "fulfilled" ? summaryResults[1].value : null;
   const summaryRaw = summaryResults
-    .slice(1)
+    .slice(2)
     .filter((result): result is PromiseFulfilledResult<unknown> => result.status === "fulfilled")
     .map(result => result.value);
 
   const topHolders = [
     ...records(symbolOwnershipRaw),
+    ...records(legacySymbolOwnershipRaw),
     ...records(holdersRaw),
   ]
     .map(parseInstitutionalHolder)
@@ -279,6 +325,7 @@ export async function fetchFmpInstitutionalOwnership(symbol: string): Promise<Fm
 
   const summaryRows = [
     ...records(symbolOwnershipRaw),
+    ...records(legacySymbolOwnershipRaw),
     ...summaryRaw.flatMap(records),
   ];
   const summary = firstWithNumber(summaryRows, [
@@ -307,7 +354,12 @@ export async function fetchFmpInstitutionalOwnership(symbol: string): Promise<Fm
     pct_institutions: pctInstitutions,
     top_holders: topHolders,
     source: "fmp",
-    raw: combineRaw({ symbolOwnership: symbolOwnershipRaw, holders: holdersRaw, summary: summaryRaw }),
+    raw: combineRaw({
+      symbolOwnership: symbolOwnershipRaw,
+      legacySymbolOwnership: legacySymbolOwnershipRaw,
+      holders: holdersRaw,
+      summary: summaryRaw,
+    }),
   };
 }
 
