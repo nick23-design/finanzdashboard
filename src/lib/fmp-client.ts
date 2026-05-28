@@ -136,13 +136,19 @@ function combineRaw(parts: Record<string, unknown>): unknown {
 
 export async function fetchFmpAnalystConsensus(symbol: string): Promise<FmpAnalystConsensus | null> {
   const upper = symbol.toUpperCase();
-  const [consensusResult, summaryResult, estimatesResult, legacyConsensusResult, legacySummaryResult, legacyTargetsResult] = await Promise.allSettled([
+  const [
+    consensusResult, summaryResult, estimatesResult,
+    legacyConsensusResult, legacySummaryResult, legacyTargetsResult,
+    ratingsResult, legacyRatingsResult,
+  ] = await Promise.allSettled([
     fetchJson(stableUrl("price-target-consensus", { symbol: upper })),
     fetchJson(stableUrl("price-target-summary", { symbol: upper })),
     fetchJson(stableUrl("analyst-estimates", { symbol: upper, period: "annual", page: 0, limit: 5 })),
     fetchJson(legacyV4Url("price-target-consensus", { symbol: upper })),
     fetchJson(legacyV4Url("price-target-summary", { symbol: upper })),
     fetchJson(legacyV4Url("price-target", { symbol: upper })),
+    fetchJson(stableUrl("analyst-stock-recommendations", { symbol: upper })),
+    fetchJson(legacyUrl(`analyst-stock-recommendations/${encodeURIComponent(upper)}`)),
   ]);
 
   const consensusRaw = consensusResult.status === "fulfilled" ? consensusResult.value : null;
@@ -151,6 +157,9 @@ export async function fetchFmpAnalystConsensus(symbol: string): Promise<FmpAnaly
   const legacyConsensusRaw = legacyConsensusResult.status === "fulfilled" ? legacyConsensusResult.value : null;
   const legacySummaryRaw = legacySummaryResult.status === "fulfilled" ? legacySummaryResult.value : null;
   const legacyTargetsRaw = legacyTargetsResult.status === "fulfilled" ? legacyTargetsResult.value : null;
+  const ratingsRaw = ratingsResult.status === "fulfilled" ? ratingsResult.value : null;
+  const legacyRatingsRaw = legacyRatingsResult.status === "fulfilled" ? legacyRatingsResult.value : null;
+
   const rows = [
     ...records(consensusRaw),
     ...records(summaryRaw),
@@ -222,16 +231,26 @@ export async function fetchFmpAnalystConsensus(symbol: string): Promise<FmpAnaly
 
   if (meanTarget == null && highTarget == null && lowTarget == null && individualMean == null) return null;
 
+  // Parse buy/hold/sell distribution — try stable endpoint first, then legacy
+  const ratingRows = [...records(ratingsRaw), ...records(legacyRatingsRaw)];
+  const latestRatingRow = ratingRows[0] ?? null;
+  const strongBuy = numberFrom(latestRatingRow, ["analystRatingsStrongBuy", "strongBuy"]) ?? 0;
+  const buy = numberFrom(latestRatingRow, ["analystRatingsBuy", "buy"]) ?? 0;
+  const hold = numberFrom(latestRatingRow, ["analystRatingsHold", "hold"]) ?? 0;
+  const sell = numberFrom(latestRatingRow, ["analystRatingsSell", "sell"]) ?? 0;
+  const strongSell = numberFrom(latestRatingRow, ["analystRatingsStrongSell", "strongSell"]) ?? 0;
+  const distributionTotal = strongBuy + buy + hold + sell + strongSell;
+
   return {
     mean_target: meanTarget ?? individualMean,
     high_target: highTarget ?? individualHigh,
     low_target: lowTarget ?? individualLow,
-    rating_count: ratingCount ?? (individualTargets.length || null),
-    strong_buy: 0,
-    buy: 0,
-    hold: 0,
-    sell: 0,
-    strong_sell: 0,
+    rating_count: distributionTotal > 0 ? distributionTotal : ratingCount ?? (individualTargets.length || null),
+    strong_buy: strongBuy,
+    buy,
+    hold,
+    sell,
+    strong_sell: strongSell,
     source: "fmp",
     raw: combineRaw({
       consensus: consensusRaw,
@@ -240,6 +259,8 @@ export async function fetchFmpAnalystConsensus(symbol: string): Promise<FmpAnaly
       legacyConsensus: legacyConsensusRaw,
       legacySummary: legacySummaryRaw,
       legacyTargets: legacyTargetsRaw,
+      ratings: ratingsRaw,
+      legacyRatings: legacyRatingsRaw,
     }),
   };
 }
