@@ -316,9 +316,10 @@ const STATUS_LABEL_DE: Record<string, string> = {
 function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }) {
   const analyst = analysis.analyst_consensus_range;
   const model = analysis.model_valuation_range;
+  const dcf = analysis.dcf_valuation_range;
   const div = analysis.valuation_divergence;
 
-  if (!analyst && !model && !div) return null;
+  if (!analyst && !model && !dcf && !div) return null;
 
   // ─── Backward-compat: detect legacy format (pre-DivergenceResult)
   // Old format has `difference_pct` / `interpretation` but no `status`.
@@ -365,6 +366,14 @@ function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }
             </div>
           )}
         </>
+      )}
+
+      {dcf && (
+        <ValuationRangeSection
+          range={dcf}
+          title="DCF Fair Value"
+          subtitle="Deterministisches FCFF-Modell · Sektortemplates · Keine Optionalität"
+        />
       )}
 
       {/* ─── New format divergence card ─────────────────────────────────── */}
@@ -916,7 +925,7 @@ export function AIAnalysisCard({ analysis }: Props) {
       )}
 
       {/* Valuation */}
-      {analysis.analyst_consensus_range || analysis.model_valuation_range || analysis.valuation_divergence ? (
+      {analysis.analyst_consensus_range || analysis.model_valuation_range || analysis.dcf_valuation_range || analysis.valuation_divergence ? (
         <ValuationSeparationSection analysis={analysis} />
       ) : analysis.valuation_range ? (
         <ValuationRangeSection range={analysis.valuation_range} levels={analysis.price_levels} />

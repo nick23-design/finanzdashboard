@@ -89,6 +89,8 @@ import {
   type RawValuationRange,
   type ValueDriver,
 } from "@/lib/ai-analysis/valuation-model";
+import { computeDcfScenarios } from "@/lib/ai-analysis/dcf-pipeline";
+import type { DcfScenariosOutput } from "@/lib/ai-analysis/dcf";
 import {
   DEFAULT_GROWTH_OUTLOOK,
   logSynthesisNormalizationEvents,
@@ -297,7 +299,7 @@ export interface MoneyRange {
 export interface ValuationRange extends MoneyRange {
   currency: string;
   rationale: string;
-  source?: "analyst_consensus" | "own_model" | "synthesis";
+  source?: "analyst_consensus" | "own_model" | "synthesis" | "dcf";
   confidence?: ValuationConfidence | null;
   methods?: string[];
   limitations?: string[];
@@ -333,6 +335,7 @@ interface SynthesisResult {
   valuation_range?: ValuationRange | null;
   analyst_consensus_range?: ValuationRange | null;
   model_valuation_range?: ValuationRange | null;
+  dcf_valuation_range?: ValuationRange | null;
   valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
   data_quality_guardrails?: string[];
@@ -408,6 +411,7 @@ export interface AIAnalysisResult extends SynthesisResult {
   valuation_range?: ValuationRange | null;
   analyst_consensus_range?: ValuationRange | null;
   model_valuation_range?: ValuationRange | null;
+  dcf_valuation_range?: ValuationRange | null;
   valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
   data_quality_guardrails?: string[];
@@ -435,6 +439,7 @@ interface OrchestratorResult {
   valuation_range?: ValuationRange | null;
   analyst_consensus_range?: ValuationRange | null;
   model_valuation_range?: ValuationRange | null;
+  dcf_valuation_range?: ValuationRange | null;
   valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
   data_quality_guardrails?: string[];
@@ -450,6 +455,8 @@ interface ValuationContext {
   businessDrivers: BusinessDriverAnalysis;
   analystConsensusRange: ValuationRange | null;
   modelValuationRange: ValuationRange | null;
+  dcfValuationRange: ValuationRange | null;
+  dcfScenarios: DcfScenariosOutput | null;
   /** Always defined — status field encodes all edge cases. */
   valuationDivergence: DivergenceResult;
   /** Current price in USD — needed by V6 safety-net and divergence upside display. */
@@ -961,12 +968,53 @@ function getUsdMoneyRange(range: ValuationRange | null): { bear: number | null; 
   return null;
 }
 
+function buildDcfValuationRange(
+  scenarios: DcfScenariosOutput,
+  currency: string,
+  fx: FxContext,
+): ValuationRange {
+  const eurUsd = fx.eurUsd;
+  const toEur = (v: number | null) => (v != null && currency === "USD" ? v / eurUsd : null);
+  const toUsd = (v: number | null) => (v != null && currency === "EUR" ? v * eurUsd : null);
+
+  const bear = scenarios.bear.fairValuePerShare;
+  const base = scenarios.base.fairValuePerShare;
+  const bull = scenarios.bull.fairValuePerShare;
+
+  const usdRange: MoneyRange = currency === "USD"
+    ? { bear, base, bull }
+    : { bear: toUsd(bear), base: toUsd(base), bull: toUsd(bull) };
+  const eurRange: MoneyRange = currency === "EUR"
+    ? { bear, base, bull }
+    : { bear: toEur(bear), base: toEur(base), bull: toEur(bull) };
+
+  const allLimitations = Array.from(new Set(scenarios.limitations));
+
+  return {
+    currency,
+    bear,
+    base,
+    bull,
+    rationale: "Deterministisches FCFF-DCF-Modell (Bear/Base/Bull). Netto-Verschuldung wird mit 0 angenähert; Sektordefaults für WACC, Marge und Reinvestitionsrate.",
+    source: "dcf",
+    confidence: "medium",
+    methods: ["FCFF DCF", "WACC-Sektortemplates", "Gordon Growth Terminal Value"],
+    limitations: allLimitations,
+    usd: usdRange,
+    eur: eurRange,
+    fx_rate_eur_usd: fx.eurUsd,
+    fx_rate_source: fx.source,
+    fx_rate_as_of: fx.asOf,
+  };
+}
+
 function buildValuationContext(
   symbol: string,
   snapshot: AssetSnapshot,
   analystData: AnalystData | null,
   dataQuality: DianaQualityReport | null | undefined,
   fx: FxContext,
+  edgarFacts: EdgarFacts | null = null,
 ): ValuationContext {
   const businessDrivers = buildBusinessDriverAnalysis(symbol, snapshot);
   const analystConsensusRange = enrichRawValuationRange(
@@ -977,6 +1025,12 @@ function buildValuationContext(
     buildOwnModelValuation(snapshot, businessDrivers, dataQuality),
     fx,
   );
+
+  // DCF scenarios — deterministic, no LLM
+  const dcfScenarios = computeDcfScenarios(snapshot, edgarFacts, businessDrivers.sector_template);
+  const dcfValuationRange = dcfScenarios
+    ? buildDcfValuationRange(dcfScenarios, snapshot.currency ?? "USD", fx)
+    : null;
 
   // Current price converted to USD for upside calculations
   const priceUsd: number | null =
@@ -1014,7 +1068,7 @@ function buildValuationContext(
       : { available: false },
   });
 
-  return { businessDrivers, analystConsensusRange, modelValuationRange, valuationDivergence, currentPriceUsd: priceUsd };
+  return { businessDrivers, analystConsensusRange, modelValuationRange, dcfValuationRange, dcfScenarios, valuationDivergence, currentPriceUsd: priceUsd };
 }
 
 function formatRangeForPrompt(range: ValuationRange | null): string {
@@ -1115,6 +1169,7 @@ function completeResearchFields(
     valuation_range: valuationRange,
     analyst_consensus_range: valuationContext.analystConsensusRange,
     model_valuation_range: valuationContext.modelValuationRange,
+    dcf_valuation_range: valuationContext.dcfValuationRange,
     valuation_divergence: valuationContext.valuationDivergence,
     business_drivers: valuationContext.businessDrivers,
     data_quality_guardrails: guardrails,
@@ -1394,11 +1449,17 @@ Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kerna
 
   const analystSection = formatAnalystData(analystData);
   const driverSection = formatBusinessDriversForPrompt(valuationContext.businessDrivers);
+  const dcfSection = valuationContext.dcfValuationRange
+    ? `\nDCF-FAIRER-WERT (FCFF-Modell, deterministisch — erkläre qualitativ auf Deutsch, rechne NICHT nach):
+${formatRangeForPrompt(valuationContext.dcfValuationRange)}
+HINWEIS: Negativer DCF-Upside bedeutet NICHT automatisch Verkaufen. Premium-Qualitätsunternehmen werden oft oberhalb ihres DCF-Fairen-Werts gehandelt, weil der Markt strategische Optionalität einpreist, die das rein zahlungsstrombasierte Modell nicht erfasst.`
+    : "";
+
   const valuationSection = `ANALYSTENKONSENS (Marktmeinung, kein eigenes Modell):
 ${formatRangeForPrompt(valuationContext.analystConsensusRange)}
 
 EIGENES BEWERTUNGSMODELL (deterministisch):
-${formatRangeForPrompt(valuationContext.modelValuationRange)}
+${formatRangeForPrompt(valuationContext.modelValuationRange)}${dcfSection}
 
 DIVERGENZ (deterministisch berechnet — erkläre dies auf Deutsch, rechne NICHT nach):
 Status: ${valuationContext.valuationDivergence.status}
@@ -1546,6 +1607,7 @@ WICHTIG:
 - claims müssen konkrete, prüfbare Aussagen sein, jeweils mit Evidenz aus Kennzahlen, News, Analysten oder Inferenz.
 - claims[].confidence muss immer eine ganze Zahl von 1 bis 5 sein. Nie 0, nie Dezimalzahl, nie null; bei Unsicherheit 1 oder 2.
 - growth_outlook muss immer ein String sein. Wenn kein belastbarer Wachstumsausblick möglich ist, verwende exakt: "${DEFAULT_GROWTH_OUTLOOK}".
+- DCF-Szenarien sind deterministisch berechnet und spiegeln nur zahlungsstrombasierte Bewertung wider. Ein negativer DCF-Upside ist kein automatisches Verkaufssignal — Premium-Qualitätsunternehmen handeln oft mit erheblicher Prämie gegenüber dem reinen DCF-Wert. Erkläre diese Prämie qualitativ, rechne sie nie selbst nach.
 - Keine Anlageberatung, keine Garantien.
 
 Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
@@ -2544,7 +2606,7 @@ async function runAnalysisPipeline(
     "valuation_model",
     "Werttreiber & Bewertungsmodell vorbereiten",
     58,
-    async () => buildValuationContext(symbol, snapshot, analystData, dataQuality, fxContext),
+    async () => buildValuationContext(symbol, snapshot, analystData, dataQuality, fxContext, edgarFacts),
   );
   protocol.push({
     agent: "Driver",
@@ -2609,6 +2671,7 @@ async function runAnalysisPipeline(
     valuation_range: cappedSynthesis.valuation_range ?? null,
     analyst_consensus_range: cappedSynthesis.analyst_consensus_range ?? null,
     model_valuation_range: cappedSynthesis.model_valuation_range ?? null,
+    dcf_valuation_range: cappedSynthesis.dcf_valuation_range ?? null,
     valuation_divergence: cappedSynthesis.valuation_divergence ?? null,
     business_drivers: cappedSynthesis.business_drivers ?? null,
     data_quality_guardrails: cappedSynthesis.data_quality_guardrails ?? [],
@@ -2640,6 +2703,7 @@ function buildAnalysisExtraData(result: AIAnalysisResult): import("@/types/datab
     ...(result.valuation_range ? { valuation_range: result.valuation_range } : {}),
     ...(result.analyst_consensus_range ? { analyst_consensus_range: result.analyst_consensus_range } : {}),
     ...(result.model_valuation_range ? { model_valuation_range: result.model_valuation_range } : {}),
+    ...(result.dcf_valuation_range ? { dcf_valuation_range: result.dcf_valuation_range } : {}),
     ...(result.valuation_divergence ? { valuation_divergence: result.valuation_divergence } : {}),
     ...(result.business_drivers ? { business_drivers: result.business_drivers } : {}),
     ...(result.data_quality_guardrails ? { data_quality_guardrails: result.data_quality_guardrails } : {}),
@@ -2764,6 +2828,7 @@ async function runDeferredVeraCheck({
     valuation_range: factCheck.result.valuation_range ?? result.valuation_range,
     analyst_consensus_range: factCheck.result.analyst_consensus_range ?? result.analyst_consensus_range,
     model_valuation_range: factCheck.result.model_valuation_range ?? result.model_valuation_range,
+    dcf_valuation_range: result.dcf_valuation_range,
     valuation_divergence: factCheck.result.valuation_divergence ?? result.valuation_divergence,
     business_drivers: factCheck.result.business_drivers ?? result.business_drivers,
     data_quality_guardrails: factCheck.result.data_quality_guardrails ?? result.data_quality_guardrails,
@@ -3077,6 +3142,7 @@ export async function runAnalysisJob(
       valuation_range: orchestrated.valuation_range ?? null,
       analyst_consensus_range: orchestrated.analyst_consensus_range ?? null,
       model_valuation_range: orchestrated.model_valuation_range ?? null,
+      dcf_valuation_range: orchestrated.dcf_valuation_range ?? null,
       valuation_divergence: orchestrated.valuation_divergence ?? null,
       business_drivers: orchestrated.business_drivers ?? null,
       data_quality_guardrails: orchestrated.data_quality_guardrails ?? [],
@@ -3192,6 +3258,7 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
       valuation_range: extra.valuation_range as ValuationRange | null ?? null,
       analyst_consensus_range: extra.analyst_consensus_range as ValuationRange | null ?? null,
       model_valuation_range: extra.model_valuation_range as ValuationRange | null ?? null,
+      dcf_valuation_range: extra.dcf_valuation_range as ValuationRange | null ?? null,
       valuation_divergence: extra.valuation_divergence as DivergenceResult | null ?? null,
       business_drivers: extra.business_drivers as BusinessDriverAnalysis | null ?? null,
       data_quality_guardrails: extra.data_quality_guardrails as string[] ?? [],
