@@ -3013,6 +3013,11 @@ export async function runAnalysisJob(
       void saveOutcome(result, serviceClient);
     });
     result.trace = getTrace();
+    if (analysisId) {
+      await serviceClient.from("ai_analyses").update({
+        extra_data: buildAnalysisExtraData(result),
+      }).eq("id", analysisId);
+    }
     tlog("after saveAnalysis");
 
     // VERA läuft per CRON — hier nicht mehr aufrufen.
