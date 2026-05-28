@@ -14,7 +14,7 @@ import type { SectorTemplateKey } from "./valuation-model";
 import type { AssetSnapshot } from "@/types/database";
 import type { EdgarFacts } from "@/lib/finance-client";
 
-interface SectorDcfDefaults {
+export interface SectorDcfDefaults {
   wacc: number;
   terminalGrowth: number;
   opMargin: number;
@@ -22,7 +22,7 @@ interface SectorDcfDefaults {
   reinvestment: number;
 }
 
-const SECTOR_DCF_DEFAULTS: Record<SectorTemplateKey, SectorDcfDefaults> = {
+export const SECTOR_DCF_DEFAULTS: Record<SectorTemplateKey, SectorDcfDefaults> = {
   mega_cap_cloud_software: { wacc: 0.09, terminalGrowth: 0.03,  opMargin: 0.25, taxRate: 0.20, reinvestment: 0.20 },
   semiconductor:           { wacc: 0.10, terminalGrowth: 0.025, opMargin: 0.22, taxRate: 0.20, reinvestment: 0.25 },
   saas:                    { wacc: 0.10, terminalGrowth: 0.025, opMargin: 0.18, taxRate: 0.21, reinvestment: 0.30 },

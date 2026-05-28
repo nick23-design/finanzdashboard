@@ -91,6 +91,7 @@ import {
 } from "@/lib/ai-analysis/valuation-model";
 import { computeDcfScenarios } from "@/lib/ai-analysis/dcf-pipeline";
 import type { DcfScenariosOutput } from "@/lib/ai-analysis/dcf";
+import { calculateAlphaFramework, type AlphaFrameworkOutput } from "@/lib/ai-analysis/alpha-framework";
 import {
   DEFAULT_GROWTH_OUTLOOK,
   logSynthesisNormalizationEvents,
@@ -338,6 +339,7 @@ interface SynthesisResult {
   dcf_valuation_range?: ValuationRange | null;
   valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
+  alpha_framework?: AlphaFrameworkOutput | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
 }
@@ -414,6 +416,7 @@ export interface AIAnalysisResult extends SynthesisResult {
   dcf_valuation_range?: ValuationRange | null;
   valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
+  alpha_framework?: AlphaFrameworkOutput | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
   data_quality: DianaQualityReport | null;
@@ -442,6 +445,7 @@ interface OrchestratorResult {
   dcf_valuation_range?: ValuationRange | null;
   valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
+  alpha_framework?: AlphaFrameworkOutput | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
   fundamental: FundamentalAnalysis;
@@ -461,6 +465,7 @@ interface ValuationContext {
   valuationDivergence: DivergenceResult;
   /** Current price in USD — needed by V6 safety-net and divergence upside display. */
   currentPriceUsd: number | null;
+  alphaFramework: AlphaFrameworkOutput | null;
 }
 
 // --- Helpers ---
@@ -1068,7 +1073,15 @@ function buildValuationContext(
       : { available: false },
   });
 
-  return { businessDrivers, analystConsensusRange, modelValuationRange, dcfValuationRange, dcfScenarios, valuationDivergence, currentPriceUsd: priceUsd };
+  const alphaFramework = calculateAlphaFramework({
+    snapshot,
+    edgarFacts,
+    analystData,
+    sectorTemplate: businessDrivers.sector_template,
+    dataQuality: dataQuality ?? null,
+  });
+
+  return { businessDrivers, analystConsensusRange, modelValuationRange, dcfValuationRange, dcfScenarios, valuationDivergence, currentPriceUsd: priceUsd, alphaFramework };
 }
 
 function formatRangeForPrompt(range: ValuationRange | null): string {
@@ -1172,6 +1185,7 @@ function completeResearchFields(
     dcf_valuation_range: valuationContext.dcfValuationRange,
     valuation_divergence: valuationContext.valuationDivergence,
     business_drivers: valuationContext.businessDrivers,
+    alpha_framework: valuationContext.alphaFramework,
     data_quality_guardrails: guardrails,
     claims,
     price_levels: priceLevels,
@@ -1455,6 +1469,17 @@ ${formatRangeForPrompt(valuationContext.dcfValuationRange)}
 HINWEIS: Negativer DCF-Upside bedeutet NICHT automatisch Verkaufen. Premium-Qualitätsunternehmen werden oft oberhalb ihres DCF-Fairen-Werts gehandelt, weil der Markt strategische Optionalität einpreist, die das rein zahlungsstrombasierte Modell nicht erfasst.`
     : "";
 
+  const af = valuationContext.alphaFramework;
+  const alphaSection = af ? `
+ALPHA-FRAMEWORK (deterministisch — beziehe dich auf die Scores, rechne sie NICHT nach):
+Typ: ${af.classification.primaryType} · Alpha-Score: ${af.alphaScore}/100 · Grade: ${af.alphaGrade}
+Qualität: ${af.quality.score}/100 (${af.quality.grade}) · Moat: ${af.moat.score}/100 (${af.moat.grade}) · Kapitalallokation: ${af.capitalAllocation.score}/100 (${af.capitalAllocation.grade})
+Bewertung (relativ): ${af.relativeValuation.score}/100 (${af.relativeValuation.valuationState}) · Risikoeinschätzung: ${af.risk.score}/100 (${af.risk.level})
+Revisions-Momentum: ${af.revisionMomentum.score}/100 (${af.revisionMomentum.direction}) · Kurs-Momentum: ${af.momentum.score}/100 (${af.momentum.trend})${af.reverseDcf.impliedGrowthRate != null ? `\nImpliziertes Wachstum (Reverse DCF): ${(af.reverseDcf.impliedGrowthRate * 100).toFixed(1)}% · Plausibilität: ${af.reverseDcf.plausibility}` : ""}
+Stärken: ${af.keyPositiveDrivers.slice(0, 3).join(" | ") || "keine"}
+Risiken: ${af.keyNegativeDrivers.slice(0, 3).join(" | ") || "keine"}
+HINWEIS: Alpha-Score und Typ sind Hilfsinformationen — du triffst die finale qualitative Einschätzung eigenständig.` : "";
+
   const valuationSection = `ANALYSTENKONSENS (Marktmeinung, kein eigenes Modell):
 ${formatRangeForPrompt(valuationContext.analystConsensusRange)}
 
@@ -1576,7 +1601,7 @@ SEKTOR- UND WERTTREIBER-MODELL:
 ${driverSection}
 
 BEWERTUNGSTRENNUNG:
-${valuationSection}
+${valuationSection}${alphaSection}
 
 WACHSTUMSBEWERTUNG: ${fundamental.growth_rating}/10
 Stärken: ${fundamental.key_positives.join(" | ")}
@@ -2674,6 +2699,7 @@ async function runAnalysisPipeline(
     dcf_valuation_range: cappedSynthesis.dcf_valuation_range ?? null,
     valuation_divergence: cappedSynthesis.valuation_divergence ?? null,
     business_drivers: cappedSynthesis.business_drivers ?? null,
+    alpha_framework: cappedSynthesis.alpha_framework ?? null,
     data_quality_guardrails: cappedSynthesis.data_quality_guardrails ?? [],
     claims: cappedSynthesis.claims ?? [],
     fundamental,
@@ -2706,6 +2732,7 @@ function buildAnalysisExtraData(result: AIAnalysisResult): import("@/types/datab
     ...(result.dcf_valuation_range ? { dcf_valuation_range: result.dcf_valuation_range } : {}),
     ...(result.valuation_divergence ? { valuation_divergence: result.valuation_divergence } : {}),
     ...(result.business_drivers ? { business_drivers: result.business_drivers } : {}),
+    ...(result.alpha_framework ? { alpha_framework: result.alpha_framework } : {}),
     ...(result.data_quality_guardrails ? { data_quality_guardrails: result.data_quality_guardrails } : {}),
     ...(result.claims ? { claims: result.claims } : {}),
     ...(result.data_quality ? { data_quality: result.data_quality } : {}),
@@ -2831,6 +2858,7 @@ async function runDeferredVeraCheck({
     dcf_valuation_range: result.dcf_valuation_range,
     valuation_divergence: factCheck.result.valuation_divergence ?? result.valuation_divergence,
     business_drivers: factCheck.result.business_drivers ?? result.business_drivers,
+    alpha_framework: result.alpha_framework,
     data_quality_guardrails: factCheck.result.data_quality_guardrails ?? result.data_quality_guardrails,
     claims: factCheck.result.claims ?? result.claims,
     trace: getTrace ? getTrace() : result.trace,
@@ -3145,6 +3173,7 @@ export async function runAnalysisJob(
       dcf_valuation_range: orchestrated.dcf_valuation_range ?? null,
       valuation_divergence: orchestrated.valuation_divergence ?? null,
       business_drivers: orchestrated.business_drivers ?? null,
+      alpha_framework: orchestrated.alpha_framework ?? null,
       data_quality_guardrails: orchestrated.data_quality_guardrails ?? [],
       claims: orchestrated.claims ?? [],
       data_quality: diana,
@@ -3261,6 +3290,7 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
       dcf_valuation_range: extra.dcf_valuation_range as ValuationRange | null ?? null,
       valuation_divergence: extra.valuation_divergence as DivergenceResult | null ?? null,
       business_drivers: extra.business_drivers as BusinessDriverAnalysis | null ?? null,
+      alpha_framework: extra.alpha_framework as AlphaFrameworkOutput | null ?? null,
       data_quality_guardrails: extra.data_quality_guardrails as string[] ?? [],
       claims: extra.claims as AnalysisClaim[] ?? [],
       data_quality: extra.data_quality as DianaQualityReport | null ?? null,
