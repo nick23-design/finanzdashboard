@@ -33,7 +33,8 @@ export async function updateSession(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isAuthRoute = pathname.startsWith("/auth");
-  const isProtected = !isAuthRoute && pathname !== "/";
+  const isCronRoute = pathname.startsWith("/api/cron/");
+  const isProtected = !isAuthRoute && !isCronRoute && pathname !== "/";
 
   if (isProtected && !user) {
     const url = request.nextUrl.clone();
