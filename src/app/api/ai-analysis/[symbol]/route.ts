@@ -995,12 +995,18 @@ function buildDcfValuationRange(
 
   const allLimitations = Array.from(new Set(scenarios.limitations));
 
+  const a = scenarios.base.assumptions;
+  const tv = scenarios.base.terminalValue;
+  const pvTv = scenarios.base.presentValueOfTerminalValue;
+  const ev = scenarios.base.enterpriseValue;
+  const rationale = `FCFF-DCF · WACC ${(a.wacc * 100).toFixed(1)}% · Terminales Wachstum ${(a.terminalGrowthRate * 100).toFixed(1)}% · Op.-Marge ${(a.operatingMarginRates[0] * 100).toFixed(0)}% (Sektortemplate) · Terminal Value ${(tv / 1e9).toFixed(0)} Mrd. / PV(TV) ${(pvTv / 1e9).toFixed(0)} Mrd. · EV ${(ev / 1e9).toFixed(0)} Mrd. · Nettoverschuldung mit 0 angenähert.`;
+
   return {
     currency,
     bear,
     base,
     bull,
-    rationale: "Deterministisches FCFF-DCF-Modell (Bear/Base/Bull). Netto-Verschuldung wird mit 0 angenähert; Sektordefaults für WACC, Marge und Reinvestitionsrate.",
+    rationale,
     source: "dcf",
     confidence: "medium",
     methods: ["FCFF DCF", "WACC-Sektortemplates", "Gordon Growth Terminal Value"],

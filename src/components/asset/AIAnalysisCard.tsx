@@ -186,11 +186,15 @@ function ValuationRangeSection({
   levels,
   title = "Bewertungsspanne",
   subtitle = "Bear / Base / Bull Case",
+  badge,
+  accentColor,
 }: {
   range: NonNullable<AIAnalysisResult["valuation_range"]>;
   levels?: PriceLevels | null;
   title?: string;
   subtitle?: string;
+  badge?: string;
+  accentColor?: string;
 }) {
   const [currency, setCurrency] = useState<"USD" | "EUR">("USD");
   const selected = currency === "USD" ? range.usd : range.eur;
@@ -204,10 +208,22 @@ function ValuationRangeSection({
   return (
     <div
       className="rounded-xl p-3 space-y-3"
-      style={{ background: "rgba(100,116,139,0.08)", border: "1px solid var(--card-border)" }}>
+      style={{
+        background: "rgba(100,116,139,0.08)",
+        border: "1px solid var(--card-border)",
+        borderLeft: accentColor ? `3px solid ${accentColor}` : "1px solid var(--card-border)",
+      }}>
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="text-xs font-semibold text-white">{title}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs font-semibold text-white">{title}</p>
+            {badge && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                style={{ color: accentColor ?? "var(--muted)", background: `${accentColor ?? "#64748b"}20` }}>
+                {badge}
+              </span>
+            )}
+          </div>
           <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
             {subtitle}
           </p>
@@ -344,7 +360,9 @@ function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }
         <ValuationRangeSection
           range={analyst}
           title="Analystenkonsens"
-          subtitle="Marktmeinung, kein eigenes Modell"
+          subtitle="Externe Markterwartung · Kursziele von Wall-Street-Analysten"
+          badge="MARKT"
+          accentColor="#38bdf8"
         />
       )}
       {model && (
@@ -353,12 +371,14 @@ function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }
             range={model}
             levels={analysis.price_levels}
             title="Eigenes Modell"
-            subtitle="Konservative FCF-/Multiple-Szenarien (kein Optionalitätswert)"
+            subtitle="Konservatives FCF-/Multiple-Modell · Keine strategische Optionalität"
+            badge="MODELL"
+            accentColor="#a78bfa"
           />
           {modelVeryConservative && (
             <div className="rounded-xl px-3 py-2"
-              style={{ background: "rgba(245,158,11,0.06)", border: "1px solid #f59e0b30" }}>
-              <p className="text-[10px] leading-relaxed" style={{ color: "#f59e0b" }}>
+              style={{ background: "rgba(167,139,250,0.06)", border: "1px solid #a78bfa30" }}>
+              <p className="text-[10px] leading-relaxed" style={{ color: "#a78bfa" }}>
                 ⚠ Das eigene Modell liegt deutlich unter dem Marktpreis. Es bewertet ausschließlich
                 aktuelle FCF-/Multiple-Kennzahlen — strategische Optionalität (AI, M&A, Plattformprämien)
                 ist nicht modelliert. Der Konsens spiegelt diese Erwartungen wider.
@@ -369,11 +389,24 @@ function ValuationSeparationSection({ analysis }: { analysis: AIAnalysisResult }
       )}
 
       {dcf && (
-        <ValuationRangeSection
-          range={dcf}
-          title="DCF Fair Value"
-          subtitle="Deterministisches FCFF-Modell · Sektortemplates · Keine Optionalität"
-        />
+        <>
+          <ValuationRangeSection
+            range={dcf}
+            title="DCF Fair Value"
+            subtitle="Deterministisches FCFF-Modell · Sektortemplates · Starke Annahmen"
+            badge="DCF"
+            accentColor="#f59e0b"
+          />
+          <div className="rounded-xl px-3 py-2 -mt-1"
+            style={{ background: "rgba(245,158,11,0.04)", border: "1px solid #f59e0b22" }}>
+            <p className="text-[10px] leading-relaxed" style={{ color: "#f59e0b99" }}>
+              Das DCF-Modell nutzt Sektortemplate-Defaults (WACC, Marge, Reinvestitionsrate) — keine
+              unternehmensspezifischen Kapitalkosten. Premium-Qualitätsunternehmen handeln strukturell
+              über dem FCFF-DCF-Wert, weil Optionalität, Markenprämien und strategische Skaleneffekte
+              nicht erfasst werden.
+            </p>
+          </div>
+        </>
       )}
 
       {/* ─── New format divergence card ─────────────────────────────────── */}

@@ -108,17 +108,44 @@ export function computeDcfScenarios(
   const baseInput = buildDcfInputFromSnapshot(snapshot, edgarFacts, sectorTemplate);
   if (!baseInput) return null;
 
+  const revenueSource = ttmRevenueFromEdgar(edgarFacts) != null ? "EDGAR TTM" : "FCF-Schätzung";
+  const sym = snapshot.symbol ?? "?";
+
+  console.log(`[DCF][${sym}] Eingabe:`);
+  console.log(`  Umsatzbasis (${revenueSource}): ${(baseInput.revenue / 1e9).toFixed(2)} Mrd.`);
+  console.log(`  Starting FCF (Snapshot):       ${snapshot.free_cashflow != null ? (snapshot.free_cashflow / 1e9).toFixed(2) + " Mrd." : "N/A"}`);
+  console.log(`  Sektortemplate:                ${sectorTemplate}`);
+  console.log(`  WACC:                          ${(baseInput.wacc * 100).toFixed(1)}%`);
+  console.log(`  Terminal Growth:               ${(baseInput.terminalGrowthRate * 100).toFixed(1)}%`);
+  console.log(`  Operative Marge (Sektor):      ${(baseInput.operatingMarginRates[0] * 100).toFixed(1)}%`);
+  console.log(`  Reinvestitionsrate:            ${((baseInput.reinvestmentRate ?? 0) * 100).toFixed(1)}%`);
+  console.log(`  Aktien (Mrd.):                 ${(baseInput.sharesOutstanding / 1e9).toFixed(3)}`);
+  console.log(`  Nettoverschuldung:             ${baseInput.netDebt}`);
+  console.log(`  Wachstumsraten (Jahr 1-5):     ${baseInput.revenueGrowthRates.map(r => (r * 100).toFixed(1) + "%").join(" → ")}`);
+
   const scenarioInputs = buildDcfScenarioInputsFromBase(baseInput);
+  let result: DcfScenariosOutput;
   try {
-    return calculateDcfScenarios(scenarioInputs);
+    result = calculateDcfScenarios(scenarioInputs);
   } catch {
     const { output } = calculateDcfSafe(baseInput);
     if (!output) return null;
-    return {
+    result = {
       bear: output,
       base: output,
       bull: output,
       limitations: ["Szenarien nicht verfügbar; Basis-DCF wird für alle Szenarien angezeigt."],
     };
   }
+
+  console.log(`[DCF][${sym}] Basis-Szenario Prognose:`);
+  for (const y of result.base.yearlyForecasts) {
+    console.log(`  Jahr ${y.year}: Umsatz ${(y.revenue / 1e9).toFixed(2)} Mrd. | NOPAT ${(y.nopat / 1e9).toFixed(2)} Mrd. | FCF ${(y.freeCashFlow / 1e9).toFixed(2)} Mrd. | PV(FCF) ${(y.presentValueOfFcf / 1e9).toFixed(2)} Mrd.`);
+  }
+  console.log(`[DCF][${sym}] Terminal Value:           ${(result.base.terminalValue / 1e9).toFixed(2)} Mrd.`);
+  console.log(`[DCF][${sym}] PV(Terminal Value):       ${(result.base.presentValueOfTerminalValue / 1e9).toFixed(2)} Mrd.`);
+  console.log(`[DCF][${sym}] Enterprise Value:         ${(result.base.enterpriseValue / 1e9).toFixed(2)} Mrd.`);
+  console.log(`[DCF][${sym}] Fair Value/Aktie Bear/Base/Bull: ${result.bear.fairValuePerShare.toFixed(2)} / ${result.base.fairValuePerShare.toFixed(2)} / ${result.bull.fairValuePerShare.toFixed(2)} ${snapshot.currency ?? "USD"}`);
+
+  return result;
 }
