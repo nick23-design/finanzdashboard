@@ -14,6 +14,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
+export const DEFAULT_GROWTH_OUTLOOK =
+  "Insufficient reliable data for a high-conviction growth outlook.";
+
+export interface SchemaNormalizationEvent {
+  path: string;
+  reason: string;
+  before: unknown;
+  after: unknown;
+}
+
 // ─── Allowed recommendation values ────────────────────────────────────────────
 
 export const ALLOWED_RECOMMENDATIONS = [
@@ -51,6 +61,84 @@ export function normalizeRecommendation(raw: unknown): AllowedRecommendation {
   // Exact match (case-insensitive)
   const exact = ALLOWED_RECOMMENDATIONS.find((r) => r.toLowerCase() === lower);
   return exact ?? "Halten";
+}
+
+export function normalizeGrowthOutlookValue(raw: unknown): string {
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    return raw.trim();
+  }
+  return DEFAULT_GROWTH_OUTLOOK;
+}
+
+export function normalizeClaimConfidenceValue(raw: unknown): number {
+  if (raw == null) return 1;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n)) return 1;
+  if (n <= 0) return 1;
+  if (n > 0 && n <= 1) return Math.max(1, Math.min(5, Math.ceil(n * 5)));
+  return Math.max(1, Math.min(5, Math.round(n)));
+}
+
+function addNormalizationEvent(
+  events: SchemaNormalizationEvent[],
+  path: string,
+  reason: string,
+  before: unknown,
+  after: unknown,
+): void {
+  if (!Object.is(before, after)) {
+    events.push({ path, reason, before, after });
+  }
+}
+
+export function normalizeSynthesisForSchema(raw: unknown): {
+  value: unknown;
+  events: SchemaNormalizationEvent[];
+} {
+  const events: SchemaNormalizationEvent[] = [];
+  if (!raw || typeof raw !== "object") {
+    return { value: raw, events };
+  }
+
+  const obj = { ...(raw as Record<string, unknown>) };
+  const growthOutlook = normalizeGrowthOutlookValue(obj.growth_outlook);
+  addNormalizationEvent(
+    events,
+    "growth_outlook",
+    "missing_or_blank_growth_outlook_defaulted",
+    obj.growth_outlook,
+    growthOutlook,
+  );
+  obj.growth_outlook = growthOutlook;
+
+  if (Array.isArray(obj.claims)) {
+    obj.claims = obj.claims.map((claim, index) => {
+      if (!claim || typeof claim !== "object") return claim;
+      const normalizedClaim = { ...(claim as Record<string, unknown>) };
+      const confidence = normalizeClaimConfidenceValue(normalizedClaim.confidence);
+      addNormalizationEvent(
+        events,
+        `claims.${index}.confidence`,
+        "claim_confidence_normalized_to_integer_1_5",
+        normalizedClaim.confidence,
+        confidence,
+      );
+      normalizedClaim.confidence = confidence;
+      return normalizedClaim;
+    });
+  }
+
+  return { value: obj, events };
+}
+
+export function logSynthesisNormalizationEvents(
+  events: SchemaNormalizationEvent[],
+): void {
+  if (!events.length) return;
+  console.warn(
+    "[AI_ANALYSIS_SCHEMA_NORMALIZATION]",
+    JSON.stringify(events),
+  );
 }
 
 // ─── JSON parsing helpers ─────────────────────────────────────────────────────
@@ -99,8 +187,11 @@ export const SynthesisValidationSchema = z.object({
   summary: z.string().min(1),
   bull_case: z.array(z.string()),
   bear_case: z.array(z.string()),
-  growth_outlook: z.string(),
-});
+  growth_outlook: z.preprocess(
+    normalizeGrowthOutlookValue,
+    z.string().min(1),
+  ),
+}).passthrough();
 
 export type SynthesisValidationInput = z.infer<typeof SynthesisValidationSchema>;
 
@@ -147,7 +238,7 @@ export function deterministicMinimalFallback(): MinimalSynthesisResult {
       "Die Analyse konnte nicht vollständig validiert werden. Bitte erneut versuchen oder die Daten manuell prüfen.",
     bull_case: ["Nicht verfügbar"],
     bear_case: ["Nicht verfügbar"],
-    growth_outlook: "Nicht verfügbar",
+    growth_outlook: DEFAULT_GROWTH_OUTLOOK,
   };
 }
 
@@ -174,7 +265,9 @@ export async function repairSynthesisOutput(
     max_tokens: 2500,
     system: `Du bist ein JSON-Reparatur-Agent. Deine einzige Aufgabe ist es, fehlerhaftes oder unvollständiges JSON zu reparieren.
 Du antwortest AUSSCHLIESSLICH mit validem JSON-Objekt. Kein Markdown, keine Erklärungen, keine Codeblöcke.
-Pflichtfelder im Output: recommendation (muss exakt einer dieser Werte sein: "Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen"), summary (nicht-leerer String), conviction (Zahl 1-10), bull_case (Array), bear_case (Array), growth_outlook (String).`,
+Pflichtfelder im Output: recommendation (muss exakt einer dieser Werte sein: "Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen"), summary (nicht-leerer String), conviction (Zahl 1-10), bull_case (Array), bear_case (Array), growth_outlook (String).
+Wenn growth_outlook fehlt oder nicht belastbar ist, setze exakt: "${DEFAULT_GROWTH_OUTLOOK}".
+Falls claims vorhanden sind: confidence muss eine ganze Zahl von 1 bis 5 sein. Nie 0, nie Dezimalzahl, nie null; bei Unsicherheit 1 oder 2.`,
     messages: [
       {
         role: "user",
@@ -221,6 +314,9 @@ export async function validateAndRepairSynthesis<T>(
   if (parsed && typeof parsed === "object" && parsed !== null) {
     normalizeRecommendationInObject(parsed as Record<string, unknown>);
   }
+  const normalizedParsed = normalizeSynthesisForSchema(parsed);
+  logSynthesisNormalizationEvents(normalizedParsed.events);
+  parsed = normalizedParsed.value;
 
   // 3. Validate
   const validation = validateSynthesisOutput(parsed, schema);
@@ -240,7 +336,9 @@ export async function validateAndRepairSynthesis<T>(
     if (repaired && typeof repaired === "object" && repaired !== null) {
       normalizeRecommendationInObject(repaired as Record<string, unknown>);
     }
-    const repairedValidation = validateSynthesisOutput(repaired, schema);
+    const normalizedRepaired = normalizeSynthesisForSchema(repaired);
+    logSynthesisNormalizationEvents(normalizedRepaired.events);
+    const repairedValidation = validateSynthesisOutput(normalizedRepaired.value, schema);
     if (repairedValidation.ok) {
       return { result: repairedValidation.data, source: "repaired" };
     }
@@ -252,7 +350,9 @@ export async function validateAndRepairSynthesis<T>(
   onFallback?.();
   try {
     const haiku = await fallbackFn();
-    const haikuValidation = validateSynthesisOutput(haiku, schema);
+    const normalizedHaiku = normalizeSynthesisForSchema(haiku);
+    logSynthesisNormalizationEvents(normalizedHaiku.events);
+    const haikuValidation = validateSynthesisOutput(normalizedHaiku.value, schema);
     if (haikuValidation.ok) {
       return { result: haikuValidation.data, source: "haiku_fallback" };
     }

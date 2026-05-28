@@ -21,7 +21,10 @@ jest.mock("@anthropic-ai/sdk", () => {
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import {
+  DEFAULT_GROWTH_OUTLOOK,
+  normalizeClaimConfidenceValue,
   normalizeRecommendation,
+  normalizeSynthesisForSchema,
   stripMarkdownCodeBlock,
   parseAndExtractJSON,
   validateSynthesisOutput,
@@ -196,6 +199,71 @@ describe("validateSynthesisOutput", () => {
   });
 });
 
+// ─── schema normalization ───────────────────────────────────────────────────
+
+describe("schema normalization", () => {
+  it("defaults missing growth_outlook to the safe fallback", () => {
+    const { growth_outlook: _g, ...withoutGrowthOutlook } = makeValidSynthesis();
+    const normalized = normalizeSynthesisForSchema(withoutGrowthOutlook).value as Record<string, unknown>;
+
+    expect(normalized.growth_outlook).toBe(DEFAULT_GROWTH_OUTLOOK);
+  });
+
+  it("lets the synthesis schema validate missing growth_outlook after preprocessing", () => {
+    const { growth_outlook: _g, ...withoutGrowthOutlook } = makeValidSynthesis();
+    const result = validateSynthesisOutput(withoutGrowthOutlook, SynthesisValidationSchema);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.growth_outlook).toBe(DEFAULT_GROWTH_OUTLOOK);
+    }
+  });
+
+  it.each([
+    [undefined, 1],
+    [0, 1],
+    [0.8, 4],
+    [6, 5],
+    [null, 1],
+    ["bad", 1],
+  ])("normalizes claim confidence %p to %i", (input, expected) => {
+    expect(normalizeClaimConfidenceValue(input)).toBe(expected);
+  });
+
+  it("normalizes claim confidence values inside synthesis objects", () => {
+    const normalized = normalizeSynthesisForSchema(
+      makeValidSynthesis({
+        claims: [
+          { claim: "c1", evidence: "e1", source_type: "metrics" },
+          { claim: "c2", evidence: "e2", source_type: "news", confidence: 0 },
+          { claim: "c3", evidence: "e3", source_type: "inference", confidence: 0.8 },
+          { claim: "c4", evidence: "e4", source_type: "analyst", confidence: 6 },
+          { claim: "c5", evidence: "e5", source_type: "market_intel", confidence: null },
+        ],
+      }),
+    ).value as Record<string, unknown>;
+
+    const claims = normalized.claims as Array<{ confidence: number }>;
+    expect(claims.map((claim) => claim.confidence)).toEqual([1, 1, 4, 5, 1]);
+  });
+
+  it("records normalization events for debugging", () => {
+    const { events } = normalizeSynthesisForSchema(
+      makeValidSynthesis({
+        growth_outlook: "",
+        claims: [{ claim: "c", evidence: "e", source_type: "metrics", confidence: 0 }],
+      }),
+    );
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "growth_outlook" }),
+        expect.objectContaining({ path: "claims.0.confidence" }),
+      ]),
+    );
+  });
+});
+
 // ─── deterministicMinimalFallback ────────────────────────────────────────────
 
 describe("deterministicMinimalFallback", () => {
@@ -224,8 +292,15 @@ describe("deterministicMinimalFallback", () => {
 // ─── validateAndRepairSynthesis ──────────────────────────────────────────────
 
 describe("validateAndRepairSynthesis", () => {
+  let warnSpy: jest.SpyInstance;
+
   beforeEach(() => {
     mockCreate.mockReset();
+    warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
   });
 
   it("returns source='opus' when Opus text is valid JSON matching schema", async () => {
@@ -257,6 +332,27 @@ describe("validateAndRepairSynthesis", () => {
     expect(fallbackFn).not.toHaveBeenCalled();
     const r = result as Record<string, unknown>;
     expect(r.recommendation).toBe("Kaufen");
+  });
+
+  it("defaults missing growth_outlook without triggering repair", async () => {
+    const { growth_outlook: _g, ...withoutGrowthOutlook } = makeValidSynthesis();
+    const fallbackFn = jest.fn();
+
+    const { result, source } = await validateAndRepairSynthesis(
+      JSON.stringify(withoutGrowthOutlook),
+      SynthesisValidationSchema as z.ZodSchema<unknown>,
+      fallbackFn,
+      "test-key",
+    );
+
+    expect(source).toBe("opus");
+    expect(fallbackFn).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect((result as Record<string, unknown>).growth_outlook).toBe(DEFAULT_GROWTH_OUTLOOK);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[AI_ANALYSIS_SCHEMA_NORMALIZATION]",
+      expect.stringContaining("growth_outlook"),
+    );
   });
 
   it("calls repair when conviction is invalid (out of range)", async () => {

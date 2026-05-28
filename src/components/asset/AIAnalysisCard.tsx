@@ -665,7 +665,7 @@ function ClaimsSection({ claims }: { claims: NonNullable<AIAnalysisResult["claim
               <p className="font-semibold text-white">{claim.claim}</p>
               <p style={{ color: "var(--muted)" }}>{claim.evidence}</p>
               <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
-                {claim.source_type} · Confidence {claim.confidence}/10
+                {claim.source_type} · Confidence {claim.confidence}/5
               </p>
             </li>
           ))}

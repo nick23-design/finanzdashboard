@@ -90,6 +90,11 @@ import {
   type ValueDriver,
 } from "@/lib/ai-analysis/valuation-model";
 import {
+  DEFAULT_GROWTH_OUTLOOK,
+  logSynthesisNormalizationEvents,
+  normalizeClaimConfidenceValue,
+  normalizeGrowthOutlookValue,
+  normalizeSynthesisForSchema,
   validateAndRepairSynthesis,
   SynthesisValidationSchema,
 } from "@/lib/ai-analysis/synthesis-validator";
@@ -140,18 +145,14 @@ const ENTRY_QUALITY_LABELS = [
 
 const VALUATION_CONFIDENCE = ["high", "medium", "low"] as const;
 
-function normalizeConfidenceValue(value: unknown): number {
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return 5;
-  if (n >= 0 && n <= 1) return Math.max(1, Math.round(n * 10));
-  return Math.min(10, Math.max(1, Math.round(n)));
-}
-
 const ClaimSchema = z.object({
   claim: z.string().min(1),
   evidence: z.string().min(1),
   source_type: z.enum(["metrics", "news", "analyst", "market_intel", "inference"]),
-  confidence: z.preprocess(normalizeConfidenceValue, z.number().min(1).max(10)),
+  confidence: z.preprocess(
+    normalizeClaimConfidenceValue,
+    z.number().int().min(1).max(5),
+  ),
 });
 
 const PriceLevelsSchema = z.object({
@@ -168,7 +169,10 @@ const CompleteAnalysisSchema = z.object({
   summary: z.string().min(1),
   bull_case: z.array(z.string()),
   bear_case: z.array(z.string()),
-  growth_outlook: z.string(),
+  growth_outlook: z.preprocess(
+    normalizeGrowthOutlookValue,
+    z.string().min(1),
+  ),
   entry: z.number().nullable().optional(),
   target: z.number().nullable().optional(),
   stop_loss: z.number().nullable().optional(),
@@ -198,7 +202,6 @@ const CompleteAnalysisSchema = z.object({
 type CompleteAnalysisInput = z.infer<typeof CompleteAnalysisSchema>;
 
 const SynthesisOutputSchema = CompleteAnalysisSchema.extend({
-  growth_outlook: z.string().optional(),
   price_levels: PriceLevelsSchema,
 });
 
@@ -512,7 +515,9 @@ async function captureOptionalFetch<T>(
 }
 
 function normalizeSynthesisFromUnknown(raw: unknown, fallbackCurrency: string): SynthesisResult {
-  const parsed = SynthesisOutputSchema.parse(raw);
+  const normalized = normalizeSynthesisForSchema(raw);
+  logSynthesisNormalizationEvents(normalized.events);
+  const parsed = SynthesisOutputSchema.parse(normalized.value);
   const priceLevelSource = parsed.price_levels ?? (
     parsed.entry != null || parsed.target != null || parsed.stop_loss != null
       ? {
@@ -545,7 +550,7 @@ function normalizeSynthesisFromUnknown(raw: unknown, fallbackCurrency: string): 
   const growthOutlook = parsed.growth_outlook?.trim()
     || parsed.time_horizon_view?.long_term?.trim()
     || parsed.time_horizon_view?.medium_term?.trim()
-    || "Mittelfristig hängt der Investment-Case davon ab, ob Wachstum, Margen und Free Cashflow die aktuelle Bewertung stützen.";
+    || DEFAULT_GROWTH_OUTLOOK;
 
   return {
     recommendation: parsed.recommendation,
@@ -743,19 +748,19 @@ function buildDefaultClaims(
       claim: `Empfehlung ${result.recommendation} mit Conviction ${result.conviction}/10`,
       evidence: "Abgeleitet aus Fundamentalbewertung, News-Sentiment, Markt-Intelligenz und Diana-Datenqualitätscap.",
       source_type: "inference",
-      confidence: Math.min(8, result.conviction),
+      confidence: Math.min(4, Math.ceil(result.conviction / 2)),
     },
     {
       claim: `Entry Quality: ${entry.label}`,
       evidence: `RSI ${s.rsi?.toFixed(1) ?? "N/A"}, Kurs ${s.price?.toFixed(2) ?? "N/A"}, MA50 ${s.moving_average_50?.toFixed(2) ?? "N/A"}, MA200 ${s.moving_average_200?.toFixed(2) ?? "N/A"}.`,
       source_type: "metrics",
-      confidence: 8,
+      confidence: 4,
     },
     {
       claim: `Bewertungskonfidenz: ${valuationConfidence}`,
       evidence: "Ergibt sich aus Datenvollständigkeit, Analysten-Konsens und verfügbaren Bewertungskennzahlen.",
       source_type: "inference",
-      confidence: valuationConfidence === "high" ? 8 : valuationConfidence === "medium" ? 6 : 4,
+      confidence: valuationConfidence === "high" ? 4 : valuationConfidence === "medium" ? 3 : 2,
     },
   ];
   return claims;
@@ -1098,7 +1103,7 @@ function completeResearchFields(
       claim: String(claim.claim ?? "").trim() || "Unbenannte Behauptung",
       evidence: String(claim.evidence ?? "").trim() || "Keine Evidenz angegeben.",
       source_type: claim.source_type ?? "inference",
-      confidence: clampConviction(Number.isFinite(claim.confidence) ? claim.confidence : 5),
+      confidence: normalizeClaimConfidenceValue(claim.confidence),
     }));
 
   return {
@@ -1412,7 +1417,10 @@ ${valuationContext.valuationDivergence.explanationSeed}${valuationContext.valuat
         summary: { type: "string", description: "2-3 konkrete Sätze, keine generischen Fallback-Texte." },
         bull_case: { type: "array", items: { type: "string" }, description: "Mindestens 2 substanzielle Pro-Argumente." },
         bear_case: { type: "array", items: { type: "string" }, description: "Mindestens 2 substanzielle Contra-Argumente." },
-        growth_outlook: { type: "string", description: "Konkreter mittel-/langfristiger Wachstumsausblick." },
+        growth_outlook: {
+          type: "string",
+          description: `Konkreter mittel-/langfristiger Wachstumsausblick. Wenn nicht belastbar: "${DEFAULT_GROWTH_OUTLOOK}"`,
+        },
         price_levels: {
           type: "object",
           properties: {
@@ -1468,7 +1476,13 @@ ${valuationContext.valuationDivergence.explanationSeed}${valuationContext.valuat
               claim: { type: "string" },
               evidence: { type: "string" },
               source_type: { type: "string", enum: ["metrics", "news", "analyst", "market_intel", "inference"] },
-              confidence: { type: "number", description: "Claim-Konfidenz auf Skala 1-10, nicht 0-1." },
+              confidence: {
+                type: "number",
+                minimum: 1,
+                maximum: 5,
+                multipleOf: 1,
+                description: "Claim-Konfidenz als ganze Zahl von 1 bis 5. Nie 0, nie Dezimalzahl, nie null; bei Unsicherheit 1 oder 2.",
+              },
             },
             required: ["claim", "evidence", "source_type", "confidence"],
           },
@@ -1530,6 +1544,8 @@ WICHTIG:
 - price_levels.entry und stop_loss dürfen als Timing-/Risikomarken gesetzt werden; price_levels.target nur wenn valuation_confidence nicht low ist.
 - Nutze die gelieferten Werttreiber und Red Flags. Für Hyperscaler z.B. AI-Capex/Margenlogik; für Semis Zyklus/Inventar/Margen; für spekulative Growth-Titel Cashburn/Execution. Diese Guardrails dürfen nur auf echte Analyseinhalte reagieren, nicht auf fehlende Providerdaten.
 - claims müssen konkrete, prüfbare Aussagen sein, jeweils mit Evidenz aus Kennzahlen, News, Analysten oder Inferenz.
+- claims[].confidence muss immer eine ganze Zahl von 1 bis 5 sein. Nie 0, nie Dezimalzahl, nie null; bei Unsicherheit 1 oder 2.
+- growth_outlook muss immer ein String sein. Wenn kein belastbarer Wachstumsausblick möglich ist, verwende exakt: "${DEFAULT_GROWTH_OUTLOOK}".
 - Keine Anlageberatung, keine Garantien.
 
 Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
@@ -1538,7 +1554,7 @@ Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
     messages: [
       {
         role: "user",
-        content: `Erstelle eine strukturierte Research-Analyse und rufe danach zwingend das Tool complete_synthesis auf.\n\n${context}\n\nQualitätsanforderungen:\n- Summary, Bull-Case, Bear-Case und Wachstumsausblick müssen substantiell sein.\n- Trenne Analystenkonsens, eigenes Bewertungsmodell, Timing und langfristige These klar.\n- Wenn kein belastbares eigenes Modell möglich ist: valuation_confidence auf low/medium, valuation_range null und Konsens nur als Marktmeinung erwähnen.\n- Entry Quality muss aus RSI, Kurs relativ zu MA50/MA200 und These abgeleitet sein.\n- Keine Fallback-Sätze wie "Analyse konnte nicht erstellt werden" oder "Nicht verfügbar".`,
+        content: `Erstelle eine strukturierte Research-Analyse und rufe danach zwingend das Tool complete_synthesis auf.\n\n${context}\n\nQualitätsanforderungen:\n- Summary, Bull-Case, Bear-Case und Wachstumsausblick müssen substantiell sein.\n- Alle Pflichtfelder müssen vorhanden sein; growth_outlook darf nie fehlen.\n- Claim-Confidence: Integer 1-5, nie 0/null/dezimal.\n- Trenne Analystenkonsens, eigenes Bewertungsmodell, Timing und langfristige These klar.\n- Wenn kein belastbares eigenes Modell möglich ist: valuation_confidence auf low/medium, valuation_range null und Konsens nur als Marktmeinung erwähnen.\n- Entry Quality muss aus RSI, Kurs relativ zu MA50/MA200 und These abgeleitet sein.\n- Keine Fallback-Sätze wie "Analyse konnte nicht erstellt werden" oder "Nicht verfügbar".`,
       },
     ],
   });
@@ -1584,7 +1600,7 @@ Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
       summary: String(minimalObj.summary ?? ""),
       bull_case: Array.isArray(minimalObj.bull_case) ? (minimalObj.bull_case as string[]) : [],
       bear_case: Array.isArray(minimalObj.bear_case) ? (minimalObj.bear_case as string[]) : [],
-      growth_outlook: String(minimalObj.growth_outlook ?? ""),
+      growth_outlook: normalizeGrowthOutlookValue(minimalObj.growth_outlook),
       price_levels: null,
       data_quality_guardrails: [
         `Synthese-Quelle: ${source}. Vollständige Feldnormalisierung nicht möglich.`,
@@ -1663,7 +1679,7 @@ Valuation Divergence: ${synthesis.valuation_divergence ? `[${synthesis.valuation
 Valuation Range im Bericht: ${synthesis.valuation_range ? `${synthesis.valuation_range.currency} Bear ${synthesis.valuation_range.bear ?? "N/A"} / Base ${synthesis.valuation_range.base ?? "N/A"} / Bull ${synthesis.valuation_range.bull ?? "N/A"} — ${synthesis.valuation_range.rationale}` : "N/A"}
 Business Drivers: ${synthesis.business_drivers ? `${synthesis.business_drivers.business_model_type}; KPIs: ${synthesis.business_drivers.sector_specific_kpis.slice(0, 5).join(", ")}; Red Flags: ${synthesis.business_drivers.red_flags.slice(0, 3).join(" | ")}` : "N/A"}
 Claims:
-${(synthesis.claims ?? []).map(c => `- ${c.claim} | Evidence: ${c.evidence} | Confidence ${c.confidence}/10`).join("\n") || "- Keine strukturierten Claims"}`;
+${(synthesis.claims ?? []).map(c => `- ${c.claim} | Evidence: ${c.evidence} | Confidence ${c.confidence}/5`).join("\n") || "- Keine strukturierten Claims"}`;
 
   const fmtBigAuth = (n: number | null) => {
     if (n == null) return null;
@@ -2183,7 +2199,10 @@ async function runOrchestrator(
           summary: { type: "string", description: "2–3 prägnante Sätze" },
           bull_case: { type: "array", items: { type: "string" }, description: "3 Argumente für die Aktie" },
           bear_case: { type: "array", items: { type: "string" }, description: "2–3 Risiken" },
-          growth_outlook: { type: "string" },
+          growth_outlook: {
+            type: "string",
+            description: `Pflichtfeld. Wenn nicht belastbar: "${DEFAULT_GROWTH_OUTLOOK}"`,
+          },
           entry: { type: "number", description: "Idealer Einstiegskurs (nahe MA50 oder −3% vom aktuellen Kurs bei RSI>50)" },
           target: { type: "number", description: "12-Monats-Kursziel (Analysten-Konsens bevorzugt, sonst +15–25%)" },
           stop_loss: { type: "number", description: "Stop-Loss: −8 bis −12% unter entry. Pflichtfeld — nutze −10% von entry als Fallback wenn unklar." },
@@ -2231,6 +2250,7 @@ KRITISCHE REGELN zur Datentreue:
 2. Prozentzahlen in Nachrichtentexten (z.B. "51% Rally vom Tief") beziehen sich auf historische Kursbewegungen, NICHT auf den Abstand zu MA50/MA200 — diese Werte nie als technische Indikatoren zitieren.
 3. Umsatzwachstum (TTM, YoY) ist der gleitende Jahresvergleich — einzelne Quartale können abweichen; korrekte Formulierung: "Umsatz TTM −3,5% YoY".
 4. entry-Preis für Kursziele muss nahe dem AKTUELLEN KURS liegen (±15%), nicht nahe dem Analysten-Kursziel.${guardrails ? "\n\n" + guardrails : ""}
+5. growth_outlook ist Pflicht. Wenn kein belastbarer Wachstumsausblick möglich ist, verwende exakt: "${DEFAULT_GROWTH_OUTLOOK}".
 
 DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confidenceCap}/10. Vergib keine höhere Conviction — die Datenbasis ist entsprechend bewertet.`;
 
@@ -2268,7 +2288,7 @@ DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confi
           summary: String(raw.summary ?? ""),
           bull_case: Array.isArray(raw.bull_case) ? raw.bull_case.map(String) : [],
           bear_case: Array.isArray(raw.bear_case) ? raw.bear_case.map(String) : [],
-          growth_outlook: String(raw.growth_outlook ?? ""),
+          growth_outlook: normalizeGrowthOutlookValue(raw.growth_outlook),
           entry: raw.entry != null ? Number(raw.entry) : undefined,
           target: raw.target != null ? Number(raw.target) : undefined,
           stop_loss: raw.stop_loss != null ? Number(raw.stop_loss) : undefined,
@@ -2434,7 +2454,7 @@ async function runSynthesisFastAgent(
       system: "Du bist ein Aktienanalyst. Erstelle eine kurze Einschätzung auf Deutsch. Antworte ausschließlich mit validem JSON, ohne Text davor oder danach.",
       messages: [{
         role: "user",
-        content: `Analysiere:\n\n${context}\n\nJSON:\n{"recommendation":"Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen","conviction":<1-10>,"summary":"2 Sätze","bull_case":["...","...","..."],"bear_case":["...","..."],"growth_outlook":"1 Satz","price_levels":{"entry":${s.price != null ? s.price.toFixed(2) : null},"target":null,"stop_loss":null,"entry_rationale":"aktuelles Kursniveau","target_rationale":""}}`,
+        content: `Analysiere:\n\n${context}\n\nJSON:\n{"recommendation":"Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen","conviction":<1-10>,"summary":"2 Sätze","bull_case":["...","...","..."],"bear_case":["...","..."],"growth_outlook":"1 Satz; falls nicht belastbar: ${DEFAULT_GROWTH_OUTLOOK}","price_levels":{"entry":${s.price != null ? s.price.toFixed(2) : null},"target":null,"stop_loss":null,"entry_rationale":"aktuelles Kursniveau","target_rationale":""}}`,
       }],
     });
 
