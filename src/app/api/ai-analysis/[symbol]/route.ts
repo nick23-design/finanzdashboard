@@ -98,6 +98,7 @@ import {
   normalizeClaimConfidenceValue,
   normalizeGrowthOutlookValue,
   normalizeSynthesisForSchema,
+  repairGermanVisibleText,
   validateAndRepairSynthesis,
   SynthesisValidationSchema,
 } from "@/lib/ai-analysis/synthesis-validator";
@@ -547,6 +548,7 @@ interface ValuationContext {
   alphaFramework: AlphaFrameworkOutput | null;
   structuredSynthesisInput: StructuredSynthesisInput;
   specializedValuations: SpecializedValuations;
+  growthOutlookSeed: string;
 }
 
 // --- Helpers ---
@@ -714,6 +716,9 @@ function getSynthesisQualityIssues(result: Pick<SynthesisResult, "summary" | "bu
   if (growth.length < 60) {
     issues.push({ severity: "warning", message: "Wachstumsausblick ist knapp." });
   }
+  if (collectEnglishVisibleTextLeaks(result).length > 0) {
+    issues.push({ severity: "blocker", message: "Synthese enthält englische nutzersichtbare Textfelder." });
+  }
 
   return issues;
 }
@@ -723,6 +728,76 @@ function assertSynthesisQuality(result: SynthesisResult, source: string): void {
   if (blockers.length) {
     throw new Error(`${source} quality gate failed: ${blockers.map(i => i.message).join(" ")}`);
   }
+}
+
+type VisibleTextCandidate = { path: string; text: string };
+
+function collectVisibleSynthesisTexts(result: Pick<SynthesisResult, "summary" | "bull_case" | "bear_case" | "growth_outlook"> & Partial<SynthesisResult>): VisibleTextCandidate[] {
+  const items: VisibleTextCandidate[] = [];
+  const add = (path: string, value: unknown) => {
+    if (typeof value === "string" && value.trim().length > 0) {
+      items.push({ path, text: value.trim() });
+    }
+  };
+  add("summary", result.summary);
+  add("growth_outlook", result.growth_outlook);
+  result.bull_case?.forEach((value, index) => add(`bull_case.${index}`, value));
+  result.bear_case?.forEach((value, index) => add(`bear_case.${index}`, value));
+  add("time_horizon_view.short_term", result.time_horizon_view?.short_term);
+  add("time_horizon_view.medium_term", result.time_horizon_view?.medium_term);
+  add("time_horizon_view.long_term", result.time_horizon_view?.long_term);
+  add("entry_quality.rationale", result.entry_quality?.rationale);
+  add("valuation_range.rationale", result.valuation_range?.rationale);
+  result.data_quality_guardrails?.forEach((value, index) => add(`data_quality_guardrails.${index}`, value));
+  result.claims?.forEach((claim, index) => {
+    add(`claims.${index}.claim`, claim.claim);
+    add(`claims.${index}.evidence`, claim.evidence);
+  });
+  return items;
+}
+
+function looksLikeEnglishVisibleText(text: string): boolean {
+  const lower = text.toLowerCase();
+  const hardMarkers = [
+    "insufficient reliable data",
+    "high-conviction growth outlook",
+    "analysis could not",
+    "could not be created",
+    "not available",
+    "growth outlook",
+    "valuation confidence",
+    "fair value range",
+    "current price",
+    "revenue growth",
+    "free cash flow",
+    "market sentiment",
+  ];
+  if (hardMarkers.some(marker => lower.includes(marker))) return true;
+
+  const englishTokens = lower.match(/\b(the|and|with|without|because|growth|risk|market|valuation|company|stock|data|revenue|margin|cash|flow|outlook|investment|confidence|available)\b/g)?.length ?? 0;
+  const germanTokens = lower.match(/\b(und|mit|ohne|weil|wachstum|risiko|markt|bewertung|unternehmen|aktie|daten|umsatz|marge|cashflow|ausblick|investition|konfidenz|verfügbar|nicht)\b/g)?.length ?? 0;
+
+  return text.length > 80 && englishTokens >= 6 && englishTokens > germanTokens * 2;
+}
+
+function collectEnglishVisibleTextLeaks(result: Pick<SynthesisResult, "summary" | "bull_case" | "bear_case" | "growth_outlook"> & Partial<SynthesisResult>): VisibleTextCandidate[] {
+  return collectVisibleSynthesisTexts(result).filter(item => looksLikeEnglishVisibleText(item.text));
+}
+
+async function repairGermanLanguageIfNeeded(
+  rawCandidate: unknown,
+  parsed: SynthesisResult,
+  fallbackCurrency: string,
+): Promise<SynthesisResult> {
+  const leaks = collectEnglishVisibleTextLeaks(parsed);
+  if (leaks.length === 0) return parsed;
+  const repaired = await repairGermanVisibleText(
+    rawCandidate,
+    process.env.ANTHROPIC_API_KEY ?? "",
+  );
+  const repairedParsed = normalizeSynthesisFromUnknown(repaired, fallbackCurrency);
+  assertSynthesisQuality(repairedParsed, "Sprach-Repair");
+  return repairedParsed;
 }
 
 function roundMoney(value: number | null): number | null {
@@ -1151,6 +1226,61 @@ function mentionsAi(text: string): boolean {
   return /\b(ai|artificial intelligence|machine learning|gpu|accelerator|data center|datacenter|hyperscaler|neural|llm)\b/i.test(text);
 }
 
+function formatGrowthPct(value: number | undefined): string {
+  return value == null ? "nicht verfügbar" : `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function formatBigCurrency(value: number | null | undefined, currency: string | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "nicht verfügbar";
+  const abs = Math.abs(value);
+  const unit = abs >= 1e12
+    ? `${(value / 1e12).toFixed(2)} Bio.`
+    : abs >= 1e9
+      ? `${(value / 1e9).toFixed(2)} Mrd.`
+      : abs >= 1e6
+        ? `${(value / 1e6).toFixed(2)} Mio.`
+        : value.toFixed(0);
+  return `${unit} ${currency ?? "USD"}`;
+}
+
+function buildGrowthOutlookSeed(input: {
+  symbol: string;
+  snapshot: AssetSnapshot;
+  businessDrivers: BusinessDriverAnalysis;
+  structuredSynthesisInput: StructuredSynthesisInput;
+  dataQuality: DianaQualityReport | null | undefined;
+  revenueGrowthPct?: number;
+  fcfMarginPct?: number;
+  ttmRevenue: number | null;
+  dcfScenarios: DcfScenariosOutput | null;
+  specializedValuations: SpecializedValuations;
+}): string {
+  const sectorBrief = input.structuredSynthesisInput.sectorBrief;
+  const growthDrivers = sectorBrief.growthDrivers.slice(0, 4);
+  const riskDrivers = sectorBrief.riskDrivers.slice(0, 3);
+  const keyMetrics = sectorBrief.keyMetricsToWatch.slice(0, 5);
+  const dcfGrowth = input.dcfScenarios?.base.assumptions.revenueGrowthRates[0];
+  const aiOverlay = input.specializedValuations.aiExposureNarrative;
+  const aiLine = aiOverlay && aiOverlay.status === "success"
+    ? `AI-Overlay: ${aiOverlay.classification.exposureLevel} Exposure, Monetarisierung ${aiOverlay.classification.monetizationStage}, Narrative-Risiko ${aiOverlay.scores.narrativeRiskScore}/100.`
+    : null;
+  const dataQualityLine = input.dataQuality
+    ? `Datenqualität: ${input.dataQuality.completeness_score}/100, Conviction-Cap ${input.dataQuality.analysis_confidence_cap}/10, fehlende Providerdaten: ${input.dataQuality.missing_fields.join(", ") || "keine"}.`
+    : "Datenqualität: kein Diana-Report verfügbar; Aussagen vorsichtig formulieren.";
+
+  return [
+    `Deutscher Wachstumsausblick-Seed für ${input.symbol}: Nutze diesen Seed als Mindestinhalt, aber schreibe daraus einen flüssigen deutschen Absatz.`,
+    `Aktuelle Wachstumsdaten: Umsatzwachstum ${formatGrowthPct(input.revenueGrowthPct)}, TTM-Umsatz ${formatBigCurrency(input.ttmRevenue, input.snapshot.currency)}, Free Cashflow ${formatBigCurrency(input.snapshot.free_cashflow, input.snapshot.currency)}, FCF-Marge ${formatGrowthPct(input.fcfMarginPct)}.`,
+    dcfGrowth != null ? `DCF-Basisannahme Jahr 1: Umsatzwachstum ${(dcfGrowth * 100).toFixed(1)}%; nicht als Garantie formulieren.` : null,
+    `Sektor-/Unternehmenstyp: ${sectorBrief.sectorFamily}; Treiber: ${growthDrivers.join(" | ") || input.businessDrivers.revenue_drivers.slice(0, 3).map(d => d.driver).join(" | ") || "nicht ausreichend spezifiziert"}.`,
+    `Wichtige Risiken für den Wachstumsausblick: ${riskDrivers.join(" | ") || input.businessDrivers.red_flags.slice(0, 3).join(" | ") || "Datenlage begrenzt"}.`,
+    `Zu beobachtende Kennzahlen: ${keyMetrics.join(" | ") || input.businessDrivers.sector_specific_kpis.slice(0, 5).join(" | ") || "Umsatzwachstum, Margen, Free Cashflow"}.`,
+    aiLine,
+    dataQualityLine,
+    "Formuliere keinen englischen Fallback. Wenn die Daten dünn sind, schreibe auf Deutsch, welche Wachstumstreiber plausibel sind und warum die Konfidenz begrenzt bleibt.",
+  ].filter((line): line is string => Boolean(line)).join("\n");
+}
+
 function buildValuationContext(
   symbol: string,
   snapshot: AssetSnapshot,
@@ -1475,6 +1605,19 @@ function buildValuationContext(
     mentionsAiInDescription: mentionsAi(descriptionText),
   });
 
+  const growthOutlookSeed = buildGrowthOutlookSeed({
+    symbol,
+    snapshot,
+    businessDrivers,
+    structuredSynthesisInput,
+    dataQuality,
+    revenueGrowthPct,
+    fcfMarginPct,
+    ttmRevenue,
+    dcfScenarios,
+    specializedValuations,
+  });
+
   const explainabilityInput = {
     ticker: symbol,
     companyTypeClassification,
@@ -1516,6 +1659,7 @@ function buildValuationContext(
     valuationDivergence,
     currentPriceUsd: priceUsd,
     alphaFramework,
+    growthOutlookSeed,
   };
 }
 
@@ -2153,6 +2297,9 @@ ${analystSection ? "\nANALYSTEN-KONSENS (Zukunftsprognosen, kein aktueller Kurs)
 STRUKTURIERTES ANALYSTEN-BRIEFING (deterministisch — höchste Priorität, benutze als Source of Truth):
 ${structuredBriefingSection}
 
+DEUTSCHER WACHSTUMSAUSBLICK-SEED (deterministisch — als Mindestinhalt für growth_outlook verwenden, nicht wörtlich kopieren):
+${valuationContext.growthOutlookSeed}
+
 ${sectorSynthesisTemplate}
 ${specializedValuationsSection ? `\nSPEZIALISIERTE BEWERTUNGSMODELLE (deterministisch — benutze als primäre Bewertungsquelle wenn Status "success"):\n${specializedValuationsSection}` : ""}
 
@@ -2188,6 +2335,12 @@ ${dataQuality ? `\nDATENQUALITÄT: ${dataQuality.completeness_score}/100 · Conv
 
 Du erhältst ein strukturiertes Analysten-Briefing. Nutze es als Source of Truth.
 
+SPRACHE — PFLICHT:
+- Alle nutzer sichtbaren Textfelder müssen auf Deutsch sein: summary, bull_case, bear_case, growth_outlook, time_horizon_view, entry_quality.rationale, valuation_range.rationale, data_quality_guardrails und claims.
+- JSON-Keys, Ticker, Zahlen, Währungscodes, URLs, Quellen-/Produktnamen und erlaubte Enum-Werte unverändert lassen.
+- Keine englischen Fallback-Sätze verwenden. Insbesondere nie: "Insufficient reliable data for a high-conviction growth outlook."
+- Wenn ein englischer Fachbegriff nötig ist (z.B. Free Cashflow, Rule of 40, AI, Cloud), erkläre den Satz trotzdem auf Deutsch.
+
 STRUKTURIERTES BRIEFING — PFLICHTREGELN:
 - Verwende deterministische Outputs als Source of Truth: Company-Type Router, Model Selection, DCF-Plausibilität, Reverse-DCF, Divergenz-Analyzer, Structured Briefing.
 - Rechne KEINE neuen Fair Values, DCF, SOTP, AFFO, NAV, P/TBV, CET1, ROTCE, Rohstoffszenarien oder Segmentdaten aus.
@@ -2214,7 +2367,7 @@ WEITERE REGELN:
 - price_levels.entry und stop_loss dürfen als Timing-/Risikomarken gesetzt werden; price_levels.target nur wenn valuation_confidence nicht low ist.
 - Nutze die gelieferten Werttreiber und Red Flags. Diese Guardrails dürfen nur auf echte Analyseinhalte reagieren, nicht auf fehlende Providerdaten.
 - claims müssen konkrete, prüfbare Aussagen sein, jeweils mit Evidenz aus Kennzahlen, News, Analysten oder Inferenz.
-- growth_outlook muss immer ein String sein. Wenn kein belastbarer Wachstumsausblick möglich ist, verwende exakt: "${DEFAULT_GROWTH_OUTLOOK}".
+- growth_outlook muss immer ein deutscher String sein. Nutze den deutschen Wachstumsausblick-Seed als Mindestbasis. Wenn kein belastbarer Wachstumsausblick möglich ist, verwende exakt: "${DEFAULT_GROWTH_OUTLOOK}".
 - Erfinde keine Segmentdaten. Wenn Segment-/SOTP-Daten fehlen, nenne es als Modell-Limitation.
 - Überschreibe Model-Fit-Warnungen nicht. Wenn DCF-Fit poor/partial ist, darf DCF das finale Rating nicht dominieren.
 - Wenn Reverse DCF suspicious/invalid ist, verwende es nicht als starkes Ratingargument.
@@ -2227,7 +2380,7 @@ Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
     messages: [
       {
         role: "user",
-        content: `Erstelle eine strukturierte Research-Analyse und rufe danach zwingend das Tool complete_synthesis auf.\n\n${context}\n\nQUALITÄTS- UND SEKTOR-PFLICHTANFORDERUNGEN:\n- Das Sektor-Briefing hat HÖCHSTE PRIORITÄT. Nutze Sektor-Familie und sektorspezifische Treiber als primären Rahmen.\n- growth_outlook MUSS die sektorspezifischen Pflichtthemen enthalten (siehe SEKTOR-SYNTHESE-PFLICHTEN oben).\n- Wenn fehlende Modelle aufgelistet sind: als Limitationen nennen und valuation_confidence auf max "medium" setzen.\n- Wenn schwache Bewertungsmethoden aufgelistet sind: explizit erklären warum diese für diesen Unternehmenstyp schwach sind.\n- Summary, Bull-Case, Bear-Case und Wachstumsausblick müssen substantiell und sektorspezifisch sein.\n- Alle Pflichtfelder müssen vorhanden sein; growth_outlook darf nie fehlen.\n- Claim-Confidence: Integer 1-5, nie 0/null/dezimal.\n- Trenne Analystenkonsens, eigenes Bewertungsmodell, Timing und langfristige These klar.\n- Wenn kein belastbares eigenes Modell möglich ist: valuation_confidence auf low/medium, valuation_range null und Konsens nur als Marktmeinung erwähnen.\n- Entry Quality muss aus RSI, Kurs relativ zu MA50/MA200 und These abgeleitet sein.\n- Keine Fallback-Sätze wie "Analyse konnte nicht erstellt werden" oder "Nicht verfügbar".\n- Keine generischen Formulierungen wenn Sektor-Kontext vorliegt.`,
+        content: `Erstelle eine strukturierte Research-Analyse und rufe danach zwingend das Tool complete_synthesis auf.\n\n${context}\n\nQUALITÄTS- UND SEKTOR-PFLICHTANFORDERUNGEN:\n- Das Sektor-Briefing hat HÖCHSTE PRIORITÄT. Nutze Sektor-Familie und sektorspezifische Treiber als primären Rahmen.\n- Alle nutzer sichtbaren Felder müssen auf Deutsch sein. Keine englischen Fallback-Sätze.\n- Nutze den DEUTSCHEN WACHSTUMSAUSBLICK-SEED, um growth_outlook konkret zu machen.\n- growth_outlook MUSS die sektorspezifischen Pflichtthemen enthalten (siehe SEKTOR-SYNTHESE-PFLICHTEN oben).\n- Wenn fehlende Modelle aufgelistet sind: als Limitationen nennen und valuation_confidence auf max "medium" setzen.\n- Wenn schwache Bewertungsmethoden aufgelistet sind: explizit erklären warum diese für diesen Unternehmenstyp schwach sind.\n- Summary, Bull-Case, Bear-Case und Wachstumsausblick müssen substantiell und sektorspezifisch sein.\n- Alle Pflichtfelder müssen vorhanden sein; growth_outlook darf nie fehlen.\n- Claim-Confidence: Integer 1-5, nie 0/null/dezimal.\n- Trenne Analystenkonsens, eigenes Bewertungsmodell, Timing und langfristige These klar.\n- Wenn kein belastbares eigenes Modell möglich ist: valuation_confidence auf low/medium, valuation_range null und Konsens nur als Marktmeinung erwähnen.\n- Entry Quality muss aus RSI, Kurs relativ zu MA50/MA200 und These abgeleitet sein.\n- Keine Fallback-Sätze wie "Analyse konnte nicht erstellt werden" oder "Nicht verfügbar".\n- Keine generischen Formulierungen wenn Sektor-Kontext vorliegt.`,
       },
     ],
   });
@@ -2240,8 +2393,9 @@ Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
   if (toolInput) {
     try {
       const parsed = normalizeSynthesisFromUnknown(toolInput, fallbackCurrency);
-      assertSynthesisQuality(parsed, "Opus");
-      return parsed;
+      const germanParsed = await repairGermanLanguageIfNeeded(toolInput, parsed, fallbackCurrency);
+      assertSynthesisQuality(germanParsed, "Opus");
+      return germanParsed;
     } catch {
       // Tool input failed validation → fall through to repair pipeline below
     }
@@ -2261,8 +2415,9 @@ Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
     // Parse into the full SynthesisResult shape
     try {
       const fullParsed = normalizeSynthesisFromUnknown(repairResult, fallbackCurrency);
-      assertSynthesisQuality(fullParsed, source === "repaired" ? "Repair-Agent" : "Opus");
-      return fullParsed;
+      const germanParsed = await repairGermanLanguageIfNeeded(repairResult, fullParsed, fallbackCurrency);
+      assertSynthesisQuality(germanParsed, source === "repaired" ? "Repair-Agent" : "Opus");
+      return germanParsed;
     } catch {
       // normalizeSynthesisFromUnknown threw → build a minimal result from validated fields
     }

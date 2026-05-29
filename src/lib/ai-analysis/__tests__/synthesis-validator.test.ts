@@ -207,6 +207,17 @@ describe("schema normalization", () => {
     const normalized = normalizeSynthesisForSchema(withoutGrowthOutlook).value as Record<string, unknown>;
 
     expect(normalized.growth_outlook).toBe(DEFAULT_GROWTH_OUTLOOK);
+    expect(String(normalized.growth_outlook)).toContain("Nicht genügend verlässliche Daten");
+  });
+
+  it("normalizes the old English growth_outlook fallback to the German fallback", () => {
+    const normalized = normalizeSynthesisForSchema(
+      makeValidSynthesis({
+        growth_outlook: "Insufficient reliable data for a high-conviction growth outlook.",
+      }),
+    ).value as Record<string, unknown>;
+
+    expect(normalized.growth_outlook).toBe(DEFAULT_GROWTH_OUTLOOK);
   });
 
   it("lets the synthesis schema validate missing growth_outlook after preprocessing", () => {

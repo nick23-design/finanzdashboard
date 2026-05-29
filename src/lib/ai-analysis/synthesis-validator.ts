@@ -15,7 +15,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 export const DEFAULT_GROWTH_OUTLOOK =
-  "Insufficient reliable data for a high-conviction growth outlook.";
+  "Nicht genügend verlässliche Daten für einen hoch belastbaren Wachstumsausblick. Die Analyse sollte deshalb nur vorsichtige, szenariobasierte Aussagen treffen.";
+
+const ENGLISH_GROWTH_OUTLOOK_FALLBACKS = [
+  "insufficient reliable data for a high-conviction growth outlook",
+  "insufficient reliable data for a high conviction growth outlook",
+  "not enough reliable data for a high-conviction growth outlook",
+];
 
 export interface SchemaNormalizationEvent {
   path: string;
@@ -65,7 +71,12 @@ export function normalizeRecommendation(raw: unknown): AllowedRecommendation {
 
 export function normalizeGrowthOutlookValue(raw: unknown): string {
   if (typeof raw === "string" && raw.trim().length > 0) {
-    return raw.trim();
+    const trimmed = raw.trim();
+    const lower = trimmed.toLowerCase();
+    if (ENGLISH_GROWTH_OUTLOOK_FALLBACKS.some(marker => lower.includes(marker))) {
+      return DEFAULT_GROWTH_OUTLOOK;
+    }
+    return trimmed;
   }
   return DEFAULT_GROWTH_OUTLOOK;
 }
@@ -266,12 +277,50 @@ export async function repairSynthesisOutput(
     system: `Du bist ein JSON-Reparatur-Agent. Deine einzige Aufgabe ist es, fehlerhaftes oder unvollständiges JSON zu reparieren.
 Du antwortest AUSSCHLIESSLICH mit validem JSON-Objekt. Kein Markdown, keine Erklärungen, keine Codeblöcke.
 Pflichtfelder im Output: recommendation (muss exakt einer dieser Werte sein: "Kaufen"|"Leicht kaufen"|"Halten"|"Leicht verkaufen"|"Verkaufen"), summary (nicht-leerer String), conviction (Zahl 1-10), bull_case (Array), bear_case (Array), growth_outlook (String).
+Alle nutzer sichtbaren String-Felder müssen auf Deutsch sein. JSON-Keys, Enums, Ticker, Produktnamen und Zahlen unverändert lassen.
 Wenn growth_outlook fehlt oder nicht belastbar ist, setze exakt: "${DEFAULT_GROWTH_OUTLOOK}".
 Falls claims vorhanden sind: confidence muss eine ganze Zahl von 1 bis 5 sein. Nie 0, nie Dezimalzahl, nie null; bei Unsicherheit 1 oder 2.`,
     messages: [
       {
         role: "user",
         content: `Repariere dieses fehlerhafte JSON:\n\n${opusRawText.slice(0, 3000)}\n\nZod-Validierungsfehler:\n${errorSummary}\n\nGib nur das reparierte JSON zurück, ohne Erklärungen oder Markdown.`,
+      },
+    ],
+  });
+
+  const text = response.content
+    .filter(
+      (b): b is Anthropic.Messages.TextBlock => b.type === "text",
+    )
+    .map((b) => b.text)
+    .join("");
+
+  return parseAndExtractJSON(text);
+}
+
+export async function repairGermanVisibleText(
+  rawJson: unknown,
+  anthropicApiKey: string,
+): Promise<unknown> {
+  const client = new Anthropic({
+    apiKey: anthropicApiKey,
+    timeout: 20_000,
+    maxRetries: 0,
+  });
+
+  const response = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 3000,
+    system: `Du bist ein JSON-Sprachreparatur-Agent.
+Du antwortest AUSSCHLIESSLICH mit validem JSON-Objekt. Kein Markdown, keine Erklärungen.
+Aufgabe: Übersetze alle nutzer sichtbaren String-Felder ins Deutsche.
+Nicht verändern: JSON-Keys, Ticker, Zahlen, Currency-Codes, URLs, Quellen-/Produktnamen, interne Enums und diese recommendation-Werte: "Kaufen", "Leicht kaufen", "Halten", "Leicht verkaufen", "Verkaufen".
+Wenn growth_outlook fehlt, leer oder nur ein englischer Fallback ist, setze exakt: "${DEFAULT_GROWTH_OUTLOOK}".
+claims[].confidence muss eine ganze Zahl von 1 bis 5 bleiben.`,
+    messages: [
+      {
+        role: "user",
+        content: `Repariere die sichtbare Sprache dieses JSON. Erhalte Struktur und Werte, übersetze nur nutzer sichtbare Texte ins Deutsche:\n\n${JSON.stringify(rawJson).slice(0, 12000)}`,
       },
     ],
   });
