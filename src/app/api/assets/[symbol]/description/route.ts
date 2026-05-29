@@ -3,17 +3,55 @@ import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAssetData } from "@/lib/finance-client";
 
-// German company descriptions are translated lazily (only when the user opens
-// the info panel) from the English yfinance business summary, then cached
-// in-process so repeated views of the same symbol do not re-spend tokens.
+// German company descriptions are translated once from the English yfinance
+// business summary and persisted in `company_descriptions` (keyed by symbol),
+// so repeated views never re-spend tokens. A manual refresh re-translates and
+// bumps updated_at.
 const TRANSLATION_MODEL = "claude-haiku-4-5-20251001";
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-type DescriptionResult = { de: string; source: "translated" | "original" | "none" };
+type DescriptionResult = {
+  de: string;
+  source: "translated" | "original" | "none";
+  updatedAt: string | null;
+};
 
-const cache = new Map<string, { value: DescriptionResult; expiresAt: number }>();
+async function getStoredDescription(symbol: string): Promise<DescriptionResult | null> {
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("company_descriptions")
+      .select("description_de, source, updated_at")
+      .eq("symbol", symbol)
+      .single();
+    const row = data as { description_de: string; source: string; updated_at: string } | null;
+    if (row?.description_de) {
+      return {
+        de: row.description_de,
+        source: row.source === "original" ? "original" : "translated",
+        updatedAt: row.updated_at,
+      };
+    }
+  } catch {
+    // table missing or no row — fall through to translation
+  }
+  return null;
+}
+
+async function storeDescription(symbol: string, de: string, source: "translated" | "original"): Promise<string> {
+  const updatedAt = new Date().toISOString();
+  try {
+    const service = createServiceClient();
+    await service
+      .from("company_descriptions")
+      .upsert({ symbol, description_de: de, source, updated_at: updatedAt }, { onConflict: "symbol" });
+  } catch {
+    // Persistence is best-effort; the translation is still returned to the client.
+  }
+  return updatedAt;
+}
 
 async function getEnglishDescription(symbol: string): Promise<string | null> {
   try {
@@ -59,7 +97,7 @@ async function translateToGerman(text: string): Promise<string> {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
   const auth = await requireAuth();
@@ -72,29 +110,31 @@ export async function GET(
   }
   const symbol = parsed.data;
 
-  const hit = cache.get(symbol);
-  if (hit && hit.expiresAt > Date.now()) {
-    return NextResponse.json(hit.value);
+  const forceRefresh = new URL(request.url).searchParams.get("refresh") === "true";
+
+  // Serve the persisted translation unless a refresh was explicitly requested.
+  if (!forceRefresh) {
+    const stored = await getStoredDescription(symbol);
+    if (stored) return NextResponse.json(stored);
   }
 
   const english = await getEnglishDescription(symbol);
   if (!english) {
-    const result: DescriptionResult = { de: "", source: "none" };
-    cache.set(symbol, { value: result, expiresAt: Date.now() + CACHE_TTL_MS });
-    return NextResponse.json(result);
+    return NextResponse.json({ de: "", source: "none", updatedAt: null } satisfies DescriptionResult);
   }
 
-  let result: DescriptionResult;
+  let de: string;
+  let source: "translated" | "original";
   try {
-    const de = await translateToGerman(english);
-    result = de
-      ? { de, source: "translated" }
-      : { de: english, source: "original" };
+    const translated = await translateToGerman(english);
+    de = translated || english;
+    source = translated ? "translated" : "original";
   } catch {
     // If translation fails, return the English text rather than nothing.
-    result = { de: english, source: "original" };
+    de = english;
+    source = "original";
   }
 
-  cache.set(symbol, { value: result, expiresAt: Date.now() + CACHE_TTL_MS });
-  return NextResponse.json(result);
+  const updatedAt = await storeDescription(symbol, de, source);
+  return NextResponse.json({ de, source, updatedAt } satisfies DescriptionResult);
 }

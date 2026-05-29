@@ -273,6 +273,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [showNews, setShowNews] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [descDe, setDescDe] = useState<string | null>(null);
+  const [descUpdatedAt, setDescUpdatedAt] = useState<string | null>(null);
   const [descLoading, setDescLoading] = useState(false);
 
   useEffect(() => {
@@ -377,17 +378,23 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     setRefreshing(false);
   }
 
+  function loadDescription(force = false) {
+    if (descLoading) return;
+    setDescLoading(true);
+    fetch(`/api/assets/${symbol}/description${force ? "?refresh=true" : ""}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { de?: string; updatedAt?: string | null } | null) => {
+        setDescDe(d?.de ?? "");
+        setDescUpdatedAt(d?.updatedAt ?? null);
+      })
+      .catch(() => setDescDe(""))
+      .finally(() => setDescLoading(false));
+  }
+
   function toggleInfo() {
     setShowInfo(v => !v);
     // Lazy-load the German description only the first time the panel is opened.
-    if (descDe == null && !descLoading) {
-      setDescLoading(true);
-      fetch(`/api/assets/${symbol}/description`)
-        .then(r => r.ok ? r.json() : null)
-        .then((d: { de?: string } | null) => setDescDe(d?.de ?? ""))
-        .catch(() => setDescDe(""))
-        .finally(() => setDescLoading(false));
-    }
+    if (descDe == null && !descLoading) loadDescription(false);
   }
 
   function stopPolling() {
@@ -698,14 +705,26 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         )}
       </div>
 
-      {/* Info panel — German company description (lazy, toggled via "i") */}
+      {/* Info panel — German company description (lazy, persisted, toggled via "i") */}
       {showInfo && (
         <div
           className="rounded-2xl border p-4"
           style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-          <div className="flex items-center gap-2 mb-2">
-            <Info size={14} style={{ color: "#c084fc" }} />
-            <h3 className="font-semibold text-white text-sm">Über das Unternehmen</h3>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2">
+              <Info size={14} style={{ color: "#c084fc" }} />
+              <h3 className="font-semibold text-white text-sm">Über das Unternehmen</h3>
+            </div>
+            {descDe && (
+              <button
+                onClick={() => loadDescription(true)}
+                disabled={descLoading}
+                title="Beschreibung neu übersetzen"
+                className="flex items-center justify-center w-6 h-6 rounded-full disabled:opacity-40"
+                style={{ color: "var(--muted)", background: "var(--card-border)" }}>
+                <RotateCw size={11} className={descLoading ? "animate-spin" : ""} />
+              </button>
+            )}
           </div>
           {descLoading ? (
             <div className="space-y-1.5">
@@ -714,9 +733,16 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
               ))}
             </div>
           ) : descDe ? (
-            <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
-              {descDe}
-            </p>
+            <>
+              <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+                {descDe}
+              </p>
+              {descUpdatedAt && (
+                <p className="text-[10px] mt-2" style={{ color: "var(--muted)" }}>
+                  Stand: {new Date(descUpdatedAt).toLocaleDateString("de-DE")}
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-xs" style={{ color: "var(--muted)" }}>
               Keine Beschreibung verfügbar.
@@ -730,6 +756,9 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
 
       {/* Chart — directly under the stock header */}
       <PriceChart symbol={symbol} />
+
+      {/* Quartalszahlen — directly under the chart */}
+      {earnings && <EarningsCard earnings={earnings} />}
 
       {/* Analyse-Score */}
       {score && (
@@ -897,9 +926,6 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
       )}
 
       {aiAnalysis && <AIAnalysisCard analysis={aiAnalysis} />}
-
-      {/* Earnings Calendar */}
-      {earnings && <EarningsCard earnings={earnings} />}
 
       {/* Analyse-Scoreverlauf (falls vorhanden) */}
       <AnalysisHistoryCard symbol={symbol} />

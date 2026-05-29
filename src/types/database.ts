@@ -113,6 +113,27 @@ export interface Database {
         };
         Relationships: [];
       };
+      company_descriptions: {
+        Row: {
+          symbol: string;
+          description_de: string;
+          source: string;
+          updated_at: string;
+        };
+        Insert: {
+          symbol: string;
+          description_de: string;
+          source?: string;
+          updated_at?: string;
+        };
+        Update: {
+          symbol?: string;
+          description_de?: string;
+          source?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       analysis_scores: {
         Row: {
           id: string;
