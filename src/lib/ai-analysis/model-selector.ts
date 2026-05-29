@@ -471,6 +471,7 @@ export function detectAvailableModelInputs(context: ModelInputAvailabilityContex
   if (hasFiniteNumber(fin, "grossMargin", "gross_margin")) available.add("gross_margin");
   if (hasFiniteNumber(fin, "operatingMargin", "operating_margin")) available.add("operating_margin");
   if (hasFiniteNumber(fin, "fcfMargin", "fcf_margin")) available.add("fcf_margin");
+  if (hasFiniteNumber(fin, "freeCashFlowMarginPct", "free_cash_flow_margin_pct")) available.add("fcf_margin");
   if (hasFiniteNumber(fin, "roe", "returnOnEquity")) available.add("roe");
   if (hasFiniteNumber(fin, "roic", "returnOnInvestedCapital")) available.add("roic");
 
@@ -511,8 +512,12 @@ export function detectAvailableModelInputs(context: ModelInputAvailabilityContex
     if (segArr.some(s => isRecord(s) && hasFiniteNumber(s, "revenue", "revenuePct"))) {
       available.add("segment_revenue");
     }
-    if (segArr.some(s => isRecord(s) && hasFiniteNumber(s, "operatingMargin", "operating_margin"))) {
+    if (segArr.some(s => isRecord(s) && hasFiniteNumber(s, "operatingIncome", "operating_income", "operatingMargin", "operating_margin"))) {
       available.add("segment_operating_income");
+    }
+    if (segArr.some(s => isRecord(s) && hasFiniteNumber(s, "ebitda"))) available.add("segment_ebitda");
+    if (segArr.some(s => isRecord(s) && hasFiniteNumber(s, "freeCashFlow", "free_cash_flow", "fcf"))) {
+      available.add("segment_fcf");
     }
   } else if (isRecord(segs) && hasAnyValue(segs, "segments", "breakdown")) {
     available.add("segments");
@@ -558,12 +563,46 @@ export function detectAvailableModelInputs(context: ModelInputAvailabilityContex
   if (hasFiniteNumber(fin, "reserveLife", "reserve_life_years")) available.add("reserve_life");
 
   // SaaS-specific
-  if (hasAnyValue(fin, "arr", "annualRecurringRevenue")) available.add("arr");
-  if (hasAnyValue(fin, "nrr", "netRevenueRetention")) available.add("nrr");
-  if (hasAnyValue(fin, "sbc", "stockBasedCompensation", "stock_based_compensation")) {
+  if (hasAnyValue(fin, "arr", "annualRecurringRevenue", "arrGrowthPct", "arr_growth")) available.add("arr");
+  if (hasAnyValue(fin, "nrr", "netRevenueRetention", "netRevenueRetentionPct", "grossRetentionPct")) available.add("nrr");
+  if (hasAnyValue(fin, "sbc", "stockBasedCompensation", "stock_based_compensation", "stockBasedCompPctRevenue")) {
     available.add("sbc");
   }
+  if (hasFiniteNumber(fin, "evToSales", "ev_to_sales")) available.add("ev_to_sales");
+  if (hasFiniteNumber(fin, "evToFcf", "ev_to_fcf")) available.add("ev_to_fcf");
   if (hasAnyValue(fin, "ruleOf40", "rule_of_40")) available.add("rule_of_40");
+
+  // Semiconductor / AI hardware-specific
+  if (hasFiniteNumber(fin, "dataCenterRevenuePct", "datacenter_revenue", "datacenterRevenuePct")) {
+    available.add("datacenter_revenue");
+  }
+  if (hasFiniteNumber(fin, "aiRevenuePct", "ai_revenue", "aiRevenue")) available.add("ai_revenue");
+  if (hasFiniteNumber(fin, "memoryRevenuePct", "memory_revenue")) available.add("memory_revenue");
+  if (hasFiniteNumber(fin, "inventoryGrowthPct", "inventory_growth")) available.add("inventory_growth");
+  if (hasFiniteNumber(fin, "workingCapitalGrowthPct", "working_capital_growth")) available.add("working_capital_growth");
+  if (hasFiniteNumber(fin, "customerConcentrationPct", "customer_concentration")) available.add("customer_concentration");
+  if (hasFiniteNumber(fin, "capexPctRevenue", "capex_pct_revenue")) available.add("capex_pct_revenue");
+  if (hasFiniteNumber(fin, "evToEbitda", "ev_to_ebitda")) available.add("ev_to_ebitda");
+  if (hasFiniteNumber(fin, "pe", "pe_ratio")) available.add("pe");
+
+  // AI exposure overlay inputs
+  const profileText = [
+    profile.sector,
+    profile.industry,
+    profile.description,
+    fin.companyDescription,
+  ].filter(v => typeof v === "string").join(" ").toLowerCase();
+  const hasAiText = /\b(ai|artificial intelligence|machine learning|gpu|accelerator|data center|datacenter|hyperscaler)\b/.test(profileText);
+  if (
+    hasAiText ||
+    hasAnyValue(fin, "mentionsAiInDescription", "mentionsAiInNewsOrGuidance") ||
+    hasFiniteNumber(fin, "aiRevenuePct", "ai_revenue", "aiBacklogPct", "ai_backlog", "aiCapexPctRevenue", "ai_capex", "aiCustomerWinsCount")
+  ) {
+    available.add("ai_indicator");
+  }
+  if (hasFiniteNumber(fin, "aiBacklogPct", "ai_backlog")) available.add("ai_backlog");
+  if (hasFiniteNumber(fin, "aiCapexPctRevenue", "ai_capex")) available.add("ai_capex");
+  if (hasFiniteNumber(fin, "aiCustomerWinsCount", "ai_customer_wins")) available.add("ai_customer_wins");
 
   // Mark existing outputs
   for (const [id, value] of Object.entries(outputs)) {
@@ -800,7 +839,7 @@ export function summarizeModelSelectionForSynthesis(plan: ModelSelectionPlan): M
   const warnings = unique([
     ...plan.warnings,
     ...plan.primaryModels.flatMap(m => m.warnings),
-    ...plan.missingButRecommendedModels.map(m => `${m.id} is recommended but not yet implemented.`),
+    ...plan.missingButRecommendedModels.map(m => `${m.id} is recommended but unavailable (${m.runStatus}).`),
   ]);
 
   const limitations = unique([

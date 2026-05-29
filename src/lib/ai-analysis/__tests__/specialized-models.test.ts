@@ -1,10 +1,20 @@
 import { calculateReitAffoNav } from "../models/reit-affo-nav";
 import { calculateBankValuation } from "../models/bank-valuation";
 import { calculateCommodityEnergyMidcycle } from "../models/commodity-energy-midcycle";
+import { calculatePlatformSotp } from "../models/platform-sotp";
+import { calculateCyclicalHardwareNormalized } from "../models/cyclical-hardware-normalized";
+import { calculateSoftwareRuleOf40 } from "../models/software-rule-of-40";
+import { calculateSemiconductorCycle } from "../models/semiconductor-cycle";
+import { calculateAiExposureNarrativeScore } from "../models/ai-exposure-narrative-score";
 import {
   runReitAffoNav,
   runBankValuation,
   runCommodityEnergyMidcycle,
+  runPlatformSotp,
+  runCyclicalHardwareNormalized,
+  runSoftwareRuleOf40,
+  runSemiconductorCycle,
+  runAiExposureNarrativeScore,
   formatSpecializedValuationsForPrompt,
 } from "../models/specialized-models";
 import { getModelById } from "../model-registry";
@@ -338,6 +348,265 @@ describe("calculateCommodityEnergyMidcycle", () => {
   });
 });
 
+// ─── Platform SOTP tests ──────────────────────────────────────────────────────
+
+describe("calculatePlatformSotp", () => {
+  const segments = [
+    { name: "Cloud", type: "cloud" as const, operatingIncome: 10_000_000_000 },
+    { name: "Ads", type: "advertising" as const, revenue: 20_000_000_000 },
+    { name: "Retail", type: "retail" as const, operatingIncome: 5_000_000_000 },
+  ];
+
+  it("values cloud segment using operating income multiple", () => {
+    const result = calculatePlatformSotp({ segments, sharesOutstanding: 1_000_000_000 });
+    const cloud = result.valuation.segmentValues.find(s => s.name === "Cloud");
+    expect(result.status).toBe("success");
+    expect(cloud?.method).toBe("operating_income_multiple");
+    expect(cloud?.value).toBe(220_000_000_000);
+  });
+
+  it("uses revenue fallback and adds limitation when segment profitability is missing", () => {
+    const result = calculatePlatformSotp({ segments, sharesOutstanding: 1_000_000_000 });
+    const ads = result.valuation.segmentValues.find(s => s.name === "Ads");
+    expect(ads?.method).toBe("revenue_multiple");
+    expect(result.limitations.join(" ")).toContain("Revenue multiple");
+  });
+
+  it("uses lower retail multiple than cloud", () => {
+    const result = calculatePlatformSotp({ segments, sharesOutstanding: 1_000_000_000 });
+    const cloud = result.valuation.segmentValues.find(s => s.name === "Cloud")!;
+    const retail = result.valuation.segmentValues.find(s => s.name === "Retail")!;
+    expect(retail.multipleUsed).toBeLessThan(cloud.multipleUsed!);
+  });
+
+  it("returns fair value per share when shares outstanding exists", () => {
+    const result = calculatePlatformSotp({ segments, sharesOutstanding: 1_000_000_000, netDebt: 20_000_000_000 });
+    expect(result.valuation.baseFairValue).toBeGreaterThan(0);
+    expect(result.valuation.bearFairValue).toBeLessThan(result.valuation.baseFairValue!);
+    expect(result.valuation.bullFairValue).toBeGreaterThan(result.valuation.baseFairValue!);
+  });
+
+  it("returns not_run_missing_inputs when no segment data exists", () => {
+    const result = calculatePlatformSotp({ segments: [] });
+    expect(result.status).toBe("not_run_missing_inputs");
+  });
+
+  it("warns when corporate costs or net debt are missing", () => {
+    const result = calculatePlatformSotp({ segments, sharesOutstanding: 1_000_000_000 });
+    expect(result.limitations.join(" ")).toContain("Corporate");
+    expect(result.limitations.join(" ")).toContain("Net debt");
+  });
+
+  it("confidence is higher when multiple profitable segments exist", () => {
+    const high = calculatePlatformSotp({
+      segments: [
+        { name: "Cloud", type: "cloud", operatingIncome: 10e9 },
+        { name: "Ads", type: "advertising", operatingIncome: 6e9 },
+        { name: "Subs", type: "subscriptions", operatingIncome: 3e9 },
+      ],
+      sharesOutstanding: 1e9,
+    });
+    const low = calculatePlatformSotp({ segments: [{ name: "Only", type: "retail", revenue: 10e9 }] });
+    expect(high.confidence).toBeGreaterThan(low.confidence);
+  });
+});
+
+// ─── Cyclical hardware normalized tests ───────────────────────────────────────
+
+describe("calculateCyclicalHardwareNormalized", () => {
+  it("uses median historical operating margin when available", () => {
+    const result = calculateCyclicalHardwareNormalized({
+      revenue: 10_000_000_000,
+      historicalOperatingMarginPct: [6, 10, 14],
+      sharesOutstanding: 100_000_000,
+    });
+    expect(result.status).toBe("success");
+    expect(result.valuation.normalizedOperatingMarginPct).toBe(10);
+  });
+
+  it("uses stressed current margin fallback when history is missing", () => {
+    const result = calculateCyclicalHardwareNormalized({
+      revenue: 10_000_000_000,
+      operatingMarginPct: 12,
+      sharesOutstanding: 100_000_000,
+    });
+    expect(result.valuation.normalizedOperatingMarginPct).toBe(10);
+    expect(result.limitations.join(" ")).toContain("stress adjustment");
+  });
+
+  it("calculates normalized operating income", () => {
+    const result = calculateCyclicalHardwareNormalized({
+      revenue: 10_000_000_000,
+      operatingMarginPct: 12,
+      sharesOutstanding: 100_000_000,
+    });
+    expect(result.valuation.normalizedOperatingIncome).toBe(1_000_000_000);
+  });
+
+  it("flags inventory and working-capital risk when growth exceeds revenue growth", () => {
+    const result = calculateCyclicalHardwareNormalized({
+      revenue: 10e9,
+      operatingMarginPct: 12,
+      sharesOutstanding: 100e6,
+      revenueGrowthPct: 10,
+      inventoryGrowthPct: 25,
+      workingCapitalGrowthPct: 22,
+    });
+    expect(result.cycleSignals.inventoryRisk).toBe("high");
+    expect(result.cycleSignals.workingCapitalRisk).toBe("high");
+  });
+
+  it("flags weak FCF conversion and customer concentration risk", () => {
+    const result = calculateCyclicalHardwareNormalized({
+      revenue: 10e9,
+      operatingMarginPct: 12,
+      sharesOutstanding: 100e6,
+      netIncome: 1e9,
+      freeCashFlow: 200e6,
+      customerConcentrationPct: 55,
+    });
+    expect(result.cycleSignals.fcfConversionAssessment).toBe("weak");
+    expect(result.cycleSignals.customerConcentrationRisk).toBe("high");
+  });
+
+  it("returns not_run_missing_inputs when revenue and earnings base are missing", () => {
+    const result = calculateCyclicalHardwareNormalized({});
+    expect(result.status).toBe("not_run_missing_inputs");
+  });
+});
+
+// ─── Software Rule of 40 tests ────────────────────────────────────────────────
+
+describe("calculateSoftwareRuleOf40", () => {
+  it("calculates Rule of 40 from revenue growth plus FCF margin", () => {
+    const result = calculateSoftwareRuleOf40({ revenueGrowthPct: 35, freeCashFlowMarginPct: 10 });
+    expect(result.status).toBe("success");
+    expect(result.scores.ruleOf40Score).toBe(45);
+  });
+
+  it("uses ARR growth when available", () => {
+    const result = calculateSoftwareRuleOf40({ revenueGrowthPct: 20, arrGrowthPct: 40, freeCashFlowMarginPct: 5 });
+    expect(result.scores.ruleOf40Score).toBe(45);
+  });
+
+  it("uses operating margin fallback if FCF margin is missing", () => {
+    const result = calculateSoftwareRuleOf40({ revenueGrowthPct: 20, operatingMarginPct: -5 });
+    expect(result.status).toBe("success");
+    expect(result.limitations.join(" ")).toContain("FCF margin missing");
+  });
+
+  it("flags Rule of 40 below 40, high SBC, weak retention, and expensive EV/Sales", () => {
+    const result = calculateSoftwareRuleOf40({
+      revenueGrowthPct: 12,
+      freeCashFlowMarginPct: -5,
+      stockBasedCompPctRevenue: 18,
+      netRevenueRetentionPct: 95,
+      evToSales: 18,
+    });
+    const text = result.warnings.join(" ");
+    expect(text).toContain("Rule of 40");
+    expect(text).toContain("Stock-based compensation");
+    expect(result.qualitySignals.retentionQuality).toBe("weak");
+    expect(result.valuationContext.valuationState).toBe("very_expensive");
+  });
+
+  it("returns not_run_missing_inputs when growth and margin data are missing", () => {
+    const result = calculateSoftwareRuleOf40({});
+    expect(result.status).toBe("not_run_missing_inputs");
+  });
+});
+
+// ─── Semiconductor cycle tests ────────────────────────────────────────────────
+
+describe("calculateSemiconductorCycle", () => {
+  it("classifies high structural growth exposure with AI/datacenter revenue", () => {
+    const result = calculateSemiconductorCycle({ aiRevenuePct: 45, revenueGrowthPct: 20 });
+    expect(result.cycleSignals.structuralGrowthExposure).toBe("high");
+  });
+
+  it("flags memory, inventory, margin, and customer concentration risks", () => {
+    const result = calculateSemiconductorCycle({
+      revenueGrowthPct: 10,
+      memoryRevenuePct: 55,
+      inventoryGrowthPct: 25,
+      grossMarginPct: 72,
+      customerConcentrationPct: 45,
+    });
+    expect(result.cycleSignals.memoryCycleRisk).toBe("high");
+    expect(result.cycleSignals.inventoryCycleRisk).toBe("high");
+    expect(result.cycleSignals.marginNormalizationRisk).toBe("high");
+    expect(result.cycleSignals.customerConcentrationRisk).toBe("high");
+  });
+
+  it("classifies valuation state from EV/Sales", () => {
+    const result = calculateSemiconductorCycle({ revenueGrowthPct: 20, evToSales: 20 });
+    expect(result.valuationContext.valuationState).toBe("very_expensive");
+  });
+
+  it("allows fair-value context when EBITDA and shares outstanding exist", () => {
+    const result = calculateSemiconductorCycle({ revenueGrowthPct: 20, ebitda: 10e9, sharesOutstanding: 1e9, aiRevenuePct: 45 });
+    expect(result.fairValueContext?.baseFairValue).toBeGreaterThan(0);
+  });
+
+  it("returns structured limitations when AI exposure is not quantified", () => {
+    const result = calculateSemiconductorCycle({ revenueGrowthPct: 20, pe: 30 });
+    expect(result.limitations.join(" ")).toContain("AI exposure not quantified");
+  });
+
+  it("returns not_run_missing_inputs when semiconductor cycle inputs are missing", () => {
+    const result = calculateSemiconductorCycle({});
+    expect(result.status).toBe("not_run_missing_inputs");
+  });
+});
+
+// ─── AI exposure narrative overlay tests ──────────────────────────────────────
+
+describe("calculateAiExposureNarrativeScore", () => {
+  it("returns not_applicable when no AI indicators exist", () => {
+    const result = calculateAiExposureNarrativeScore({ sector: "Consumer Staples", industry: "Beverages" });
+    expect(result.status).toBe("not_applicable");
+  });
+
+  it("classifies semiconductor AI exposure", () => {
+    const result = calculateAiExposureNarrativeScore({ industry: "Semiconductors and GPUs", aiRevenuePct: 30 });
+    expect(result.category).toBe("ai_semiconductors");
+  });
+
+  it("classifies AI infrastructure exposure", () => {
+    const result = calculateAiExposureNarrativeScore({ industry: "Data center infrastructure and cooling", aiBacklogPct: 20 });
+    expect(result.category).toBe("ai_infrastructure");
+  });
+
+  it("classifies AI software and platform exposure", () => {
+    const software = calculateAiExposureNarrativeScore({ industry: "Enterprise software automation", softwareAiProductRevenuePct: 10 });
+    const platform = calculateAiExposureNarrativeScore({ industry: "Cloud platform hyperscaler", dataCenterRevenuePct: 35 });
+    expect(software.category).toBe("ai_software");
+    expect(platform.category).toBe("ai_platform");
+  });
+
+  it("classifies narrative-only AI when mentions exist but evidence is weak", () => {
+    const result = calculateAiExposureNarrativeScore({ mentionsAiInNewsOrGuidance: true });
+    expect(result.category).toBe("ai_narrative_only");
+    expect(result.ratingImplications.avoidStrongBuyWithoutProof).toBe(true);
+  });
+
+  it("scores high monetization evidence when AI revenue or backlog exists", () => {
+    const result = calculateAiExposureNarrativeScore({ industry: "Semiconductors", aiRevenuePct: 35, aiBacklogPct: 20, freeCashFlowMarginPct: 20 });
+    expect(result.scores.monetizationEvidenceScore).toBeGreaterThanOrEqual(75);
+    expect(result.confidence).toBeGreaterThanOrEqual(4);
+  });
+
+  it("scores high narrative risk when AI is mentioned without revenue/backlog/customer evidence", () => {
+    const result = calculateAiExposureNarrativeScore({ mentionsAiInDescription: true, marketCap: 500_000_000 });
+    expect(result.scores.narrativeRiskScore).toBeGreaterThanOrEqual(70);
+  });
+
+  it("does not output fair value", () => {
+    const result = calculateAiExposureNarrativeScore({ industry: "Semiconductors", aiRevenuePct: 25 });
+    expect("valuation" in result).toBe(false);
+  });
+});
+
 // ─── Error handling ───────────────────────────────────────────────────────────
 
 describe("specialized model runners (error handling)", () => {
@@ -356,6 +625,14 @@ describe("specialized model runners (error handling)", () => {
   it("runCommodityEnergyMidcycle wraps errors", () => {
     const result = runCommodityEnergyMidcycle({});
     expect(result.modelId).toBe("commodity_energy_midcycle");
+  });
+
+  it("new specialized runners return structured model IDs", () => {
+    expect(runPlatformSotp({ segments: [] }).modelId).toBe("platform_sotp");
+    expect(runCyclicalHardwareNormalized({}).modelId).toBe("cyclical_hardware_normalized");
+    expect(runSoftwareRuleOf40({}).modelId).toBe("software_rule_of_40");
+    expect(runSemiconductorCycle({}).modelId).toBe("semiconductor_cycle");
+    expect(runAiExposureNarrativeScore({}).modelId).toBe("ai_exposure_narrative_score");
   });
 });
 
@@ -380,6 +657,20 @@ describe("model registry status", () => {
     expect(entry!.implementationStatus).toBe("implemented");
   });
 
+  it("next specialized models and AI overlay are implemented", () => {
+    for (const id of [
+      "platform_sotp",
+      "cyclical_hardware_normalized",
+      "software_rule_of_40",
+      "semiconductor_cycle",
+      "ai_exposure_narrative_score",
+    ] as const) {
+      const entry = getModelById(id);
+      expect(entry).toBeDefined();
+      expect(entry!.implementationStatus).toBe("implemented");
+    }
+  });
+
   it("reit_affo_nav requires current_price and affo_per_share", () => {
     const entry = getModelById("reit_affo_nav");
     expect(entry!.requiredInputs).toContain("current_price");
@@ -397,6 +688,12 @@ describe("model registry status", () => {
     expect(entry!.requiredInputs).toContain("current_price");
     expect(entry!.requiredInputs).toContain("market_cap");
     expect(entry!.requiredInputs).toContain("free_cash_flow");
+  });
+
+  it("AI overlay has no required valuation inputs", () => {
+    const entry = getModelById("ai_exposure_narrative_score");
+    expect(entry!.requiredInputs).toEqual([]);
+    expect(entry!.defaultRole).toBe("diagnostic");
   });
 });
 
@@ -619,6 +916,30 @@ describe("formatSpecializedValuationsForPrompt", () => {
     const reitResult = runReitAffoNav({ currentPrice: 55 });
     const text = formatSpecializedValuationsForPrompt({ reitAffoNav: reitResult });
     expect(text).toMatch(/not_run_missing_inputs|empfohlen aber nicht ausführbar/);
+  });
+
+  it("formats next specialized outputs for Opus prompt", () => {
+    const text = formatSpecializedValuationsForPrompt({
+      platformSotp: runPlatformSotp({
+        segments: [
+          { name: "Cloud", type: "cloud", operatingIncome: 10e9 },
+          { name: "Retail", type: "retail", operatingIncome: 2e9 },
+        ],
+        sharesOutstanding: 1e9,
+      }),
+      semiconductorCycle: runSemiconductorCycle({ revenueGrowthPct: 20, aiRevenuePct: 45 }),
+      aiExposureNarrative: runAiExposureNarrativeScore({ industry: "Semiconductors", aiRevenuePct: 30 }),
+    });
+    expect(text).toContain("Platform-SOTP");
+    expect(text).toContain("Semiconductor-Cycle");
+    expect(text).toContain("AI-Exposure");
+  });
+
+  it("skips not_applicable AI overlay in prompt text", () => {
+    const text = formatSpecializedValuationsForPrompt({
+      aiExposureNarrative: runAiExposureNarrativeScore({ sector: "Consumer Staples" }),
+    });
+    expect(text).toBe("");
   });
 
   it("returns empty string for empty valuations", () => {

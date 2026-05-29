@@ -237,10 +237,21 @@ describe("buildModelSelectionPlan – platform_conglomerate", () => {
     expect(sotp?.fit).toBe("primary");
   });
 
-  it("marks platform_sotp as not_run_not_implemented", () => {
+  it("marks platform_sotp as not_run_missing_inputs when segment data is unavailable", () => {
     const plan = planFor("platform_conglomerate");
     const sotp = findModel(plan, "platform_sotp");
-    expect(sotp?.runStatus).toBe("not_run_not_implemented");
+    expect(sotp?.runStatus).toBe("not_run_missing_inputs");
+  });
+
+  it("marks platform_sotp as should_run when segment data exists", () => {
+    const plan = planFor("platform_conglomerate", {
+      segments: [
+        { name: "Cloud", revenue: 100, operatingIncome: 30 },
+        { name: "Retail", revenue: 300, operatingIncome: 8 },
+      ],
+    });
+    const sotp = findModel(plan, "platform_sotp");
+    expect(sotp?.runStatus).toBe("should_run");
   });
 
   it("puts platform_sotp in missingButRecommendedModels", () => {
@@ -290,6 +301,13 @@ describe("buildModelSelectionPlan – cyclical_hardware", () => {
     const plan = planFor("cyclical_hardware");
     const allText = [...plan.warnings, ...plan.models.flatMap(m => m.warnings)].join(" ");
     expect(allText.toLowerCase()).toContain("terminal value");
+  });
+
+  it("selects semiconductor_cycle as runnable when revenue growth is available", () => {
+    const plan = planFor("cyclical_hardware");
+    const semi = findModel(plan, "semiconductor_cycle");
+    expect(semi?.role).toBe("primary");
+    expect(semi?.runStatus).toBe("should_run");
   });
 });
 
@@ -419,10 +437,30 @@ describe("buildModelSelectionPlan – hypergrowth_software", () => {
     expect(plan.missingButRecommendedModels.map(m => m.id)).toContain("software_rule_of_40");
   });
 
+  it("marks software_rule_of_40 should_run when growth and FCF margin exist", () => {
+    const plan = planFor("hypergrowth_software", {
+      financials: { ...baseFinancials(), fcfMargin: 12, evToSales: 9 },
+    });
+    const model = findModel(plan, "software_rule_of_40");
+    expect(model?.runStatus).toBe("should_run");
+  });
+
   it("warns about SBC and ARR/NRR", () => {
     const plan = planFor("hypergrowth_software");
     const allText = plan.warnings.join(" ");
     expect(allText).toContain("SBC");
+  });
+});
+
+describe("AI exposure overlay selection", () => {
+  it("keeps ai_exposure_narrative_score diagnostic, never primary valuation", () => {
+    const plan = planFor("quality_compounder", {
+      companyProfile: { sector: "Technology", industry: "Cloud platform AI" },
+    });
+    const overlay = findModel(plan, "ai_exposure_narrative_score");
+    expect(overlay?.role).toBe("diagnostic");
+    expect(overlay?.runStatus).toBe("should_run");
+    expect(plan.primaryModels.map(m => m.id)).not.toContain("ai_exposure_narrative_score");
   });
 });
 
@@ -450,10 +488,10 @@ describe("buildModelSelectionPlan – unknown", () => {
 // ─── Missing Input Scenarios ──────────────────────────────────────────────────
 
 describe("missing input scenarios", () => {
-  it("platform_sotp has missing segment inputs and is not_run_not_implemented", () => {
+  it("platform_sotp has missing segment inputs and is not_run_missing_inputs", () => {
     const plan = planFor("platform_conglomerate");
     const sotp = findModel(plan, "platform_sotp");
-    expect(sotp?.runStatus).toBe("not_run_not_implemented");
+    expect(sotp?.runStatus).toBe("not_run_missing_inputs");
     expect(sotp?.missingInputs).toContain("segments");
   });
 
@@ -564,10 +602,9 @@ describe("summarizeModelSelectionForSynthesis", () => {
     expect(summary.limitations.length).toBeGreaterThan(0);
   });
 
-  it("missing but recommended models (planned) appear as strings (model IDs)", () => {
+  it("missing but recommended models appear as strings (model IDs)", () => {
     const plan = planFor("platform_conglomerate");
     const summary = summarizeModelSelectionForSynthesis(plan);
-    // platform_sotp is still planned → appears in missingButRecommended
     expect(summary.missingButRecommendedModels).toContain("platform_sotp");
     for (const id of summary.missingButRecommendedModels) {
       expect(typeof id).toBe("string");
@@ -595,7 +632,7 @@ describe("regression fixtures", () => {
     const sotp = findModel(plan, "platform_sotp");
     const dcf = findModel(plan, "dcf_scenarios");
     expect(sotp?.role).toBe("primary");
-    expect(sotp?.runStatus).toBe("not_run_not_implemented");
+    expect(sotp?.runStatus).toBe("not_run_missing_inputs");
     expect(plan.missingButRecommendedModels.map(m => m.id)).toContain("platform_sotp");
     expect(dcf?.fit).toBe("partial");
   });

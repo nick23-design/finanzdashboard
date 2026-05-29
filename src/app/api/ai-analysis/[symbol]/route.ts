@@ -149,6 +149,11 @@ import {
   runReitAffoNav,
   runBankValuation,
   runCommodityEnergyMidcycle,
+  runPlatformSotp,
+  runCyclicalHardwareNormalized,
+  runSoftwareRuleOf40,
+  runSemiconductorCycle,
+  runAiExposureNarrativeScore,
   formatSpecializedValuationsForPrompt,
   type SpecializedValuations,
 } from "@/lib/ai-analysis/models/specialized-models";
@@ -1110,6 +1115,42 @@ function estimateTtmRevenue(facts: EdgarFacts | null): number | null {
   return total > 0 ? total : null;
 }
 
+function ratioToPct(value: number | null | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.abs(value) <= 1 ? value * 100 : value;
+}
+
+function deriveSharesOutstanding(snapshot: AssetSnapshot): number | undefined {
+  if (
+    snapshot.market_cap != null &&
+    snapshot.price != null &&
+    Number.isFinite(snapshot.market_cap) &&
+    Number.isFinite(snapshot.price) &&
+    snapshot.market_cap > 0 &&
+    snapshot.price > 0
+  ) {
+    return snapshot.market_cap / snapshot.price;
+  }
+  return undefined;
+}
+
+function deriveFcfMarginPct(snapshot: AssetSnapshot, ttmRevenue: number | null): number | undefined {
+  if (
+    snapshot.free_cashflow != null &&
+    ttmRevenue != null &&
+    Number.isFinite(snapshot.free_cashflow) &&
+    Number.isFinite(ttmRevenue) &&
+    ttmRevenue > 0
+  ) {
+    return snapshot.free_cashflow / ttmRevenue * 100;
+  }
+  return undefined;
+}
+
+function mentionsAi(text: string): boolean {
+  return /\b(ai|artificial intelligence|machine learning|gpu|accelerator|data center|datacenter|hyperscaler|neural|llm)\b/i.test(text);
+}
+
 function buildValuationContext(
   symbol: string,
   snapshot: AssetSnapshot,
@@ -1143,14 +1184,18 @@ function buildValuationContext(
   });
 
   const ttmRevenue = estimateTtmRevenue(edgarFacts);
+  const derivedSharesOutstanding = deriveSharesOutstanding(snapshot);
+  const revenueGrowthPct = ratioToPct(snapshot.revenue_growth);
+  const fcfMarginPct = deriveFcfMarginPct(snapshot, ttmRevenue);
+  const descriptionText = [
+    snapshot.description ?? "",
+    businessDrivers.business_model_type,
+    businessDrivers.secondary_types.join(" "),
+    businessDrivers.sector_specific_kpis.join(" "),
+  ].join(" ");
   const companyTypeClassification = routeCompanyType({
     sectorTemplate: businessDrivers.sector_template,
-    description: [
-      snapshot.description ?? "",
-      businessDrivers.business_model_type,
-      businessDrivers.secondary_types.join(" "),
-      businessDrivers.sector_specific_kpis.join(" "),
-    ].join(" "),
+    description: descriptionText,
     revenueGrowth: snapshot.revenue_growth,
     fcfMargin: ttmRevenue && snapshot.free_cashflow != null ? snapshot.free_cashflow / ttmRevenue : null,
     debtToEquity: snapshot.debt_to_equity,
@@ -1253,13 +1298,21 @@ function buildValuationContext(
     financials: {
       price: snapshot.price,
       market_cap: snapshot.market_cap,
+      revenue: ttmRevenue,
       free_cashflow: snapshot.free_cashflow,
+      fcfMargin: fcfMarginPct,
       revenue_growth: snapshot.revenue_growth,
       pe_ratio: snapshot.pe_ratio,
       debt_to_equity: snapshot.debt_to_equity,
+      sharesOutstanding: derivedSharesOutstanding,
     },
     marketData: { price: snapshot.price, market_cap: snapshot.market_cap },
     analystData: analystData ?? undefined,
+    companyProfile: {
+      sector: businessDrivers.sector_template,
+      industry: businessDrivers.business_model_type,
+      description: descriptionText,
+    },
     existingOutputs: {
       quality_score: alphaFramework.quality,
       moat_score: alphaFramework.moat,
@@ -1367,6 +1420,60 @@ function buildValuationContext(
       marketCap: snapshot.market_cap ?? undefined,
     });
   }
+
+  if (primaryType === "platform_conglomerate") {
+    specializedValuations.platformSotp = runPlatformSotp({
+      ticker: symbol,
+      currentPrice: snapshot.price ?? undefined,
+      marketCap: snapshot.market_cap ?? undefined,
+      sharesOutstanding: derivedSharesOutstanding,
+      segments: [],
+    });
+  }
+
+  if (primaryType === "cyclical_hardware") {
+    specializedValuations.cyclicalHardwareNormalized = runCyclicalHardwareNormalized({
+      ticker: symbol,
+      currentPrice: snapshot.price ?? undefined,
+      marketCap: snapshot.market_cap ?? undefined,
+      sharesOutstanding: derivedSharesOutstanding,
+      revenue: ttmRevenue ?? undefined,
+      freeCashFlow: snapshot.free_cashflow ?? undefined,
+      revenueGrowthPct,
+    });
+    specializedValuations.semiconductorCycle = runSemiconductorCycle({
+      ticker: symbol,
+      currentPrice: snapshot.price ?? undefined,
+      marketCap: snapshot.market_cap ?? undefined,
+      sharesOutstanding: derivedSharesOutstanding,
+      revenue: ttmRevenue ?? undefined,
+      revenueGrowthPct,
+      freeCashFlow: snapshot.free_cashflow ?? undefined,
+      pe: snapshot.pe_ratio ?? undefined,
+    });
+  }
+
+  if (primaryType === "hypergrowth_software") {
+    specializedValuations.softwareRuleOf40 = runSoftwareRuleOf40({
+      ticker: symbol,
+      currentPrice: snapshot.price ?? undefined,
+      marketCap: snapshot.market_cap ?? undefined,
+      revenue: ttmRevenue ?? undefined,
+      revenueGrowthPct,
+      freeCashFlowMarginPct: fcfMarginPct,
+    });
+  }
+
+  specializedValuations.aiExposureNarrative = runAiExposureNarrativeScore({
+    ticker: symbol,
+    sector: businessDrivers.sector_template,
+    industry: businessDrivers.business_model_type,
+    companyDescription: descriptionText,
+    revenueGrowthPct,
+    freeCashFlowMarginPct: fcfMarginPct,
+    marketCap: snapshot.market_cap ?? undefined,
+    mentionsAiInDescription: mentionsAi(descriptionText),
+  });
 
   const explainabilityInput = {
     ticker: symbol,

@@ -24,15 +24,16 @@ const NEWLY_IMPLEMENTED_IDS: AnalysisModelId[] = [
   "reit_affo_nav",
   "bank_valuation",
   "commodity_energy_midcycle",
+  "software_rule_of_40",
+  "semiconductor_cycle",
+  "cyclical_hardware_normalized",
+  "platform_sotp",
+  "ai_exposure_narrative_score",
 ];
 
 const PLANNED_SECTOR_IDS: AnalysisModelId[] = [
   "insurance_underwriting",
   "commodity_mining_midcycle",
-  "software_rule_of_40",
-  "semiconductor_cycle",
-  "cyclical_hardware_normalized",
-  "platform_sotp",
   "healthcare_pharma_pipeline",
   "healthcare_medtech_procedure_volume",
   "utilities_regulated_asset_base",
@@ -146,7 +147,16 @@ describe("MODEL_REGISTRY", () => {
   it("platform_sotp requires segment data inputs", () => {
     const entry = getModelById("platform_sotp");
     expect(entry!.requiredInputs).toContain("segments");
-    expect(entry!.requiredInputs).toContain("segment_revenue");
+    expect(entry!.optionalInputs).toContain("segment_revenue");
+  });
+
+  it("ai_exposure_narrative_score is diagnostic and not a valuation model", () => {
+    const entry = getModelById("ai_exposure_narrative_score");
+    expect(entry).toBeDefined();
+    expect(entry!.implementationStatus).toBe("implemented");
+    expect(entry!.defaultRole).toBe("diagnostic");
+    expect(entry!.outputKind).toBe("diagnostic");
+    expect(entry!.requiredInputs).toEqual([]);
   });
 
   it("bank_valuation requires current_price and tangible book value", () => {
