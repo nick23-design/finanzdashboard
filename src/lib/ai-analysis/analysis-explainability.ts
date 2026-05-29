@@ -10,6 +10,7 @@ import type {
   ReverseDcfPlausibilityOutput,
   ValuationDivergenceOutput,
 } from "./valuation-plausibility";
+import type { ModelSelectionPlan } from "./model-selector";
 
 export type ThesisChangeTriggers = {
   bullishTriggers: string[];
@@ -40,12 +41,14 @@ export type AnalysisDebugSnapshot = {
   thesisChangeTriggers: ThesisChangeTriggers;
   finalRating?: string | null;
   finalRatingConfidence: ConfidenceScore;
+  modelSelectionPlan?: ModelSelectionPlan | null;
 };
 
 export type AnalysisExplainabilityInput = {
   ticker?: string;
   companyTypeClassification: CompanyTypeClassification;
   modelSelection: ModelSelectionOutput;
+  modelSelectionPlan?: ModelSelectionPlan | null;
   dcfPlausibility?: DcfPlausibilityOutput | null;
   reverseDcfPlausibility?: ReverseDcfPlausibilityOutput | null;
   valuationDivergenceAnalysis?: ValuationDivergenceOutput | null;
@@ -388,5 +391,6 @@ export function buildAnalysisDebugSnapshot(input: AnalysisExplainabilityInput): 
     thesisChangeTriggers,
     finalRating: input.finalRating ?? null,
     finalRatingConfidence: confidenceBreakdown.finalRatingConfidence,
+    modelSelectionPlan: input.modelSelectionPlan ?? null,
   };
 }

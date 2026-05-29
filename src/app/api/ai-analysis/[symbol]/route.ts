@@ -133,6 +133,11 @@ import {
   type GuardrailAnalysis,
   type GuardrailContext,
 } from "@/lib/ai-analysis/guardrails";
+import {
+  detectAvailableModelInputs,
+  buildModelSelectionPlan,
+  type ModelSelectionPlan,
+} from "@/lib/ai-analysis/model-selector";
 import type { AssetSnapshot, Database, Json } from "@/types/database";
 
 export const maxDuration = 10;
@@ -504,6 +509,7 @@ interface ValuationContext {
   businessDrivers: BusinessDriverAnalysis;
   companyTypeClassification: CompanyTypeClassification;
   modelSelection: ModelSelectionOutput;
+  modelSelectionPlan: ModelSelectionPlan;
   analystConsensusRange: ValuationRange | null;
   modelValuationRange: ValuationRange | null;
   dcfValuationRange: ValuationRange | null;
@@ -1225,10 +1231,58 @@ function buildValuationContext(
     alphaValuationScore: alphaFramework.alphaScore,
   });
 
+  // Build model selection plan (deterministic, no LLM)
+  const availableModelInputs = detectAvailableModelInputs({
+    financials: {
+      price: snapshot.price,
+      market_cap: snapshot.market_cap,
+      free_cashflow: snapshot.free_cashflow,
+      revenue_growth: snapshot.revenue_growth,
+      pe_ratio: snapshot.pe_ratio,
+      debt_to_equity: snapshot.debt_to_equity,
+    },
+    marketData: { price: snapshot.price, market_cap: snapshot.market_cap },
+    analystData: analystData ?? undefined,
+    existingOutputs: {
+      quality_score: alphaFramework.quality,
+      moat_score: alphaFramework.moat,
+      capital_allocation_score: alphaFramework.capitalAllocation,
+      momentum_score: alphaFramework.momentum,
+      revision_momentum: alphaFramework.revisionMomentum,
+      risk_score: alphaFramework.risk,
+      relative_valuation: alphaFramework.relativeValuation,
+      reverse_dcf: alphaFramework.reverseDcf,
+      ...(dcfScenarios ? { dcf_scenarios: dcfScenarios } : {}),
+      ...(dcfPlausibility ? { dcf_plausibility: dcfPlausibility } : {}),
+      ...(reverseDcfPlausibility ? { reverse_dcf_plausibility: reverseDcfPlausibility } : {}),
+      ...(valuationDivergenceAnalysis ? { valuation_divergence: valuationDivergenceAnalysis } : {}),
+    },
+  });
+
+  const modelSelectionPlan = buildModelSelectionPlan({
+    companyType: companyTypeClassification,
+    availableInputs: availableModelInputs,
+    existingOutputs: {
+      quality_score: alphaFramework.quality,
+      moat_score: alphaFramework.moat,
+      capital_allocation_score: alphaFramework.capitalAllocation,
+      momentum_score: alphaFramework.momentum,
+      revision_momentum: alphaFramework.revisionMomentum,
+      risk_score: alphaFramework.risk,
+      relative_valuation: alphaFramework.relativeValuation,
+      reverse_dcf: alphaFramework.reverseDcf,
+      ...(dcfScenarios ? { dcf_scenarios: dcfScenarios } : {}),
+      ...(dcfPlausibility ? { dcf_plausibility: dcfPlausibility } : {}),
+      ...(reverseDcfPlausibility ? { reverse_dcf_plausibility: reverseDcfPlausibility } : {}),
+      ...(valuationDivergenceAnalysis ? { valuation_divergence: valuationDivergenceAnalysis } : {}),
+    },
+  });
+
   const explainabilityInput = {
     ticker: symbol,
     companyTypeClassification,
     modelSelection,
+    modelSelectionPlan,
     dcfPlausibility,
     reverseDcfPlausibility,
     valuationDivergenceAnalysis,
@@ -1247,6 +1301,7 @@ function buildValuationContext(
     businessDrivers,
     companyTypeClassification,
     modelSelection,
+    modelSelectionPlan,
     analystConsensusRange,
     modelValuationRange,
     dcfValuationRange,
