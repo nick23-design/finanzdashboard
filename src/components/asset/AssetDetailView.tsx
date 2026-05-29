@@ -19,7 +19,7 @@ import type { SignalType } from "@/types/finance";
 import type { AIAnalysisResult, AnalysisTraceEntry } from "@/app/api/ai-analysis/[symbol]/route";
 import { formatCountdown, formatRelativeTime } from "@/lib/time";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
-import { Bell, TrendingUp, RotateCw } from "lucide-react";
+import { Bell, TrendingUp, RotateCw, Newspaper, Info } from "lucide-react";
 import type { PortfolioGroup } from "@/app/api/portfolio/route";
 import { PeersSection } from "./PeersSection";
 
@@ -153,135 +153,6 @@ function PortfolioPositionSection({ symbol }: { symbol: string }) {
   );
 }
 
-// ── Quick Alert ───────────────────────────────────────────────────────────────
-
-interface QuickAlertProps {
-  symbol: string;
-  name: string;
-  currentPrice: number | null;
-}
-
-function QuickAlertSection({ symbol, name, currentPrice }: QuickAlertProps) {
-  const [open, setOpen] = useState(false);
-  const [direction, setDirection] = useState<"above" | "below">("below");
-  const [targetPrice, setTargetPrice] = useState(currentPrice?.toFixed(2) ?? "");
-  const [submitting, setSubmitting] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleSave() {
-    if (!targetPrice) return;
-    setError(null);
-    setSubmitting(true);
-    try {
-      const res = await fetch("/api/alerts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbol, name,
-          target_price: parseFloat(targetPrice),
-          direction,
-        }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error ?? "Fehler");
-      setSaved(true);
-      setTimeout(() => { setSaved(false); setOpen(false); }, 2000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Fehler");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  const isBelow = direction === "below";
-  const activeColor = isBelow ? "#22c55e" : "#fb923c";
-  const activeBg   = isBelow ? "rgba(34,197,94,0.15)" : "rgba(251,146,60,0.15)";
-
-  return (
-    <div>
-      {/* Trigger button — visible bar below hero */}
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl border font-semibold text-sm transition-all"
-        style={{
-          background: open ? "rgba(168,85,247,0.12)" : "var(--card)",
-          borderColor: open ? "#a855f7" : "var(--card-border)",
-          color: open ? "#c084fc" : "var(--primary)",
-        }}>
-        <Bell size={14} />
-        {open ? "Alarm schließen" : "🔔 Kurs-Alarm setzen"}
-      </button>
-
-      {/* Expanded form */}
-      {open && (
-        <div className="mt-2 rounded-2xl border p-4 space-y-3"
-          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-          {saved ? (
-            <p className="text-sm font-semibold text-center py-2" style={{ color: "#22c55e" }}>
-              ✓ Alarm gespeichert
-            </p>
-          ) : (
-            <>
-              {error && <p className="text-xs pt-2" style={{ color: "#ef4444" }}>{error}</p>}
-
-              {/* Direction toggle */}
-              <div className="flex gap-2 pt-3">
-                {(["below", "above"] as const).map(dir => {
-                  const active = direction === dir;
-                  const color = dir === "below" ? "#22c55e" : "#fb923c";
-                  const bg    = dir === "below" ? "rgba(34,197,94,0.15)" : "rgba(251,146,60,0.15)";
-                  return (
-                    <button key={dir} type="button"
-                      onClick={() => setDirection(dir)}
-                      className="flex-1 py-2 rounded-xl text-xs font-semibold border transition-all"
-                      style={{
-                        background: active ? bg : "var(--background)",
-                        borderColor: active ? color : "var(--card-border)",
-                        color: active ? color : "var(--muted)",
-                      }}>
-                      {dir === "below" ? "Kauf-Alarm" : "Verkauf-Alarm"}
-                      <br />
-                      <span className="text-[10px] font-normal opacity-70">
-                        {dir === "below" ? "fällt unter" : "steigt über"}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Price input */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs" style={{ color: "var(--muted)" }}>
-                  {symbol} {isBelow ? "fällt unter" : "steigt über"}
-                </span>
-                <div className="flex items-center rounded-xl border px-3 py-1.5 flex-1"
-                  style={{ background: "var(--background)", borderColor: activeColor }}>
-                  <span className="text-sm font-semibold mr-1" style={{ color: activeColor }}>$</span>
-                  <input
-                    type="number" step="any" min="0"
-                    value={targetPrice}
-                    onChange={e => setTargetPrice(e.target.value)}
-                    className="flex-1 bg-transparent text-sm text-white outline-none"
-                    style={{ caretColor: activeColor }}
-                  />
-                </div>
-              </div>
-
-              <button
-                onClick={handleSave}
-                disabled={submitting || !targetPrice}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
-                style={{ background: activeBg, color: activeColor, border: `1px solid ${activeColor}` }}>
-                {submitting ? "Speichern…" : "Alarm speichern"}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const JOB_STEP_LABELS: Record<string, string> = {
   queued:       "Analyse wird gestartet…",
   fetch_data:   "Marktdaten werden geladen…",
@@ -394,6 +265,16 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
   const [now, setNow] = useState(() => Date.now());
   const [triggeredCount, setTriggeredCount] = useState(0);
 
+  // Price currency toggle (USD ↔ EUR), mirroring the AI analysis card.
+  const [priceCurrency, setPriceCurrency] = useState<"USD" | "EUR">("USD");
+  const [eurUsd, setEurUsd] = useState<number | null>(null);
+
+  // Top-bar toggles for news and the German company description.
+  const [showNews, setShowNews] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const [descDe, setDescDe] = useState<string | null>(null);
+  const [descLoading, setDescLoading] = useState(false);
+
   useEffect(() => {
     fetch("/api/alerts")
       .then(r => r.ok ? r.json() : [])
@@ -402,6 +283,19 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
       )
       .catch(() => {});
   }, []);
+
+  // EUR/USD rate for the price toggle.
+  useEffect(() => {
+    fetch("/api/fx")
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { eurUsd?: number } | null) => { if (d?.eurUsd) setEurUsd(d.eurUsd); })
+      .catch(() => {});
+  }, []);
+
+  // Default the price toggle to the asset's native currency once known.
+  useEffect(() => {
+    if (asset?.currency === "EUR") setPriceCurrency("EUR");
+  }, [asset?.currency]);
 
   useEffect(() => {
     let cancelled = false;
@@ -481,6 +375,19 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
       }
     } catch { /* ignore */ }
     setRefreshing(false);
+  }
+
+  function toggleInfo() {
+    setShowInfo(v => !v);
+    // Lazy-load the German description only the first time the panel is opened.
+    if (descDe == null && !descLoading) {
+      setDescLoading(true);
+      fetch(`/api/assets/${symbol}/description`)
+        .then(r => r.ok ? r.json() : null)
+        .then((d: { de?: string } | null) => setDescDe(d?.de ?? ""))
+        .catch(() => setDescDe(""))
+        .finally(() => setDescLoading(false));
+    }
   }
 
   function stopPolling() {
@@ -645,6 +552,33 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     return n.toFixed(0);
   };
 
+  // ── Price currency conversion ──────────────────────────────────────────────
+  const baseCurrency =
+    asset?.currency === "EUR" ? "EUR"
+    : asset?.currency == null || asset.currency === "USD" ? "USD"
+    : asset.currency;
+  const canToggleCurrency =
+    (baseCurrency === "USD" || baseCurrency === "EUR") && eurUsd != null && eurUsd > 0;
+  const effectiveCurrency = canToggleCurrency ? priceCurrency : baseCurrency;
+
+  const convertPrice = (value: number | null): number | null => {
+    if (value == null) return null;
+    if (!canToggleCurrency || effectiveCurrency === baseCurrency) return value;
+    if (baseCurrency === "USD" && effectiveCurrency === "EUR") return value / (eurUsd as number);
+    if (baseCurrency === "EUR" && effectiveCurrency === "USD") return value * (eurUsd as number);
+    return value;
+  };
+
+  const currencySymbol = (c: string) => (c === "USD" ? "$" : c === "EUR" ? "€" : "");
+  const formatPrice = (value: number | null): string => {
+    const converted = convertPrice(value);
+    if (converted == null) return "—";
+    const sym = currencySymbol(effectiveCurrency);
+    return sym
+      ? `${sym}${converted.toFixed(2)}`
+      : `${converted.toFixed(2)} ${effectiveCurrency}`;
+  };
+
   return (
     <div className="space-y-4">
       {/* Back + Actions */}
@@ -661,6 +595,17 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             title="Aktie vergleichen">
             Vergleichen
           </Link>
+          <button
+            onClick={toggleInfo}
+            aria-expanded={showInfo}
+            title="Unternehmensbeschreibung"
+            className="flex items-center justify-center w-8 h-8 rounded-full transition-colors"
+            style={{
+              background: showInfo ? "rgba(168,85,247,0.15)" : "var(--card-border)",
+              color: showInfo ? "#c084fc" : "var(--muted)",
+            }}>
+            <Info size={15} />
+          </button>
           <Link
             href={`/dashboard/alerts?symbol=${symbol}`}
             className="relative flex items-center justify-center w-8 h-8 rounded-full transition-colors"
@@ -672,10 +617,21 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
                 style={{ background: "#ef4444", borderColor: "var(--background)" }} />
             )}
           </Link>
+          <button
+            onClick={() => setShowNews(v => !v)}
+            aria-expanded={showNews}
+            title="Aktuelle News"
+            className="flex items-center justify-center w-8 h-8 rounded-full transition-colors"
+            style={{
+              background: showNews ? "rgba(59,130,246,0.18)" : "var(--card-border)",
+              color: showNews ? "#60a5fa" : "var(--muted)",
+            }}>
+            <Newspaper size={15} />
+          </button>
         </div>
       </div>
 
-      {/* Hero */}
+      {/* Hero — Aktienkennung */}
       <div
         className="rounded-2xl border p-4"
         style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
@@ -683,9 +639,6 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
           <div>
             <h2 className="text-2xl font-bold text-white">{symbol}</h2>
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-              <p className="text-sm" style={{ color: "var(--muted)" }}>
-                {asset?.currency ?? ""}
-              </p>
               {asset?.isin && (
                 <span
                   className="text-xs px-1.5 py-0.5 rounded font-mono"
@@ -696,9 +649,26 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
             </div>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold text-white">
-              {asset?.price != null ? asset.price.toFixed(2) : "—"}
-            </p>
+            <div className="flex items-center justify-end gap-2">
+              <p className="text-2xl font-bold text-white">{formatPrice(asset?.price ?? null)}</p>
+              {canToggleCurrency && (
+                <div className="flex rounded-full p-0.5" style={{ background: "var(--card-border)" }}>
+                  {(["USD", "EUR"] as const).map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setPriceCurrency(c)}
+                      className="px-2 py-0.5 rounded-full text-[11px] font-semibold transition-all"
+                      style={{
+                        background: priceCurrency === c ? "var(--primary)" : "transparent",
+                        color: priceCurrency === c ? "#000" : "var(--muted)",
+                      }}>
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="flex items-center justify-end gap-1.5 mt-0.5">
               {asset?.fetched_at && (
                 <p className="text-xs" style={{ color: "var(--muted)" }}>
@@ -728,17 +698,40 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         )}
       </div>
 
-      {/* Quick Alert */}
-      <QuickAlertSection
-        symbol={symbol}
-        name={(asset as unknown as { name?: string })?.name ?? symbol}
-        currentPrice={asset?.price ?? null}
-      />
+      {/* Info panel — German company description (lazy, toggled via "i") */}
+      {showInfo && (
+        <div
+          className="rounded-2xl border p-4"
+          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+          <div className="flex items-center gap-2 mb-2">
+            <Info size={14} style={{ color: "#c084fc" }} />
+            <h3 className="font-semibold text-white text-sm">Über das Unternehmen</h3>
+          </div>
+          {descLoading ? (
+            <div className="space-y-1.5">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="h-3 rounded animate-pulse" style={{ background: "var(--card-border)" }} />
+              ))}
+            </div>
+          ) : descDe ? (
+            <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+              {descDe}
+            </p>
+          ) : (
+            <p className="text-xs" style={{ color: "var(--muted)" }}>
+              Keine Beschreibung verfügbar.
+            </p>
+          )}
+        </div>
+      )}
 
-      {/* Portfolio Position */}
-      <PortfolioPositionSection symbol={symbol} />
+      {/* News panel — toggled via newspaper icon */}
+      {showNews && <AssetNewsCard symbol={symbol} />}
 
-      {/* Score Card */}
+      {/* Chart — directly under the stock header */}
+      <PriceChart symbol={symbol} />
+
+      {/* Analyse-Score */}
       {score && (
         <div
           className="rounded-2xl border p-4 space-y-3"
@@ -755,29 +748,98 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         </div>
       )}
 
-      {/* Vergleichbare Unternehmen */}
-      <PeersSection symbol={symbol} />
+      {/* Portfolio Position (nur wenn im Depot) */}
+      <PortfolioPositionSection symbol={symbol} />
 
-      {/* Unternehmensbeschreibung */}
-      {asset?.description && (
-        <div
-          className="rounded-2xl border p-4"
-          style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-          <h3 className="font-semibold text-white mb-2">Über das Unternehmen</h3>
-          <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
-            {asset.description}
-          </p>
+      {/* Kennzahlen (kompakt) */}
+      <div
+        className="rounded-2xl border p-4"
+        style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+        <h3 className="font-semibold text-white mb-3">Kennzahlen</h3>
+        <div className="grid grid-cols-2 gap-2">
+          <MetricCard
+            label="KGV (P/E)"
+            value={asset?.pe_ratio?.toFixed(1) ?? null}
+            highlight={
+              asset?.pe_ratio == null ? "neutral"
+              : asset.pe_ratio <= 20 ? "good"
+              : asset.pe_ratio > 40 ? "bad"
+              : "neutral"
+            }
+          />
+          <MetricCard
+            label="Marktkap."
+            value={formatBigNum(asset?.market_cap ?? null)}
+          />
+          <MetricCard
+            label="Free Cashflow"
+            value={formatBigNum(asset?.free_cashflow ?? null)}
+            highlight={
+              asset?.free_cashflow == null ? "neutral"
+              : asset.free_cashflow > 0 ? "good" : "bad"
+            }
+          />
+          <MetricCard
+            label="Umsatzwachstum"
+            value={
+              asset?.revenue_growth != null
+                ? `${(asset.revenue_growth * 100).toFixed(1)}`
+                : null
+            }
+            unit="%"
+            highlight={
+              asset?.revenue_growth == null ? "neutral"
+              : asset.revenue_growth > 0.1 ? "good"
+              : asset.revenue_growth < 0 ? "bad"
+              : "neutral"
+            }
+          />
+          <MetricCard
+            label="RSI (14)"
+            value={asset?.rsi?.toFixed(1) ?? null}
+            highlight={
+              asset?.rsi == null ? "neutral"
+              : asset.rsi < 30 ? "good"
+              : asset.rsi > 70 ? "bad"
+              : "neutral"
+            }
+            hint={
+              asset?.rsi != null
+                ? asset.rsi < 30 ? "Überverkauft"
+                : asset.rsi > 70 ? "Überkauft"
+                : "Normal"
+                : undefined
+            }
+          />
+          <MetricCard
+            label="Debt/Equity"
+            value={asset?.debt_to_equity?.toFixed(2) ?? null}
+            highlight={
+              asset?.debt_to_equity == null ? "neutral"
+              : asset.debt_to_equity < 0.5 ? "good"
+              : asset.debt_to_equity > 2 ? "bad"
+              : "neutral"
+            }
+          />
+          <MetricCard
+            label="50-Tage-MA"
+            value={asset?.moving_average_50?.toFixed(2) ?? null}
+          />
+          <MetricCard
+            label="200-Tage-MA"
+            value={asset?.moving_average_200?.toFixed(2) ?? null}
+          />
         </div>
-      )}
+      </div>
 
-      {/* AI Analysis */}
+      {/* KI-Aktienanalyse */}
       {!aiAnalysis && (
         <div
           className="rounded-2xl border p-4"
           style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
           <div className="flex items-center justify-between mb-2">
             <div>
-              <h3 className="font-semibold text-white">KI-Analyse</h3>
+              <h3 className="font-semibold text-white">KI-Aktienanalyse</h3>
               <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
                 Tiefgehende Analyse durch mehrere KI-Agenten
               </p>
@@ -839,104 +901,11 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
       {/* Earnings Calendar */}
       {earnings && <EarningsCard earnings={earnings} />}
 
-      {/* News */}
-      <AssetNewsCard symbol={symbol} />
-
-      {/* Analysis History */}
+      {/* Analyse-Scoreverlauf (falls vorhanden) */}
       <AnalysisHistoryCard symbol={symbol} />
 
-      {/* Chart */}
-      <PriceChart symbol={symbol} />
-
-      {/* Fundamental Metrics */}
-      <div
-        className="rounded-2xl border p-4"
-        style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-        <h3 className="font-semibold text-white mb-3">Kennzahlen</h3>
-        <div className="grid grid-cols-2 gap-2">
-          <MetricCard
-            label="KGV (P/E)"
-            value={asset?.pe_ratio?.toFixed(1) ?? null}
-            highlight={
-              asset?.pe_ratio == null ? "neutral"
-              : asset.pe_ratio <= 20 ? "good"
-              : asset.pe_ratio > 40 ? "bad"
-              : "neutral"
-            }
-          />
-          <MetricCard
-            label="Marktkapitalisierung"
-            value={formatBigNum(asset?.market_cap ?? null)}
-          />
-          <MetricCard
-            label="Free Cashflow"
-            value={formatBigNum(asset?.free_cashflow ?? null)}
-            highlight={
-              asset?.free_cashflow == null ? "neutral"
-              : asset.free_cashflow > 0 ? "good" : "bad"
-            }
-          />
-          <MetricCard
-            label="Umsatzwachstum"
-            value={
-              asset?.revenue_growth != null
-                ? `${(asset.revenue_growth * 100).toFixed(1)}`
-                : null
-            }
-            unit="%"
-            highlight={
-              asset?.revenue_growth == null ? "neutral"
-              : asset.revenue_growth > 0.1 ? "good"
-              : asset.revenue_growth < 0 ? "bad"
-              : "neutral"
-            }
-          />
-        </div>
-      </div>
-
-      {/* Technical Metrics */}
-      <div
-        className="rounded-2xl border p-4"
-        style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-        <h3 className="font-semibold text-white mb-3">Technische Daten</h3>
-        <div className="grid grid-cols-2 gap-2">
-          <MetricCard
-            label="RSI (14)"
-            value={asset?.rsi?.toFixed(1) ?? null}
-            highlight={
-              asset?.rsi == null ? "neutral"
-              : asset.rsi < 30 ? "good"
-              : asset.rsi > 70 ? "bad"
-              : "neutral"
-            }
-            hint={
-              asset?.rsi != null
-                ? asset.rsi < 30 ? "Überverkauft"
-                : asset.rsi > 70 ? "Überkauft"
-                : "Normal"
-                : undefined
-            }
-          />
-          <MetricCard
-            label="Debt/Equity"
-            value={asset?.debt_to_equity?.toFixed(2) ?? null}
-            highlight={
-              asset?.debt_to_equity == null ? "neutral"
-              : asset.debt_to_equity < 0.5 ? "good"
-              : asset.debt_to_equity > 2 ? "bad"
-              : "neutral"
-            }
-          />
-          <MetricCard
-            label="50-Tage-MA"
-            value={asset?.moving_average_50?.toFixed(2) ?? null}
-          />
-          <MetricCard
-            label="200-Tage-MA"
-            value={asset?.moving_average_200?.toFixed(2) ?? null}
-          />
-        </div>
-      </div>
+      {/* Vergleichbare Unternehmen */}
+      <PeersSection symbol={symbol} />
 
       {/* Disclaimer */}
       <Disclaimer />
