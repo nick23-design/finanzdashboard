@@ -7,6 +7,16 @@
  */
 
 import type { DivergenceResult } from "@/lib/ai-analysis/divergence";
+import type {
+  CompanyType,
+  CompanyTypeClassification,
+  ModelSelectionOutput,
+} from "@/lib/ai-analysis/company-type-router";
+import type {
+  DcfPlausibilityOutput,
+  ReverseDcfPlausibilityOutput,
+  ValuationDivergenceOutput,
+} from "@/lib/ai-analysis/valuation-plausibility";
 
 // ─── Mirror types (identical shape to route.ts exports) ──────────────────────
 
@@ -94,6 +104,12 @@ export type GuardrailIssueType =
   | "divergence_language"
   | "valuation_data_insufficient"
   | "data_quality_provider_limitation"
+  // Phase 5 — company-type/model-fit guardrails
+  | "hard_rating_with_extreme_model_disagreement"
+  | "quality_compounder_auto_sell"
+  | "platform_conglomerate_model_fit"
+  | "cyclical_hardware_optimistic_dcf"
+  | "financial_or_reit_dcf_fit"
   // Phase 4 — data quality guardrails
   | "missing_valuation_source"
   | "missing_consensus_language"
@@ -134,6 +150,18 @@ export interface GuardrailContext {
   dataQualityScore?: number | null;
   /** Business model type string (e.g. "mega_cap_cloud_software"). */
   companyType?: string;
+  /** Deterministic company-type key from company-type-router.ts. */
+  companyTypeKey?: CompanyType;
+  /** Full deterministic company-type classification. */
+  companyTypeClassification?: CompanyTypeClassification | null;
+  /** Model-selection metadata for this company type. */
+  modelSelection?: ModelSelectionOutput | null;
+  /** DCF fit/plausibility output. */
+  dcfPlausibility?: DcfPlausibilityOutput | null;
+  /** Reverse-DCF suspicious-output check. */
+  reverseDcfPlausibility?: ReverseDcfPlausibilityOutput | null;
+  /** Analyzer comparing own model, DCF, consensus, and current price. */
+  valuationDivergenceAnalysis?: ValuationDivergenceOutput | null;
   /** Sector template string (e.g. "semiconductor"). */
   sector?: string;
   /** True if a structured analyst consensus range is present. */

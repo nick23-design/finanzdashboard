@@ -77,6 +77,14 @@ import {
   V14_DataQualityProviderLimitation,
   VALUATION_DIVERGENCE_RULES,
 } from "./valuation-divergence.guardrails";
+import {
+  C1_ExtremeModelDisagreementAvoidsHardRating,
+  C2_QualityCompounderNoAutomaticSell,
+  C3_PlatformConglomerateModelFit,
+  C4_CyclicalHardwareOptimisticDcf,
+  C5_FinancialOrReitDcfFit,
+  COMPANY_TYPE_RULES,
+} from "./company-type.guardrails";
 import { SECTOR_RULES } from "./sector/index";
 import type { GuardrailRule } from "./types";
 
@@ -121,19 +129,24 @@ import type { GuardrailRule } from "./types";
  *   31. V12 — German divergence template (runs last)
  *
  * Phase 3.5 — cross-phase recommendation consistency (after V-rules):
- *   32. G17 — Low conf + dq<60 + bearish model (≤−25%) + no consensus/divergence
+ *   32. C1  — Extreme model disagreement → moderate hard Buy/Sell
+ *   33. C2  — Quality compounder: valuation alone must not force hard Sell
+ *   34. C3  — Platform conglomerate: SOTP/segment fit limits hard ratings
+ *   35. C4  — Cyclical hardware: optimistic DCF cannot force strong Buy
+ *   36. C5  — Financial/REIT: generic FCFF DCF cannot dominate
+ *   37. G17 — Low conf + dq<60 + bearish model (≤−25%) + no consensus/divergence
  *             + defensive entry → cap recommendation to 'Halten'
- *             MUST run after Phase 3 so it sees valuation_confidence set by V7/V10/V13
+ *             MUST run after Phase 3/company-type rules so it sees valuation_confidence set by V7/V10/V13/C-rules
  *
- * Phase 4 — data quality guardrails (after Phase 3 + G17):
- *   33. D3  — Single valuation source missing + high confidence → cap to "medium"
- *   34. D4  — No analyst consensus → mark consensus-language claims as unsupported
- *   35. D6  — EDGAR quarterly data missing → cap growth/margin/FCF claims to ≤5
- *   36. D7  — Insider + institutional data both absent → unassessable signal warning
- *   37. D8  — Large-cap (>50B) + dq<70 → data gaps as provider limitation
- *   38. D9  — Stale data fields detected → freshness warning + conviction ≤7
- *   39. D11 — Missing data as negative business thesis → unsupported claim
- *   40. D12 — dq<60 + hard valuation certainty language → cautious note
+ * Phase 4 — data quality guardrails (after Phase 3 + C-rules + G17):
+ *   38. D3  — Single valuation source missing + high confidence → cap to "medium"
+ *   39. D4  — No analyst consensus → mark consensus-language claims as unsupported
+ *   40. D6  — EDGAR quarterly data missing → cap growth/margin/FCF claims to ≤5
+ *   41. D7  — Insider + institutional data both absent → unassessable signal warning
+ *   42. D8  — Large-cap (>50B) + dq<70 → data gaps as provider limitation
+ *   43. D9  — Stale data fields detected → freshness warning + conviction ≤7
+ *   44. D11 — Missing data as negative business thesis → unsupported claim
+ *   45. D12 — dq<60 + hard valuation certainty language → cautious note
  *
  * + Sector rules (future)
  *
@@ -168,7 +181,9 @@ export const ALL_LIGHTWEIGHT_RULES: GuardrailRule[] = [
   G16_ExtremeDivergenceRequiresExplanation,
   // Phase 3 — valuation & divergence guardrails
   ...VALUATION_DIVERGENCE_RULES,
-  // Phase 3.5 — cross-phase recommendation consistency (after V7/V10/V13 set valuation_confidence)
+  // Phase 3.25 — company-type/model-fit guardrails
+  ...COMPANY_TYPE_RULES,
+  // Phase 3.5 — cross-phase recommendation consistency (after V/C rules set valuation_confidence)
   G17_LowConfidenceBearishModelBullishRecommendation,
   // Phase 4 — data quality guardrails
   ...DATA_QUALITY_PHASE4_RULES,
@@ -213,6 +228,13 @@ export {
   V13_BothValuationSourcesMissing,
   V14_DataQualityProviderLimitation,
   VALUATION_DIVERGENCE_RULES,
+  // Phase 3.25
+  C1_ExtremeModelDisagreementAvoidsHardRating,
+  C2_QualityCompounderNoAutomaticSell,
+  C3_PlatformConglomerateModelFit,
+  C4_CyclicalHardwareOptimisticDcf,
+  C5_FinancialOrReitDcfFit,
+  COMPANY_TYPE_RULES,
   // Phase 4
   D3_ValuationInputsCapConfidence,
   D4_MissingConsensusLanguageInClaims,

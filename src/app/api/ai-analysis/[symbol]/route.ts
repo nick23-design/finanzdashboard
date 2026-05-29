@@ -106,6 +106,20 @@ import {
   type DivergenceResult,
 } from "@/lib/ai-analysis/divergence";
 import {
+  routeCompanyType,
+  selectValuationModels,
+  type CompanyTypeClassification,
+  type ModelSelectionOutput,
+} from "@/lib/ai-analysis/company-type-router";
+import {
+  analyzeValuationDivergence,
+  evaluateDcfPlausibility,
+  evaluateReverseDcfPlausibility,
+  type DcfPlausibilityOutput,
+  type ReverseDcfPlausibilityOutput,
+  type ValuationDivergenceOutput,
+} from "@/lib/ai-analysis/valuation-plausibility";
+import {
   runGuardrailEngine,
   ALL_LIGHTWEIGHT_RULES,
   type GuardrailAnalysis,
@@ -471,10 +485,15 @@ interface OrchestratorResult {
 
 interface ValuationContext {
   businessDrivers: BusinessDriverAnalysis;
+  companyTypeClassification: CompanyTypeClassification;
+  modelSelection: ModelSelectionOutput;
   analystConsensusRange: ValuationRange | null;
   modelValuationRange: ValuationRange | null;
   dcfValuationRange: ValuationRange | null;
   dcfScenarios: DcfScenariosOutput | null;
+  dcfPlausibility: DcfPlausibilityOutput | null;
+  reverseDcfPlausibility: ReverseDcfPlausibilityOutput | null;
+  valuationDivergenceAnalysis: ValuationDivergenceOutput | null;
   /** Always defined — status field encodes all edge cases. */
   valuationDivergence: DivergenceResult;
   /** Current price in USD — needed by V6 safety-net and divergence upside display. */
@@ -1033,6 +1052,12 @@ function buildDcfValuationRange(
   };
 }
 
+function estimateTtmRevenue(facts: EdgarFacts | null): number | null {
+  if (!facts || facts.revenue.length < 4) return null;
+  const total = facts.revenue.slice(0, 4).reduce((sum, row) => sum + row.value, 0);
+  return total > 0 ? total : null;
+}
+
 function buildValuationContext(
   symbol: string,
   snapshot: AssetSnapshot,
@@ -1057,6 +1082,46 @@ function buildValuationContext(
     ? buildDcfValuationRange(dcfScenarios, snapshot.currency ?? "USD", fx)
     : null;
 
+  const alphaFramework = calculateAlphaFramework({
+    snapshot,
+    edgarFacts,
+    analystData,
+    sectorTemplate: businessDrivers.sector_template,
+    dataQuality: dataQuality ?? null,
+  });
+
+  const ttmRevenue = estimateTtmRevenue(edgarFacts);
+  const companyTypeClassification = routeCompanyType({
+    sectorTemplate: businessDrivers.sector_template,
+    description: [
+      snapshot.description ?? "",
+      businessDrivers.business_model_type,
+      businessDrivers.secondary_types.join(" "),
+      businessDrivers.sector_specific_kpis.join(" "),
+    ].join(" "),
+    revenueGrowth: snapshot.revenue_growth,
+    fcfMargin: ttmRevenue && snapshot.free_cashflow != null ? snapshot.free_cashflow / ttmRevenue : null,
+    debtToEquity: snapshot.debt_to_equity,
+    peRatio: snapshot.pe_ratio,
+    freeCashFlow: snapshot.free_cashflow,
+    marketCap: snapshot.market_cap,
+    hasDurableFcf: snapshot.free_cashflow != null ? snapshot.free_cashflow > 0 : null,
+    segmentDataAvailable: false,
+    alpha: {
+      qualityScore: alphaFramework.quality.score,
+      moatScore: alphaFramework.moat.score,
+      riskScore: alphaFramework.risk.score,
+      valuationScore: alphaFramework.relativeValuation.score,
+    },
+  });
+  const modelSelection = selectValuationModels(companyTypeClassification, {
+    hasSegmentData: false,
+    hasStressCase: false,
+    hasBookValueData: false,
+    hasNavData: false,
+    hasNormalizedCycleData: false,
+  });
+
   // Current price converted to USD for upside calculations
   const priceUsd: number | null =
     snapshot.price != null
@@ -1069,6 +1134,31 @@ function buildValuationContext(
 
   const consensusUsd = getUsdMoneyRange(analystConsensusRange);
   const modelUsd = getUsdMoneyRange(modelValuationRange);
+  const dcfUsd = getUsdMoneyRange(dcfValuationRange);
+
+  const dcfPlausibility = dcfScenarios
+    ? evaluateDcfPlausibility({
+        companyType: companyTypeClassification,
+        dcf: dcfScenarios.base,
+        currentPrice: snapshot.price ?? null,
+        analystConsensusFairValue: analystConsensusRange?.base ?? null,
+        ownModelFairValue: modelValuationRange?.base ?? null,
+        hasSegmentData: false,
+        hasWorkingCapitalStress: false,
+        hasNormalizedMargins: false,
+        limitations: dcfValuationRange?.limitations ?? [],
+      })
+    : null;
+
+  const baseGrowthAssumption = dcfScenarios?.base.assumptions.revenueGrowthRates[0] ?? snapshot.revenue_growth ?? null;
+  const reverseDcfPlausibility = alphaFramework.reverseDcf
+    ? evaluateReverseDcfPlausibility({
+        reverseDcf: alphaFramework.reverseDcf,
+        baseDcfFairValue: dcfValuationRange?.base ?? null,
+        baseGrowthAssumption,
+        currentPrice: snapshot.price ?? null,
+      })
+    : null;
 
   const valuationDivergence = buildValuationDivergence({
     currentPrice: priceUsd ?? undefined,
@@ -1093,15 +1183,34 @@ function buildValuationContext(
       : { available: false },
   });
 
-  const alphaFramework = calculateAlphaFramework({
-    snapshot,
-    edgarFacts,
-    analystData,
-    sectorTemplate: businessDrivers.sector_template,
-    dataQuality: dataQuality ?? null,
+  const valuationDivergenceAnalysis = analyzeValuationDivergence({
+    companyType: companyTypeClassification,
+    modelSelection,
+    currentPrice: priceUsd,
+    ownModel: modelUsd,
+    dcf: dcfUsd,
+    analystConsensus: consensusUsd,
+    dcfPlausibility,
+    reverseDcfPlausibility,
+    relativeValuationScore: alphaFramework.relativeValuation.score,
+    alphaValuationScore: alphaFramework.alphaScore,
   });
 
-  return { businessDrivers, analystConsensusRange, modelValuationRange, dcfValuationRange, dcfScenarios, valuationDivergence, currentPriceUsd: priceUsd, alphaFramework };
+  return {
+    businessDrivers,
+    companyTypeClassification,
+    modelSelection,
+    analystConsensusRange,
+    modelValuationRange,
+    dcfValuationRange,
+    dcfScenarios,
+    dcfPlausibility,
+    reverseDcfPlausibility,
+    valuationDivergenceAnalysis,
+    valuationDivergence,
+    currentPriceUsd: priceUsd,
+    alphaFramework,
+  };
 }
 
 function formatRangeForPrompt(range: ValuationRange | null): string {
@@ -3493,6 +3602,12 @@ function runLightweightGuardrails(
     currentPrice: valuationContext?.currentPriceUsd ?? null,
     // Phase 3 fine-tuning: company type + sector for V14 (provider-limitation framing)
     companyType: valuationContext?.businessDrivers?.business_model_type,
+    companyTypeKey: valuationContext?.companyTypeClassification.primaryType,
+    companyTypeClassification: valuationContext?.companyTypeClassification ?? null,
+    modelSelection: valuationContext?.modelSelection ?? null,
+    dcfPlausibility: valuationContext?.dcfPlausibility ?? null,
+    reverseDcfPlausibility: valuationContext?.reverseDcfPlausibility ?? null,
+    valuationDivergenceAnalysis: valuationContext?.valuationDivergenceAnalysis ?? null,
     sector: valuationContext?.businessDrivers?.sector_template,
     hasAnalystConsensus: valuationContext?.analystConsensusRange != null,
     hasOwnModel: valuationContext?.modelValuationRange != null,
