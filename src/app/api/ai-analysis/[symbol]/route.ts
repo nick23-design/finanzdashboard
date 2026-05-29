@@ -141,6 +141,8 @@ import {
 import {
   buildStructuredSynthesisInput,
   formatStructuredBriefingForPrompt,
+  formatSectorSynthesisTemplate,
+  buildGrowthOutlookToolDescription,
   type StructuredSynthesisInput,
 } from "@/lib/ai-analysis/structured-synthesis-input";
 import type { StructuredSynthesisDebug } from "@/lib/ai-analysis/analysis-explainability";
@@ -1866,6 +1868,8 @@ Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kerna
   const thesisTriggerSection = formatThesisChangeTriggersForPrompt(valuationContext.thesisChangeTriggers);
   const confidenceSection = formatConfidenceBreakdownForPrompt(valuationContext.confidenceBreakdown);
   const structuredBriefingSection = formatStructuredBriefingForPrompt(valuationContext.structuredSynthesisInput);
+  const sectorSynthesisTemplate = formatSectorSynthesisTemplate(valuationContext.structuredSynthesisInput);
+  const growthOutlookDesc = buildGrowthOutlookToolDescription(valuationContext.structuredSynthesisInput, DEFAULT_GROWTH_OUTLOOK);
   const dcfSection = valuationContext.dcfValuationRange
     ? `\nDCF-FAIRER-WERT (FCFF-Modell, deterministisch — erkläre qualitativ auf Deutsch, rechne NICHT nach):
 ${formatRangeForPrompt(valuationContext.dcfValuationRange)}
@@ -1908,7 +1912,7 @@ ${valuationContext.valuationDivergence.explanationSeed}${valuationContext.valuat
         bear_case: { type: "array", items: { type: "string" }, description: "Mindestens 2 substanzielle Contra-Argumente." },
         growth_outlook: {
           type: "string",
-          description: `Konkreter mittel-/langfristiger Wachstumsausblick. Wenn nicht belastbar: "${DEFAULT_GROWTH_OUTLOOK}"`,
+          description: growthOutlookDesc,
         },
         price_levels: {
           type: "object",
@@ -2000,8 +2004,10 @@ ${valuationContext.valuationDivergence.explanationSeed}${valuationContext.valuat
 ${currentPriceRef}KENNZAHLEN (aktuelle Marktdaten):
 ${formatMetrics(s)}
 ${analystSection ? "\nANALYSTEN-KONSENS (Zukunftsprognosen, kein aktueller Kurs):\n" + analystSection : ""}
-STRUKTURIERTES ANALYSTEN-BRIEFING (deterministisch — benutze als Source of Truth, rechne NICHT nach):
+STRUKTURIERTES ANALYSTEN-BRIEFING (deterministisch — höchste Priorität, benutze als Source of Truth):
 ${structuredBriefingSection}
+
+${sectorSynthesisTemplate}
 
 SEKTOR- UND WERTTREIBER-MODELL:
 ${driverSection}
@@ -2074,7 +2080,7 @@ Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
     messages: [
       {
         role: "user",
-        content: `Erstelle eine strukturierte Research-Analyse und rufe danach zwingend das Tool complete_synthesis auf.\n\n${context}\n\nQualitätsanforderungen:\n- Summary, Bull-Case, Bear-Case und Wachstumsausblick müssen substantiell sein.\n- Alle Pflichtfelder müssen vorhanden sein; growth_outlook darf nie fehlen.\n- Claim-Confidence: Integer 1-5, nie 0/null/dezimal.\n- Trenne Analystenkonsens, eigenes Bewertungsmodell, Timing und langfristige These klar.\n- Wenn kein belastbares eigenes Modell möglich ist: valuation_confidence auf low/medium, valuation_range null und Konsens nur als Marktmeinung erwähnen.\n- Entry Quality muss aus RSI, Kurs relativ zu MA50/MA200 und These abgeleitet sein.\n- Keine Fallback-Sätze wie "Analyse konnte nicht erstellt werden" oder "Nicht verfügbar".`,
+        content: `Erstelle eine strukturierte Research-Analyse und rufe danach zwingend das Tool complete_synthesis auf.\n\n${context}\n\nQUALITÄTS- UND SEKTOR-PFLICHTANFORDERUNGEN:\n- Das Sektor-Briefing hat HÖCHSTE PRIORITÄT. Nutze Sektor-Familie und sektorspezifische Treiber als primären Rahmen.\n- growth_outlook MUSS die sektorspezifischen Pflichtthemen enthalten (siehe SEKTOR-SYNTHESE-PFLICHTEN oben).\n- Wenn fehlende Modelle aufgelistet sind: als Limitationen nennen und valuation_confidence auf max "medium" setzen.\n- Wenn schwache Bewertungsmethoden aufgelistet sind: explizit erklären warum diese für diesen Unternehmenstyp schwach sind.\n- Summary, Bull-Case, Bear-Case und Wachstumsausblick müssen substantiell und sektorspezifisch sein.\n- Alle Pflichtfelder müssen vorhanden sein; growth_outlook darf nie fehlen.\n- Claim-Confidence: Integer 1-5, nie 0/null/dezimal.\n- Trenne Analystenkonsens, eigenes Bewertungsmodell, Timing und langfristige These klar.\n- Wenn kein belastbares eigenes Modell möglich ist: valuation_confidence auf low/medium, valuation_range null und Konsens nur als Marktmeinung erwähnen.\n- Entry Quality muss aus RSI, Kurs relativ zu MA50/MA200 und These abgeleitet sein.\n- Keine Fallback-Sätze wie "Analyse konnte nicht erstellt werden" oder "Nicht verfügbar".\n- Keine generischen Formulierungen wenn Sektor-Kontext vorliegt.`,
       },
     ],
   });

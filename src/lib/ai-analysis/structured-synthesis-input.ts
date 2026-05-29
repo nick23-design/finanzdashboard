@@ -1265,20 +1265,203 @@ export function buildSectorSynthesisBrief(input: {
   };
 }
 
+// ─── Sector-specific growth_outlook required topics ───────────────────────────
+
+const SECTOR_GROWTH_OUTLOOK_TOPICS: Partial<Record<SectorFamily, string[]>> = {
+  financial_bank: ["NIM (Nettozinsmarge)", "Kreditqualität", "ROTCE", "Kapitalstärke (CET1)", "Kapitalmarkt- und Gebührenerträge", "Investmentbanking / Trading"],
+  financial_insurance: ["Combined Ratio", "Investmenterträge", "Pricing-Disziplin", "Reserve-Angemessenheit"],
+  reit: ["AFFO-Wachstumspfad", "Belegungsgrad (Occupancy)", "Same-Store-NOI-Wachstum", "Mietpreistrends bei Verlängerungen", "Zinssensitivität", "Cap-Rate-Entwicklung"],
+  commodity_energy: ["Rohstoffpreisszenarien (Midcycle, nicht Spotpreis)", "Produktionsvolumen", "FCF nach Capex", "Dividenden- und Buyback-Coverage"],
+  commodity_mining: ["Midcycle-Rohstoffpreise", "AISC-Kostenentwicklung", "Reservenersatz", "Produktionswachstum"],
+  technology_platform: ["Segment-Wirtschaft (Cloud, Ads, Marketplace)", "Cloud-Wachstum", "AI-Monetarisierung", "Capex-zu-FCF-Konvertierung", "Operating Leverage"],
+  quality_compounder: ["ROIC-Entwicklung", "FCF-Konvertierung", "Moat-Stärke", "Preissetzungsmacht", "Serviceanteil", "Buyback-Effektivität"],
+  cyclical_hardware: ["Inventar-Normalisierung", "Bruttomarge im Zyklus", "AI-Infrastruktur-Capex-Zyklus", "Working-Capital-Entwicklung", "Kundenkonfiguration"],
+  semiconductors: ["KI- und Rechenzentrum-Nachfrage vs. Inventarzyklus", "Prozess-Technologie-Leadership", "Auslastungsrate", "Strukturelles vs. zyklisches Wachstum"],
+  software_saas: ["ARR-Wachstum", "NRR (Netto-Umsatzretention)", "Rule-of-40-Score", "FCF-Marge-Pfad", "SBC-Verwässerung"],
+  industrial_cyclical: ["Auftragseingang und Book-to-Bill", "Auftragsbestand", "Normalisierte Margen durch den Zyklus"],
+  healthcare_pharma: ["Pipeline-Meilensteine", "Patent-Cliff-Risiko", "Neue Zulassungen", "Preissetzungsmacht", "Produktkonzentration"],
+  healthcare_medtech: ["Prozedurenvolumen", "Neuprodukt-Beiträge", "Erstattungsdeckung", "Innovationszyklus"],
+  consumer_staples: ["Volumen- vs. Preiswachstum", "Markenpreissetzungsmacht", "Input-Kosten-Entwicklung"],
+  consumer_discretionary: ["Same-Store-Sales", "Inventar-Gesundheit", "Verbraucherzyklus", "Margenentwicklung"],
+  telecom: ["ARPU", "Subscriber-Wachstum", "5G/Glasfaser-Monetarisierung", "FCF nach Capex", "Verschuldung"],
+  utilities: ["Rate-Case-Ausgang", "Regulatorische Vermögensbasis-Wachstum", "Dividendendeckung", "Zinssensitivität"],
+  transportation_logistics: ["Frachtvolumen", "Yield-Entwicklung", "Betriebskostenquote", "Normalisierte FCF"],
+};
+
+// ─── Synthesis enforcement instructions ───────────────────────────────────────
+
 const SYNTHESIS_INSTRUCTIONS: string[] = [
-  "Use deterministic outputs (company-type router, model selection, DCF plausibility, divergence analyzer) as the source of truth.",
+  "PRIORITY: Sector briefing has higher priority than generic financial interpretation. Use sector family first, then model selection, then raw metrics.",
   "Do not calculate new fair values — only synthesize, explain, and prioritize the provided deterministic outputs.",
   "Do not invent missing sector metrics (AFFO, NAV, CET1, ROTCE, P/TBV, ARR, NRR, oil price scenarios, segment data).",
   "Do not override deterministic guardrails silently.",
-  "Explain which valuation models fit this company type and why.",
-  "If a model is missing but recommended, mention it as a data or modeling limitation, not as a computed output.",
+  "If weakValuationMethods are listed: explicitly state in the analysis why that method is a weak fit for this company type.",
+  "If missingButRecommendedModels are listed: name them as valuation limitations and reduce valuation_confidence accordingly.",
+  "If the recommended primary sector model is unavailable: valuation_confidence must not exceed 'medium'.",
   "If generic DCF is marked poor or partial fit for this company type, do not let it dominate the final rating.",
+  "If sectorBrief growthDrivers and riskDrivers are available, write a sector-specific growth_outlook — generic fallback is forbidden.",
+  "Use the generic growth_outlook fallback only when both company-specific and sector-specific context are genuinely insufficient (sectorFamily = unknown or empty drivers).",
   "If valuation models diverge, explain the divergence and lower valuation confidence accordingly.",
-  "If sectorBrief growthDrivers and riskDrivers are available, write a sector-specific growth_outlook instead of the generic insufficient-data fallback.",
-  "Use the generic growth_outlook fallback only when both company-specific and sector-specific context are genuinely insufficient.",
   "All claim confidence values must be integers from 1 to 5 (never 0, decimal, or null).",
   "Return only valid JSON matching the required schema.",
 ];
+
+// ─── Sector-specific synthesis template ───────────────────────────────────────
+
+const SECTOR_SYNTHESIS_TEMPLATES: Partial<Record<SectorFamily, {
+  valuation: string[];
+  growthOutlookMustMention: string[];
+  bullCaseMustMention: string[];
+  bearCaseMustMention: string[];
+}>> = {
+  financial_bank: {
+    valuation: [
+      "P/TBV und ROTCE sind die primären Wertmaßstäbe — KEIN Generic-FCFF-DCF als Hauptrahmen.",
+      "CET1, NIM, Effizienzquote und Kreditverluste sind Pflichtbestandteile der Bewertungsaussage.",
+    ],
+    growthOutlookMustMention: ["NIM-Entwicklung", "Kreditqualität", "ROTCE", "CET1-Kapitalstärke", "Kapitalmarkt- und Investmentbanking-Erträge"],
+    bullCaseMustMention: ["NIM-Ausweitung", "Kreditqualitätsverbesserung", "Kapitalrückführung"],
+    bearCaseMustMention: ["Kreditverlustanstieg", "NIM-Kompression", "regulatorischer Druck"],
+  },
+  reit: {
+    valuation: [
+      "AFFO und NAV sind die primären Wertmaßstäbe — KEIN Generic-FCFF-DCF als Hauptrahmen.",
+      "Cap-Rate-Spread, Belegungsgrad, Schuldenstruktur und AFFO-Ausschüttungsdeckung sind Pflichtbestandteile.",
+    ],
+    growthOutlookMustMention: ["AFFO", "Belegungsgrad", "Same-Store-NOI", "Mietpreiserhöhungen", "Zinssensitivität"],
+    bullCaseMustMention: ["AFFO-Upside", "Belegungsverbesserung", "Cap-Rate-Stabilisierung"],
+    bearCaseMustMention: ["Cap-Rate-Expansion (NAV-Erosion)", "Refinanzierungsrisiko", "Zinsdruck auf AFFO"],
+  },
+  commodity_energy: {
+    valuation: [
+      "Midcycle-FCF (NICHT Spot-Preis-Extrapolation) ist der primäre Bewertungsrahmen.",
+      "Commodity-Preis-Szenarien, Produktionsvolumen und FCF-nach-Capex-Deckung sind Pflicht.",
+    ],
+    growthOutlookMustMention: ["Rohstoffpreis-Midcycle-Annahmen", "Produktionsvolumen", "FCF nach Capex", "Dividenden- und Buyback-Coverage"],
+    bullCaseMustMention: ["Produktionswachstum", "Commodity-Preis über Midcycle", "Kapitalrückführung"],
+    bearCaseMustMention: ["Commodity-Preisrückgang unter Midcycle", "Capex-Inflation", "Reservenersatz-Schwäche"],
+  },
+  technology_platform: {
+    valuation: [
+      "SOTP (Segment-Bewertung) ist der bevorzugte Rahmen — Generic-DCF nur als Ergänzung wenn Segmentdaten fehlen.",
+      "Segment-Wirtschaft (Cloud, Ads, Marketplace), AI-Capex und FCF-Konvertierung sind Pflicht.",
+    ],
+    growthOutlookMustMention: ["Cloud-/Infrastruktur-Wachstum", "Werbeerträge", "AI-Monetarisierung", "Capex-zu-FCF-Konvertierung"],
+    bullCaseMustMention: ["hochmargige Segmente wachsen stärker", "AI-Monetarisierung", "Operating Leverage"],
+    bearCaseMustMention: ["regulatorischer Druck", "Capex-Intensität ohne sichtbaren ROI", "Segment-Margenkompression"],
+  },
+  quality_compounder: {
+    valuation: [
+      "DCF, Reverse-DCF und relative Bewertung sind alle valide — teure Bewertung allein ist KEIN Verkaufssignal.",
+      "Moat-Stärke, Kapitalallokationsqualität und ROIC-Entwicklung sind Pflichtbestandteile.",
+    ],
+    growthOutlookMustMention: ["ROIC-Entwicklung", "FCF-Konvertierung", "Preissetzungsmacht", "Serviceanteil oder Recurring-Revenue"],
+    bullCaseMustMention: ["ROIC oberhalb Erwartungen", "Moat-Stärkung", "Buyback-Effektivität"],
+    bearCaseMustMention: ["ROIC-Verschlechterung", "Moat-Erosion", "regulatorischer Druck"],
+  },
+  cyclical_hardware: {
+    valuation: [
+      "Normalisierte Zyklus-Gewinne und stressgetestetes DCF sind erforderlich — KEIN aggressiver langfristiger DCF ohne Zyklus-Stress.",
+      "Inventar, Working Capital und Bruttomarge im Zyklus sind Pflichtbestandteile.",
+    ],
+    growthOutlookMustMention: ["Inventar-Normalisierung", "Bruttomarge durch den Zyklus", "AI-Infrastruktur-Capex-Zyklus", "Working-Capital"],
+    bullCaseMustMention: ["Bruttomarge-Ausweitung bei kontrolliertem Inventar", "AI-Nachfrage"],
+    bearCaseMustMention: ["Inventaranstieg", "Bruttomargenkompression", "Working-Capital-Absorption"],
+  },
+};
+
+export function buildGrowthOutlookRequirements(
+  sectorFamily: SectorFamily,
+  missingModels: string[],
+  hasGrowthDrivers: boolean,
+  hasRiskDrivers: boolean,
+): string {
+  if (sectorFamily === "unknown" || (!hasGrowthDrivers && !hasRiskDrivers)) {
+    return `Wenn kein belastbarer Wachstumsausblick möglich: generischen Fallback verwenden.`;
+  }
+
+  const topics = SECTOR_GROWTH_OUTLOOK_TOPICS[sectorFamily];
+  if (!topics || topics.length === 0) {
+    return `Sektor-spezifischen Wachstumsausblick schreiben — generischer Fallback verboten.`;
+  }
+
+  const missingNote = missingModels.length > 0
+    ? ` Fehlende Modelle als Limitation nennen: ${missingModels.join(", ")}.`
+    : "";
+
+  return `MUSS ENTHALTEN (generischer Fallback verboten): ${topics.join(", ")}.${missingNote}`;
+}
+
+export function buildSectorSpecificSynthesisTemplate(
+  brief: SectorSynthesisBrief,
+  summary: ModelSelectionSummary,
+): string {
+  const template = SECTOR_SYNTHESIS_TEMPLATES[brief.sectorFamily];
+  const missing = summary.missingButRecommendedModels;
+  const weak = summary.weakOrDisabledModels;
+
+  const lines: string[] = [
+    `[SEKTOR-SYNTHESE-PFLICHTEN: ${brief.sectorFamily.toUpperCase()}]`,
+    "",
+  ];
+
+  // Valuation framework obligations
+  if (template?.valuation?.length) {
+    lines.push("BEWERTUNGSRAHMEN — PFLICHT:");
+    for (const v of template.valuation) lines.push(`  • ${v}`);
+    lines.push("");
+  }
+
+  // Weak method prohibition
+  if (brief.weakValuationMethods.length > 0) {
+    lines.push("SCHWACHE METHODEN — EXPLIZIT IM TEXT NENNEN:");
+    for (const w of brief.weakValuationMethods) lines.push(`  ✗ ${w}`);
+    lines.push("");
+  }
+
+  // Missing models → valuation confidence cap
+  if (missing.length > 0) {
+    lines.push("FEHLENDE EMPFOHLENE MODELLE — ALS LIMITATION NENNEN:");
+    for (const m of missing) lines.push(`  ! ${m}: empfohlen aber nicht verfügbar → valuation_confidence max "medium"`);
+    lines.push("");
+  }
+
+  // Weak/disabled models reminder
+  if (weak.length > 0 && template?.valuation?.length) {
+    lines.push(`DEAKTIVIERTE MODELLE (nicht als primäre Basis verwenden): ${weak.slice(0, 3).join(", ")}`);
+    lines.push("");
+  }
+
+  // growth_outlook requirements
+  const topics = SECTOR_GROWTH_OUTLOOK_TOPICS[brief.sectorFamily];
+  if (topics && topics.length > 0) {
+    lines.push("GROWTH_OUTLOOK — PFLICHTINHALT (generischer Fallback VERBOTEN):");
+    lines.push(`  → ${topics.join("\n  → ")}`);
+    lines.push("");
+  }
+
+  // Bull case requirements
+  if (template?.bullCaseMustMention?.length) {
+    lines.push("BULL CASE — MUSS THEMATISIEREN:");
+    lines.push(`  → ${template.bullCaseMustMention.join("\n  → ")}`);
+    lines.push("");
+  }
+
+  // Bear case requirements
+  if (template?.bearCaseMustMention?.length) {
+    lines.push("BEAR CASE — MUSS THEMATISIEREN:");
+    lines.push(`  → ${template.bearCaseMustMention.join("\n  → ")}`);
+    lines.push("");
+  }
+
+  // Required disclosures
+  if (brief.requiredDisclosures.length > 0) {
+    lines.push("PFLICHTANGABEN:");
+    for (const d of brief.requiredDisclosures) lines.push(`  → ${d}`);
+  }
+
+  return lines.join("\n");
+}
 
 export function buildStructuredSynthesisInput(
   params: StructuredSynthesisInputParams,
@@ -1362,7 +1545,7 @@ export function buildStructuredSynthesisInput(
   };
 }
 
-// ─── Prompt Formatter ─────────────────────────────────────────────────────────
+// ─── Prompt Formatters ────────────────────────────────────────────────────────
 
 export function formatStructuredBriefingForPrompt(input: StructuredSynthesisInput): string {
   const brief = input.sectorBrief;
@@ -1372,25 +1555,23 @@ export function formatStructuredBriefingForPrompt(input: StructuredSynthesisInpu
     `Sektor-Familie: ${brief.sectorFamily}`,
     `Primäre Bewertungslogik: ${brief.primaryValuationLogic.slice(0, 3).join(" | ")}`,
     brief.weakValuationMethods.length
-      ? `Schwache/unangemessene Methoden: ${brief.weakValuationMethods.join(" | ")}`
+      ? `SCHWACHE METHODEN (explizit nennen): ${brief.weakValuationMethods.join(" | ")}`
       : "",
-    `Wachstumstreiber: ${brief.growthDrivers.slice(0, 4).join(" | ")}`,
-    `Risikotreiber: ${brief.riskDrivers.slice(0, 3).join(" | ")}`,
-    `Zu beobachtende Kennzahlen: ${brief.keyMetricsToWatch.slice(0, 5).join(" | ")}`,
+    `Wachstumstreiber (growth_outlook MUSS diese reflektieren): ${brief.growthDrivers.slice(0, 4).join(" | ")}`,
+    `Risikotreiber (bear_case MUSS diese reflektieren): ${brief.riskDrivers.slice(0, 3).join(" | ")}`,
+    `Pflicht-Kennzahlen: ${brief.keyMetricsToWatch.slice(0, 5).join(" | ")}`,
     sel.primaryModels.length
-      ? `Primäre Modelle (verfügbar): ${sel.primaryModels.join(", ")}`
+      ? `Verfügbare primäre Modelle: ${sel.primaryModels.join(", ")}`
       : "",
     sel.missingButRecommendedModels.length
-      ? `Fehlende empfohlene Modelle: ${sel.missingButRecommendedModels.join(", ")}`
+      ? `FEHLENDE EMPFOHLENE MODELLE (als Limitation nennen, valuation_confidence max "medium"): ${sel.missingButRecommendedModels.join(", ")}`
       : "",
     sel.weakOrDisabledModels.length
-      ? `Schwache/deaktivierte Modelle: ${sel.weakOrDisabledModels.slice(0, 3).join(", ")}`
+      ? `Deaktivierte Modelle (nicht als Primärbasis verwenden): ${sel.weakOrDisabledModels.slice(0, 3).join(", ")}`
       : "",
-    brief.synthesisWarnings.length
-      ? `Synthesehinweise: ${brief.synthesisWarnings.slice(0, 2).join(" | ")}`
-      : "",
+    brief.synthesisWarnings.slice(0, 2).join(" | "),
     brief.requiredDisclosures.length
-      ? `Pflichtangaben: ${brief.requiredDisclosures.join(" | ")}`
+      ? `PFLICHTANGABEN: ${brief.requiredDisclosures.join(" | ")}`
       : "",
     input.limitations.length
       ? `Modellbeschränkungen: ${input.limitations.slice(0, 3).join(" | ")}`
@@ -1398,4 +1579,27 @@ export function formatStructuredBriefingForPrompt(input: StructuredSynthesisInpu
   ];
 
   return lines.filter(Boolean).join("\n");
+}
+
+export function formatSectorSynthesisTemplate(input: StructuredSynthesisInput): string {
+  return buildSectorSpecificSynthesisTemplate(input.sectorBrief, input.modelSelectionSummary);
+}
+
+export function buildGrowthOutlookToolDescription(
+  input: StructuredSynthesisInput,
+  defaultFallback: string,
+): string {
+  const { sectorBrief, modelSelectionSummary } = input;
+  const topics = SECTOR_GROWTH_OUTLOOK_TOPICS[sectorBrief.sectorFamily];
+  const missing = modelSelectionSummary.missingButRecommendedModels;
+
+  if (!topics || topics.length === 0 || sectorBrief.sectorFamily === "unknown") {
+    return `Konkreter Wachstumsausblick. Wenn nicht belastbar: "${defaultFallback}"`;
+  }
+
+  const missingNote = missing.length > 0
+    ? ` Fehlende Modelle als Limitation nennen: ${missing.join(", ")}.`
+    : "";
+
+  return `SEKTOR-PFLICHT [${sectorBrief.sectorFamily}]: MUSS enthalten: ${topics.join(", ")}.${missingNote} Generischer Fallback verboten wenn Sektor-Treiber bekannt. Fallback nur wenn: "${defaultFallback}"`;
 }

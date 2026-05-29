@@ -2,7 +2,11 @@ import {
   inferSectorFamily,
   buildSectorSynthesisBrief,
   buildStructuredSynthesisInput,
+  buildGrowthOutlookRequirements,
+  buildSectorSpecificSynthesisTemplate,
+  buildGrowthOutlookToolDescription,
   formatStructuredBriefingForPrompt,
+  formatSectorSynthesisTemplate,
   type SectorFamily,
 } from "../structured-synthesis-input";
 import type { CompanyTypeClassification } from "../company-type-router";
@@ -510,5 +514,309 @@ describe("formatStructuredBriefingForPrompt", () => {
       const prompt = formatStructuredBriefingForPrompt(input);
       expect(prompt.length).toBeGreaterThan(50);
     }
+  });
+
+  it("marks missing models with max-medium valuation_confidence note", () => {
+    const input = structuredInput("reit", "Real Estate", "REIT");
+    const prompt = formatStructuredBriefingForPrompt(input);
+    expect(prompt).toMatch(/medium/i);
+  });
+
+  it("labels weak methods explicitly in briefing output", () => {
+    const input = structuredInput("financial", "Financials", "Banks");
+    const prompt = formatStructuredBriefingForPrompt(input);
+    expect(prompt).toMatch(/SCHWACHE METHODEN/);
+  });
+
+  it("labels missing models explicitly in briefing output", () => {
+    const input = structuredInput("reit", "Real Estate", "REIT");
+    const prompt = formatStructuredBriefingForPrompt(input);
+    expect(prompt).toMatch(/FEHLENDE EMPFOHLENE MODELLE/);
+  });
+});
+
+// ─── buildGrowthOutlookRequirements tests ──────────────────────────────────────
+
+describe("buildGrowthOutlookRequirements", () => {
+  it("returns required topics for reit", () => {
+    const result = buildGrowthOutlookRequirements("reit", [], true, true);
+    expect(result).toMatch(/AFFO/i);
+    expect(result).toMatch(/Belegungsgrad|Occupancy/i);
+  });
+
+  it("returns required topics for financial_bank", () => {
+    const result = buildGrowthOutlookRequirements("financial_bank", [], true, true);
+    expect(result).toMatch(/NIM/);
+    expect(result).toMatch(/ROTCE/);
+    expect(result).toMatch(/CET1/);
+  });
+
+  it("allows generic fallback only for unknown sector", () => {
+    const result = buildGrowthOutlookRequirements("unknown", [], false, false);
+    expect(result).toMatch(/Fallback/i);
+  });
+
+  it("includes missing models in requirement text", () => {
+    const result = buildGrowthOutlookRequirements("reit", ["reit_affo_nav"], true, true);
+    expect(result).toContain("reit_affo_nav");
+  });
+
+  it("forbids generic fallback when drivers exist for reit", () => {
+    const result = buildGrowthOutlookRequirements("reit", [], true, true);
+    expect(result).toMatch(/verboten/i);
+  });
+});
+
+// ─── buildSectorSpecificSynthesisTemplate tests ────────────────────────────────
+
+describe("buildSectorSpecificSynthesisTemplate", () => {
+  it("includes sector name header", () => {
+    const brief = buildSectorSynthesisBrief({ companyType: classification("reit") });
+    const sel = { primaryModels: [], secondaryModels: [], weakOrDisabledModels: ["dcf_scenarios"], missingButRecommendedModels: ["reit_affo_nav"], warnings: [], limitations: [] };
+    const result = buildSectorSpecificSynthesisTemplate(brief, sel);
+    expect(result).toMatch(/REIT/i);
+  });
+
+  it("includes AFFO and NAV valuation obligations for reit", () => {
+    const brief = buildSectorSynthesisBrief({ companyType: classification("reit") });
+    const sel = { primaryModels: [], secondaryModels: [], weakOrDisabledModels: [], missingButRecommendedModels: ["reit_affo_nav"], warnings: [], limitations: [] };
+    const result = buildSectorSpecificSynthesisTemplate(brief, sel);
+    expect(result).toMatch(/AFFO/);
+    expect(result).toMatch(/NAV/);
+  });
+
+  it("marks reit_affo_nav as missing with valuation confidence cap", () => {
+    const brief = buildSectorSynthesisBrief({ companyType: classification("reit") });
+    const sel = { primaryModels: [], secondaryModels: [], weakOrDisabledModels: [], missingButRecommendedModels: ["reit_affo_nav"], warnings: [], limitations: [] };
+    const result = buildSectorSpecificSynthesisTemplate(brief, sel);
+    expect(result).toContain("reit_affo_nav");
+    expect(result).toMatch(/medium/i);
+  });
+
+  it("forbids generic DCF as primary for financial_bank", () => {
+    const brief = buildSectorSynthesisBrief({ companyType: classification("financial"), industry: "Banks" });
+    const sel = { primaryModels: [], secondaryModels: [], weakOrDisabledModels: ["dcf_scenarios"], missingButRecommendedModels: ["bank_valuation"], warnings: [], limitations: [] };
+    const result = buildSectorSpecificSynthesisTemplate(brief, sel);
+    expect(result).toMatch(/P\/TBV/);
+    expect(result).toMatch(/ROTCE/);
+    expect(result).toMatch(/CET1/);
+  });
+
+  it("includes growth_outlook required topics", () => {
+    const brief = buildSectorSynthesisBrief({ companyType: classification("reit") });
+    const sel = { primaryModels: [], secondaryModels: [], weakOrDisabledModels: [], missingButRecommendedModels: [], warnings: [], limitations: [] };
+    const result = buildSectorSpecificSynthesisTemplate(brief, sel);
+    expect(result).toMatch(/GROWTH_OUTLOOK/);
+    expect(result).toMatch(/AFFO/);
+  });
+
+  it("includes bull and bear case required topics for reit", () => {
+    const brief = buildSectorSynthesisBrief({ companyType: classification("reit") });
+    const sel = { primaryModels: [], secondaryModels: [], weakOrDisabledModels: [], missingButRecommendedModels: [], warnings: [], limitations: [] };
+    const result = buildSectorSpecificSynthesisTemplate(brief, sel);
+    expect(result).toMatch(/BULL CASE/);
+    expect(result).toMatch(/BEAR CASE/);
+    expect(result).toMatch(/Cap-Rate/i);
+  });
+});
+
+// ─── buildGrowthOutlookToolDescription tests ──────────────────────────────────
+
+describe("buildGrowthOutlookToolDescription", () => {
+  it("includes sector-specific topics for reit", () => {
+    const input = structuredInput("reit", "Real Estate", "REIT");
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/AFFO/);
+    expect(desc).toMatch(/Belegungsgrad|Occupancy/i);
+  });
+
+  it("includes sector-specific topics for financial_bank", () => {
+    const input = structuredInput("financial", "Financials", "Banks");
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/NIM/);
+    expect(desc).toMatch(/ROTCE/);
+    expect(desc).toMatch(/CET1/);
+  });
+
+  it("forbids generic fallback when sector has topics", () => {
+    const input = structuredInput("reit", "Real Estate", "REIT");
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/verboten/i);
+  });
+
+  it("includes fallback text for unknown sector", () => {
+    const input = structuredInput("unknown");
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback-Placeholder");
+    expect(desc).toContain("Fallback-Placeholder");
+  });
+
+  it("includes missing model reminder", () => {
+    const input = structuredInput("reit", "Real Estate", "REIT");
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toContain("reit_affo_nav");
+  });
+});
+
+// ─── formatSectorSynthesisTemplate tests ──────────────────────────────────────
+
+describe("formatSectorSynthesisTemplate", () => {
+  it("produces non-empty output for reit", () => {
+    const input = structuredInput("reit", "Real Estate", "REIT");
+    const result = formatSectorSynthesisTemplate(input);
+    expect(result.length).toBeGreaterThan(100);
+    expect(result).toMatch(/REIT/i);
+  });
+
+  it("produces non-empty output for financial_bank", () => {
+    const input = structuredInput("financial", "Financials", "Banks");
+    const result = formatSectorSynthesisTemplate(input);
+    expect(result.length).toBeGreaterThan(100);
+  });
+});
+
+// ─── Realty Income-like regression fixture ────────────────────────────────────
+
+describe("Realty Income-like (REIT) regression", () => {
+  let input: ReturnType<typeof structuredInput>;
+
+  beforeEach(() => {
+    input = structuredInput("reit", "Real Estate", "Retail REIT");
+  });
+
+  it("sector family is reit", () => {
+    expect(input.sectorBrief.sectorFamily).toBe("reit");
+  });
+
+  it("growth_outlook requirements contain AFFO", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/AFFO/);
+  });
+
+  it("growth_outlook requirements contain occupancy", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/Belegungsgrad|[Oo]ccupancy/);
+  });
+
+  it("growth_outlook requirements contain rent growth", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/Mietpreis|[Rr]ent/);
+  });
+
+  it("growth_outlook requirements contain interest rate sensitivity", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/Zinssensitivit|[Ii]nterest/);
+  });
+
+  it("generic fallback is forbidden", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/verboten/i);
+  });
+
+  it("reit_affo_nav is in missingButRecommendedModels", () => {
+    expect(input.modelSelectionSummary.missingButRecommendedModels).toContain("reit_affo_nav");
+  });
+
+  it("sector template mentions valuation confidence cap for missing AFFO/NAV model", () => {
+    const template = formatSectorSynthesisTemplate(input);
+    expect(template).toContain("reit_affo_nav");
+    expect(template).toMatch(/medium/i);
+  });
+
+  it("sector template forbids generic DCF as primary", () => {
+    const template = formatSectorSynthesisTemplate(input);
+    expect(template).toMatch(/DCF/);
+  });
+
+  it("briefing marks reit_affo_nav as missing", () => {
+    const briefing = formatStructuredBriefingForPrompt(input);
+    expect(briefing).toContain("reit_affo_nav");
+    expect(briefing).toMatch(/FEHLENDE EMPFOHLENE MODELLE/);
+  });
+
+  it("briefing labels DCF as weak method", () => {
+    const briefing = formatStructuredBriefingForPrompt(input);
+    expect(briefing).toMatch(/SCHWACHE METHODEN/);
+  });
+
+  it("synthesis instructions forbid generic fallback when REIT drivers exist", () => {
+    const instructions = input.synthesisInstructions.join(" ");
+    expect(instructions).toMatch(/sector-specific growth_outlook/i);
+    expect(instructions).toMatch(/forbidden|verboten/i);
+  });
+});
+
+// ─── Goldman Sachs-like regression fixture ────────────────────────────────────
+
+describe("Goldman Sachs-like (financial_bank) regression", () => {
+  let input: ReturnType<typeof structuredInput>;
+
+  beforeEach(() => {
+    input = structuredInput("financial", "Financials", "Investment Banking & Brokerage");
+  });
+
+  it("sector family is financial_bank", () => {
+    expect(input.sectorBrief.sectorFamily).toBe("financial_bank");
+  });
+
+  it("growth_outlook requirements contain capital markets / investment banking", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/Kapitalmarkt|[Ii]nvestment [Bb]anking/);
+  });
+
+  it("growth_outlook requirements contain NIM", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/NIM/);
+  });
+
+  it("growth_outlook requirements contain ROTCE", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/ROTCE/);
+  });
+
+  it("growth_outlook requirements contain CET1", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/CET1/);
+  });
+
+  it("generic fallback is forbidden", () => {
+    const desc = buildGrowthOutlookToolDescription(input, "Fallback");
+    expect(desc).toMatch(/verboten/i);
+  });
+
+  it("bank_valuation is in missingButRecommendedModels", () => {
+    expect(input.modelSelectionSummary.missingButRecommendedModels).toContain("bank_valuation");
+  });
+
+  it("sector template includes P/TBV and ROTCE obligations", () => {
+    const template = formatSectorSynthesisTemplate(input);
+    expect(template).toMatch(/P\/TBV/);
+    expect(template).toMatch(/ROTCE/);
+  });
+
+  it("sector template marks bank_valuation as missing with confidence cap", () => {
+    const template = formatSectorSynthesisTemplate(input);
+    expect(template).toContain("bank_valuation");
+    expect(template).toMatch(/medium/i);
+  });
+
+  it("sector template forbids generic FCFF DCF as primary", () => {
+    const template = formatSectorSynthesisTemplate(input);
+    expect(template).toMatch(/FCFF.{0,30}DCF/i);
+  });
+
+  it("briefing marks bank_valuation as missing", () => {
+    const briefing = formatStructuredBriefingForPrompt(input);
+    expect(briefing).toContain("bank_valuation");
+    expect(briefing).toMatch(/FEHLENDE EMPFOHLENE MODELLE/);
+  });
+
+  it("briefing labels generic DCF as weak for banks", () => {
+    const briefing = formatStructuredBriefingForPrompt(input);
+    expect(briefing).toMatch(/SCHWACHE METHODEN/);
+    expect(briefing).toMatch(/DCF/);
+  });
+
+  it("limitations include required bank disclosures", () => {
+    expect(input.limitations.join(" ")).toMatch(/P\/TBV|ROTCE|bank/i);
   });
 });
