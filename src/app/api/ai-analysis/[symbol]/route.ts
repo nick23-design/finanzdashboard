@@ -120,6 +120,14 @@ import {
   type ValuationDivergenceOutput,
 } from "@/lib/ai-analysis/valuation-plausibility";
 import {
+  buildAnalysisDebugSnapshot,
+  buildConfidenceBreakdown,
+  buildThesisChangeTriggers,
+  type AnalysisConfidenceBreakdown,
+  type AnalysisDebugSnapshot,
+  type ThesisChangeTriggers,
+} from "@/lib/ai-analysis/analysis-explainability";
+import {
   runGuardrailEngine,
   ALL_LIGHTWEIGHT_RULES,
   type GuardrailAnalysis,
@@ -368,6 +376,9 @@ interface SynthesisResult {
   valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
   alpha_framework?: AlphaFrameworkOutput | null;
+  thesis_change_triggers?: ThesisChangeTriggers | null;
+  confidence_breakdown?: AnalysisConfidenceBreakdown | null;
+  analysis_debug?: AnalysisDebugSnapshot | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
 }
@@ -445,6 +456,9 @@ export interface AIAnalysisResult extends SynthesisResult {
   valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
   alpha_framework?: AlphaFrameworkOutput | null;
+  thesis_change_triggers?: ThesisChangeTriggers | null;
+  confidence_breakdown?: AnalysisConfidenceBreakdown | null;
+  analysis_debug?: AnalysisDebugSnapshot | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
   data_quality: DianaQualityReport | null;
@@ -474,6 +488,9 @@ interface OrchestratorResult {
   valuation_divergence?: DivergenceResult | null;
   business_drivers?: BusinessDriverAnalysis | null;
   alpha_framework?: AlphaFrameworkOutput | null;
+  thesis_change_triggers?: ThesisChangeTriggers | null;
+  confidence_breakdown?: AnalysisConfidenceBreakdown | null;
+  analysis_debug?: AnalysisDebugSnapshot | null;
   data_quality_guardrails?: string[];
   claims?: AnalysisClaim[];
   fundamental: FundamentalAnalysis;
@@ -494,6 +511,9 @@ interface ValuationContext {
   dcfPlausibility: DcfPlausibilityOutput | null;
   reverseDcfPlausibility: ReverseDcfPlausibilityOutput | null;
   valuationDivergenceAnalysis: ValuationDivergenceOutput | null;
+  thesisChangeTriggers: ThesisChangeTriggers;
+  confidenceBreakdown: AnalysisConfidenceBreakdown;
+  analysisDebug: AnalysisDebugSnapshot;
   /** Always defined — status field encodes all edge cases. */
   valuationDivergence: DivergenceResult;
   /** Current price in USD — needed by V6 safety-net and divergence upside display. */
@@ -524,6 +544,15 @@ function parseJSON<T>(raw: string): T {
 
 function clampConviction(n: number): number {
   return Math.min(10, Math.max(1, Math.round(n)));
+}
+
+function clampFiveConfidence(n: number): AnalysisConfidenceBreakdown["finalRatingConfidence"] {
+  const rounded = Math.round(n);
+  if (rounded >= 5) return 5;
+  if (rounded >= 4) return 4;
+  if (rounded >= 3) return 3;
+  if (rounded >= 2) return 2;
+  return 1;
 }
 
 function validateRecommendation(r: string): AllowedRecommendation {
@@ -1196,6 +1225,24 @@ function buildValuationContext(
     alphaValuationScore: alphaFramework.alphaScore,
   });
 
+  const explainabilityInput = {
+    ticker: symbol,
+    companyTypeClassification,
+    modelSelection,
+    dcfPlausibility,
+    reverseDcfPlausibility,
+    valuationDivergenceAnalysis,
+    alphaFramework,
+    dataQuality: dataQuality ?? null,
+    currentPrice: snapshot.price,
+    rsi: snapshot.rsi,
+    movingAverage50: snapshot.moving_average_50,
+    movingAverage200: snapshot.moving_average_200,
+  };
+  const thesisChangeTriggers = buildThesisChangeTriggers(explainabilityInput);
+  const confidenceBreakdown = buildConfidenceBreakdown(explainabilityInput);
+  const analysisDebug = buildAnalysisDebugSnapshot(explainabilityInput);
+
   return {
     businessDrivers,
     companyTypeClassification,
@@ -1207,6 +1254,9 @@ function buildValuationContext(
     dcfPlausibility,
     reverseDcfPlausibility,
     valuationDivergenceAnalysis,
+    thesisChangeTriggers,
+    confidenceBreakdown,
+    analysisDebug,
     valuationDivergence,
     currentPriceUsd: priceUsd,
     alphaFramework,
@@ -1243,6 +1293,54 @@ function formatBusinessDriversForPrompt(drivers: BusinessDriverAnalysis): string
     fmtDrivers(drivers.cash_flow_drivers),
     `Bewertungsmethoden: ${drivers.model_instructions.valuation_methods.join(", ")}`,
     `Red Flags: ${drivers.red_flags.slice(0, 4).join(" | ")}`,
+  ].filter(Boolean).join("\n");
+}
+
+function formatModelFitForPrompt(ctx: ValuationContext): string {
+  const models = ctx.modelSelection.recommendedModels
+    .slice(0, 4)
+    .map(model => `- ${model.model}: ${model.fit}, Konfidenz ${model.confidence}/5. ${model.reason}`)
+    .join("\n");
+  const dcf = ctx.dcfPlausibility
+    ? `DCF-Fit: ${ctx.dcfPlausibility.fit}, Konfidenz ${ctx.dcfPlausibility.confidence}/5${ctx.dcfPlausibility.warnings.length ? ` · Warnungen: ${ctx.dcfPlausibility.warnings.join(" | ")}` : ""}`
+    : "DCF-Fit: nicht verfügbar";
+  const reverseDcf = ctx.reverseDcfPlausibility
+    ? `Reverse DCF: ${ctx.reverseDcfPlausibility.status}, Konfidenz ${ctx.reverseDcfPlausibility.confidence}/5${ctx.reverseDcfPlausibility.warnings.length ? ` · Warnungen: ${ctx.reverseDcfPlausibility.warnings.join(" | ")}` : ""}`
+    : "Reverse DCF: nicht verfügbar";
+  const divergence = ctx.valuationDivergenceAnalysis
+    ? `Divergenz-Analyzer: ${ctx.valuationDivergenceAnalysis.divergenceLevel}, Konfidenz ${ctx.valuationDivergenceAnalysis.confidence}/5. ${ctx.valuationDivergenceAnalysis.summary}${ctx.valuationDivergenceAnalysis.ratingImpact.avoidHardBuySell ? " · Harte Buy/Sell-Ratings vermeiden." : ""}`
+    : "Divergenz-Analyzer: nicht verfügbar";
+
+  return [
+    `Deterministischer Unternehmenstyp: ${ctx.companyTypeClassification.primaryType} · Konfidenz ${ctx.companyTypeClassification.confidence}/5`,
+    ctx.companyTypeClassification.secondaryTypes.length ? `Sekundärtypen: ${ctx.companyTypeClassification.secondaryTypes.join(", ")}` : "",
+    `Rationale: ${ctx.companyTypeClassification.rationale}`,
+    `Primäres Bewertungsmodell: ${ctx.modelSelection.primaryValuationModel.model} (${ctx.modelSelection.primaryValuationModel.fit}, Konfidenz ${ctx.modelSelection.primaryValuationModel.confidence}/5)`,
+    ctx.modelSelection.warnings.length ? `Model-Selection-Warnungen: ${ctx.modelSelection.warnings.join(" | ")}` : "",
+    "Empfohlene Bewertungsmodelle:",
+    models,
+    dcf,
+    reverseDcf,
+    divergence,
+  ].filter(Boolean).join("\n");
+}
+
+function formatThesisChangeTriggersForPrompt(triggers: ThesisChangeTriggers): string {
+  return [
+    `Bullishe Trigger: ${triggers.bullishTriggers.join(" | ")}`,
+    `Bearishe Trigger: ${triggers.bearishTriggers.join(" | ")}`,
+    `Zu beobachtende Kennzahlen: ${triggers.keyMetricsToWatch.join(" | ")}`,
+  ].join("\n");
+}
+
+function formatConfidenceBreakdownForPrompt(confidence: AnalysisConfidenceBreakdown): string {
+  return [
+    `Daten: ${confidence.dataConfidence}/5`,
+    `Bewertung: ${confidence.valuationConfidence}/5`,
+    `Business-Qualität: ${confidence.businessQualityConfidence}/5`,
+    `Timing: ${confidence.timingConfidence}/5`,
+    `Finales Rating: ${confidence.finalRatingConfidence}/5`,
+    confidence.reasons.length ? `Gründe: ${confidence.reasons.join(" | ")}` : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -1315,6 +1413,9 @@ function completeResearchFields(
     valuation_divergence: valuationContext.valuationDivergence,
     business_drivers: valuationContext.businessDrivers,
     alpha_framework: valuationContext.alphaFramework,
+    thesis_change_triggers: valuationContext.thesisChangeTriggers,
+    confidence_breakdown: valuationContext.confidenceBreakdown,
+    analysis_debug: valuationContext.analysisDebug,
     data_quality_guardrails: guardrails,
     claims,
     price_levels: priceLevels,
@@ -1650,6 +1751,9 @@ Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kerna
 
   const analystSection = formatAnalystData(analystData);
   const driverSection = formatBusinessDriversForPrompt(valuationContext.businessDrivers);
+  const modelFitSection = formatModelFitForPrompt(valuationContext);
+  const thesisTriggerSection = formatThesisChangeTriggersForPrompt(valuationContext.thesisChangeTriggers);
+  const confidenceSection = formatConfidenceBreakdownForPrompt(valuationContext.confidenceBreakdown);
   const dcfSection = valuationContext.dcfValuationRange
     ? `\nDCF-FAIRER-WERT (FCFF-Modell, deterministisch — erkläre qualitativ auf Deutsch, rechne NICHT nach):
 ${formatRangeForPrompt(valuationContext.dcfValuationRange)}
@@ -1787,6 +1891,15 @@ ${analystSection ? "\nANALYSTEN-KONSENS (Zukunftsprognosen, kein aktueller Kurs)
 SEKTOR- UND WERTTREIBER-MODELL:
 ${driverSection}
 
+COMPANY-TYPE ROUTER, MODELL-FIT UND PLAUSIBILITÄT (deterministisch — Source of Truth, rechne NICHT nach):
+${modelFitSection}
+
+THESIS-CHANGE-TRIGGER (deterministisch — für "was müsste sich ändern?"):
+${thesisTriggerSection}
+
+CONFIDENCE BREAKDOWN (deterministisch 1-5 — nicht überschreiben, nur erklären):
+${confidenceSection}
+
 BEWERTUNGSTRENNUNG:
 ${valuationSection}${alphaSection}
 
@@ -1819,6 +1932,11 @@ WICHTIG:
 - claims müssen konkrete, prüfbare Aussagen sein, jeweils mit Evidenz aus Kennzahlen, News, Analysten oder Inferenz.
 - claims[].confidence muss immer eine ganze Zahl von 1 bis 5 sein. Nie 0, nie Dezimalzahl, nie null; bei Unsicherheit 1 oder 2.
 - growth_outlook muss immer ein String sein. Wenn kein belastbarer Wachstumsausblick möglich ist, verwende exakt: "${DEFAULT_GROWTH_OUTLOOK}".
+- Nutze deterministische Outputs als Source of Truth: Company-Type Router, Model Selection, DCF-Plausibilität, Reverse-DCF-Plausibilität, Divergenz-Analyzer, Thesis-Trigger und Confidence Breakdown.
+- Erfinde keine Segmentdaten. Wenn Segment-/SOTP-Daten fehlen, nenne es als Modell-Limitation.
+- Überschreibe Model-Fit-Warnungen nicht. Wenn DCF-Fit poor/partial ist, darf DCF das finale Rating nicht dominieren.
+- Wenn Reverse DCF suspicious/invalid ist, verwende es nicht als starkes Ratingargument.
+- Wenn Bewertungsmodelle stark auseinanderlaufen, erkläre die Divergenz statt blind zu mitteln.
 - DCF-Szenarien sind deterministisch berechnet und spiegeln nur zahlungsstrombasierte Bewertung wider. Ein negativer DCF-Upside ist kein automatisches Verkaufssignal — Premium-Qualitätsunternehmen handeln oft mit erheblicher Prämie gegenüber dem reinen DCF-Wert. Erkläre diese Prämie qualitativ, rechne sie nie selbst nach.
 - Keine Anlageberatung, keine Garantien.
 
@@ -2899,6 +3017,9 @@ async function runAnalysisPipeline(
     valuation_divergence: cappedSynthesis.valuation_divergence ?? null,
     business_drivers: cappedSynthesis.business_drivers ?? null,
     alpha_framework: cappedSynthesis.alpha_framework ?? null,
+    thesis_change_triggers: cappedSynthesis.thesis_change_triggers ?? null,
+    confidence_breakdown: cappedSynthesis.confidence_breakdown ?? null,
+    analysis_debug: cappedSynthesis.analysis_debug ?? null,
     data_quality_guardrails: cappedSynthesis.data_quality_guardrails ?? [],
     claims: cappedSynthesis.claims ?? [],
     fundamental,
@@ -2932,6 +3053,9 @@ function buildAnalysisExtraData(result: AIAnalysisResult): import("@/types/datab
     ...(result.valuation_divergence ? { valuation_divergence: result.valuation_divergence } : {}),
     ...(result.business_drivers ? { business_drivers: result.business_drivers } : {}),
     ...(result.alpha_framework ? { alpha_framework: result.alpha_framework } : {}),
+    ...(result.thesis_change_triggers ? { thesis_change_triggers: result.thesis_change_triggers } : {}),
+    ...(result.confidence_breakdown ? { confidence_breakdown: result.confidence_breakdown } : {}),
+    ...(result.analysis_debug ? { analysis_debug: result.analysis_debug } : {}),
     ...(result.data_quality_guardrails ? { data_quality_guardrails: result.data_quality_guardrails } : {}),
     ...(result.claims ? { claims: result.claims } : {}),
     ...(result.data_quality ? { data_quality: result.data_quality } : {}),
@@ -3058,6 +3182,9 @@ async function runDeferredVeraCheck({
     valuation_divergence: factCheck.result.valuation_divergence ?? result.valuation_divergence,
     business_drivers: factCheck.result.business_drivers ?? result.business_drivers,
     alpha_framework: result.alpha_framework,
+    thesis_change_triggers: factCheck.result.thesis_change_triggers ?? result.thesis_change_triggers,
+    confidence_breakdown: factCheck.result.confidence_breakdown ?? result.confidence_breakdown,
+    analysis_debug: factCheck.result.analysis_debug ?? result.analysis_debug,
     data_quality_guardrails: factCheck.result.data_quality_guardrails ?? result.data_quality_guardrails,
     claims: factCheck.result.claims ?? result.claims,
     trace: getTrace ? getTrace() : result.trace,
@@ -3376,6 +3503,9 @@ export async function runAnalysisJob(
       valuation_divergence: orchestrated.valuation_divergence ?? null,
       business_drivers: orchestrated.business_drivers ?? null,
       alpha_framework: orchestrated.alpha_framework ?? null,
+      thesis_change_triggers: orchestrated.thesis_change_triggers ?? null,
+      confidence_breakdown: orchestrated.confidence_breakdown ?? null,
+      analysis_debug: orchestrated.analysis_debug ?? null,
       data_quality_guardrails: orchestrated.data_quality_guardrails ?? [],
       claims: orchestrated.claims ?? [],
       data_quality: diana,
@@ -3493,6 +3623,9 @@ async function getCached(symbol: string): Promise<AIAnalysisResult | null> {
       valuation_divergence: extra.valuation_divergence as DivergenceResult | null ?? null,
       business_drivers: extra.business_drivers as BusinessDriverAnalysis | null ?? null,
       alpha_framework: extra.alpha_framework as AlphaFrameworkOutput | null ?? null,
+      thesis_change_triggers: extra.thesis_change_triggers as ThesisChangeTriggers | null ?? null,
+      confidence_breakdown: extra.confidence_breakdown as AnalysisConfidenceBreakdown | null ?? null,
+      analysis_debug: extra.analysis_debug as AnalysisDebugSnapshot | null ?? null,
       data_quality_guardrails: extra.data_quality_guardrails as string[] ?? [],
       claims: extra.claims as AnalysisClaim[] ?? [],
       data_quality: extra.data_quality as DianaQualityReport | null ?? null,
@@ -3636,6 +3769,31 @@ function runLightweightGuardrails(
     console.debug(`[GUARDRAILS] fired: ${fired.map(r => r.id).join(", ")}`);
   }
 
+  const firedIds = fired.map(rule => rule.id);
+  const confidenceBreakdown = result.confidence_breakdown
+    ? {
+        ...result.confidence_breakdown,
+        finalRatingConfidence: firedIds.length
+          ? clampFiveConfidence(result.confidence_breakdown.finalRatingConfidence - 1)
+          : result.confidence_breakdown.finalRatingConfidence,
+        reasons: firedIds.length
+          ? [
+              ...result.confidence_breakdown.reasons,
+              `Final-rating confidence lowered because guardrails fired: ${firedIds.join(", ")}.`,
+            ].filter((item, index, arr) => arr.indexOf(item) === index)
+          : result.confidence_breakdown.reasons,
+      }
+    : result.confidence_breakdown;
+  const analysisDebug = result.analysis_debug
+    ? {
+        ...result.analysis_debug,
+        guardrailsTriggered: firedIds,
+        finalRating: analysis.recommendation,
+        finalRatingConfidence: confidenceBreakdown?.finalRatingConfidence ?? result.analysis_debug.finalRatingConfidence,
+        confidenceBreakdown: confidenceBreakdown ?? result.analysis_debug.confidenceBreakdown,
+      }
+    : result.analysis_debug;
+
   // ─── Merge back into SynthesisResult ────────────────────────────────────────
   return {
     ...result,
@@ -3648,6 +3806,8 @@ function runLightweightGuardrails(
     valuation_divergence: analysis.valuation_divergence ?? null,
     price_levels: analysis.price_levels ?? null,
     claims: analysis.claims,
+    confidence_breakdown: confidenceBreakdown,
+    analysis_debug: analysisDebug,
     data_quality_guardrails: analysis.data_quality_guardrails,
   };
 }
