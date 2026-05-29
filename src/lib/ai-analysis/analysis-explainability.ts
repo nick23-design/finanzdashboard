@@ -11,6 +11,19 @@ import type {
   ValuationDivergenceOutput,
 } from "./valuation-plausibility";
 import type { ModelSelectionPlan } from "./model-selector";
+import type { StructuredSynthesisInput } from "./structured-synthesis-input";
+
+export type StructuredSynthesisDebug = {
+  sectorFamily: string;
+  primaryValuationLogic: string[];
+  weakValuationMethods: string[];
+  growthDrivers: string[];
+  riskDrivers: string[];
+  keyMetricsToWatch: string[];
+  synthesisWarnings: string[];
+  requiredDisclosures: string[];
+  modelSelectionSummary: StructuredSynthesisInput["modelSelectionSummary"];
+};
 
 export type ThesisChangeTriggers = {
   bullishTriggers: string[];
@@ -42,6 +55,7 @@ export type AnalysisDebugSnapshot = {
   finalRating?: string | null;
   finalRatingConfidence: ConfidenceScore;
   modelSelectionPlan?: ModelSelectionPlan | null;
+  structuredSynthesisInput?: StructuredSynthesisDebug | null;
 };
 
 export type AnalysisExplainabilityInput = {
@@ -66,6 +80,7 @@ export type AnalysisExplainabilityInput = {
   movingAverage200?: number | null;
   guardrailsTriggered?: string[];
   finalRating?: string | null;
+  structuredSynthesisInput?: StructuredSynthesisDebug | null;
 };
 
 function unique(items: string[]): string[] {
@@ -392,5 +407,6 @@ export function buildAnalysisDebugSnapshot(input: AnalysisExplainabilityInput): 
     finalRating: input.finalRating ?? null,
     finalRatingConfidence: confidenceBreakdown.finalRatingConfidence,
     modelSelectionPlan: input.modelSelectionPlan ?? null,
+    structuredSynthesisInput: input.structuredSynthesisInput ?? null,
   };
 }

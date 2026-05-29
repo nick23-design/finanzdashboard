@@ -138,6 +138,12 @@ import {
   buildModelSelectionPlan,
   type ModelSelectionPlan,
 } from "@/lib/ai-analysis/model-selector";
+import {
+  buildStructuredSynthesisInput,
+  formatStructuredBriefingForPrompt,
+  type StructuredSynthesisInput,
+} from "@/lib/ai-analysis/structured-synthesis-input";
+import type { StructuredSynthesisDebug } from "@/lib/ai-analysis/analysis-explainability";
 import type { AssetSnapshot, Database, Json } from "@/types/database";
 
 export const maxDuration = 10;
@@ -525,6 +531,7 @@ interface ValuationContext {
   /** Current price in USD — needed by V6 safety-net and divergence upside display. */
   currentPriceUsd: number | null;
   alphaFramework: AlphaFrameworkOutput | null;
+  structuredSynthesisInput: StructuredSynthesisInput;
 }
 
 // --- Helpers ---
@@ -1278,11 +1285,59 @@ function buildValuationContext(
     },
   });
 
+  // Build structured synthesis input (deterministic, no LLM)
+  const thesisChangeTriggersPre = buildThesisChangeTriggers({
+    companyTypeClassification,
+    modelSelection,
+  });
+  const structuredSynthesisInput = buildStructuredSynthesisInput({
+    ticker: symbol,
+    sector: businessDrivers.sector_template,
+    companyType: companyTypeClassification,
+    modelSelectionPlan,
+    valuation: {
+      analystConsensus: analystConsensusRange
+        ? `${analystConsensusRange.currency} Base ${analystConsensusRange.base ?? "N/A"}`
+        : null,
+      ownModel: modelValuationRange
+        ? `${modelValuationRange.currency} Base ${modelValuationRange.base ?? "N/A"}`
+        : null,
+      dcf: dcfValuationRange
+        ? `${dcfValuationRange.currency} Base ${dcfValuationRange.base ?? "N/A"}`
+        : null,
+      divergenceStatus: valuationDivergence.status,
+    },
+    alphaFramework: alphaFramework
+      ? {
+          alphaScore: alphaFramework.alphaScore,
+          qualityScore: alphaFramework.quality.score,
+          moatScore: alphaFramework.moat.score,
+          riskScore: alphaFramework.risk.score,
+        }
+      : null,
+    currentPrice: snapshot.price ?? undefined,
+    guardrailsTriggered: [],
+    thesisChangeTriggers: thesisChangeTriggersPre,
+  });
+
+  const structuredSynthesisDebug: StructuredSynthesisDebug = {
+    sectorFamily: structuredSynthesisInput.sectorBrief.sectorFamily,
+    primaryValuationLogic: structuredSynthesisInput.sectorBrief.primaryValuationLogic,
+    weakValuationMethods: structuredSynthesisInput.sectorBrief.weakValuationMethods,
+    growthDrivers: structuredSynthesisInput.sectorBrief.growthDrivers,
+    riskDrivers: structuredSynthesisInput.sectorBrief.riskDrivers,
+    keyMetricsToWatch: structuredSynthesisInput.sectorBrief.keyMetricsToWatch,
+    synthesisWarnings: structuredSynthesisInput.sectorBrief.synthesisWarnings,
+    requiredDisclosures: structuredSynthesisInput.sectorBrief.requiredDisclosures,
+    modelSelectionSummary: structuredSynthesisInput.modelSelectionSummary,
+  };
+
   const explainabilityInput = {
     ticker: symbol,
     companyTypeClassification,
     modelSelection,
     modelSelectionPlan,
+    structuredSynthesisInput: structuredSynthesisDebug,
     dcfPlausibility,
     reverseDcfPlausibility,
     valuationDivergenceAnalysis,
@@ -1302,6 +1357,7 @@ function buildValuationContext(
     companyTypeClassification,
     modelSelection,
     modelSelectionPlan,
+    structuredSynthesisInput,
     analystConsensusRange,
     modelValuationRange,
     dcfValuationRange,
@@ -1809,6 +1865,7 @@ Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kerna
   const modelFitSection = formatModelFitForPrompt(valuationContext);
   const thesisTriggerSection = formatThesisChangeTriggersForPrompt(valuationContext.thesisChangeTriggers);
   const confidenceSection = formatConfidenceBreakdownForPrompt(valuationContext.confidenceBreakdown);
+  const structuredBriefingSection = formatStructuredBriefingForPrompt(valuationContext.structuredSynthesisInput);
   const dcfSection = valuationContext.dcfValuationRange
     ? `\nDCF-FAIRER-WERT (FCFF-Modell, deterministisch — erkläre qualitativ auf Deutsch, rechne NICHT nach):
 ${formatRangeForPrompt(valuationContext.dcfValuationRange)}
@@ -1943,6 +2000,9 @@ ${valuationContext.valuationDivergence.explanationSeed}${valuationContext.valuat
 ${currentPriceRef}KENNZAHLEN (aktuelle Marktdaten):
 ${formatMetrics(s)}
 ${analystSection ? "\nANALYSTEN-KONSENS (Zukunftsprognosen, kein aktueller Kurs):\n" + analystSection : ""}
+STRUKTURIERTES ANALYSTEN-BRIEFING (deterministisch — benutze als Source of Truth, rechne NICHT nach):
+${structuredBriefingSection}
+
 SEKTOR- UND WERTTREIBER-MODELL:
 ${driverSection}
 
@@ -1973,7 +2033,23 @@ ${dataQuality ? `\nDATENQUALITÄT: ${dataQuality.completeness_score}/100 · Conv
     max_tokens: 2200,
     system: `Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Research-Einschätzung auf Deutsch.
 
-WICHTIG:
+Du erhältst ein strukturiertes Analysten-Briefing. Nutze es als Source of Truth.
+
+STRUKTURIERTES BRIEFING — PFLICHTREGELN:
+- Verwende deterministische Outputs als Source of Truth: Company-Type Router, Model Selection, DCF-Plausibilität, Reverse-DCF, Divergenz-Analyzer, Structured Briefing.
+- Rechne KEINE neuen Fair Values, DCF, SOTP, AFFO, NAV, P/TBV, CET1, ROTCE, Rohstoffszenarien oder Segmentdaten aus.
+- Erfinde KEINE fehlenden Sektorkennzahlen (AFFO, NAV, CET1, ROTCE, P/TBV, ARR, NRR, Ölpreisszenarien, Segmentdaten).
+- Überschreibe deterministische Guardrails NICHT stillschweigend.
+- Erkläre, welche Bewertungsmodelle für diesen Unternehmenstyp geeignet sind und warum.
+- Wenn ein empfohlenes Modell fehlt oder keine Inputs hat, nenne es als Datenlimitation — nicht als berechneten Output.
+- Wenn generisches FCFF-DCF für diesen Unternehmenstyp schwach oder partial ist, darf es das finale Rating NICHT dominieren.
+- Wenn Bewertungsmodelle stark auseinanderlaufen, erkläre die Divergenz und senke die Bewertungsüberzeugung.
+- Wenn das Structured Briefing growthDrivers und riskDrivers enthält, schreibe einen sektorspezifischen growth_outlook statt des generischen Fallback-Textes.
+- Nutze den generischen growth_outlook-Fallback NUR wenn sowohl unternehmensspezifischer als auch sektorspezifischer Kontext wirklich unzureichend sind.
+- claims[].confidence muss immer eine ganze Zahl von 1 bis 5 sein. Nie 0, nie Dezimalzahl, nie null.
+- Gib ausschließlich valides JSON zurück.
+
+WEITERE REGELN:
 - Trenne langfristige Investment-These, kurzfristiges Timing, Entry-Qualität und Datenqualität.
 - Beziehe dich ausschließlich auf die bereitgestellten Daten. Erfinde keine Deals, Produkte, Margen oder Ereignisse.
 - Google Trends ist nur ein schwaches Retail-Sentiment-Signal. Verwende es nie als Kernargument.
@@ -1983,16 +2059,13 @@ WICHTIG:
 - Das eigene Bewertungsmodell ist die primäre Bewertungsgrundlage. Wenn es fehlt oder low confidence ist, erkläre die Unsicherheit statt ein präzises Ziel zu formulieren.
 - valuation_range soll das eigene Modell widerspiegeln, wenn vorhanden; sonst null oder ausdrücklich sehr vorsichtig. Keine Konsens-Ziele als eigene Fair-Value-Spanne ausgeben.
 - price_levels.entry und stop_loss dürfen als Timing-/Risikomarken gesetzt werden; price_levels.target nur wenn valuation_confidence nicht low ist.
-- Nutze die gelieferten Werttreiber und Red Flags. Für Hyperscaler z.B. AI-Capex/Margenlogik; für Semis Zyklus/Inventar/Margen; für spekulative Growth-Titel Cashburn/Execution. Diese Guardrails dürfen nur auf echte Analyseinhalte reagieren, nicht auf fehlende Providerdaten.
+- Nutze die gelieferten Werttreiber und Red Flags. Diese Guardrails dürfen nur auf echte Analyseinhalte reagieren, nicht auf fehlende Providerdaten.
 - claims müssen konkrete, prüfbare Aussagen sein, jeweils mit Evidenz aus Kennzahlen, News, Analysten oder Inferenz.
-- claims[].confidence muss immer eine ganze Zahl von 1 bis 5 sein. Nie 0, nie Dezimalzahl, nie null; bei Unsicherheit 1 oder 2.
 - growth_outlook muss immer ein String sein. Wenn kein belastbarer Wachstumsausblick möglich ist, verwende exakt: "${DEFAULT_GROWTH_OUTLOOK}".
-- Nutze deterministische Outputs als Source of Truth: Company-Type Router, Model Selection, DCF-Plausibilität, Reverse-DCF-Plausibilität, Divergenz-Analyzer, Thesis-Trigger und Confidence Breakdown.
 - Erfinde keine Segmentdaten. Wenn Segment-/SOTP-Daten fehlen, nenne es als Modell-Limitation.
 - Überschreibe Model-Fit-Warnungen nicht. Wenn DCF-Fit poor/partial ist, darf DCF das finale Rating nicht dominieren.
 - Wenn Reverse DCF suspicious/invalid ist, verwende es nicht als starkes Ratingargument.
-- Wenn Bewertungsmodelle stark auseinanderlaufen, erkläre die Divergenz statt blind zu mitteln.
-- DCF-Szenarien sind deterministisch berechnet und spiegeln nur zahlungsstrombasierte Bewertung wider. Ein negativer DCF-Upside ist kein automatisches Verkaufssignal — Premium-Qualitätsunternehmen handeln oft mit erheblicher Prämie gegenüber dem reinen DCF-Wert. Erkläre diese Prämie qualitativ, rechne sie nie selbst nach.
+- DCF-Szenarien sind deterministisch berechnet. Ein negativer DCF-Upside ist kein automatisches Verkaufssignal — Premium-Qualitätsunternehmen handeln oft mit erheblicher Prämie. Erkläre diese Prämie qualitativ.
 - Keine Anlageberatung, keine Garantien.
 
 Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`,
