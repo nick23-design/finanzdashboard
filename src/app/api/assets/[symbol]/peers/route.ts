@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
 import Anthropic from "@anthropic-ai/sdk";
-import { PEER_MAP } from "@/lib/peer-map";
+import { getConfiguredPeers } from "@/lib/peer-utils";
 
 
 function parseJSON<T>(raw: string): T {
@@ -51,8 +51,8 @@ export async function GET(
   const symbol = parsed.data;
 
   // Try static map first
-  const staticPeers = PEER_MAP[symbol];
-  if (staticPeers) {
+  const staticPeers = getConfiguredPeers(symbol);
+  if (staticPeers.length) {
     return NextResponse.json(staticPeers);
   }
 

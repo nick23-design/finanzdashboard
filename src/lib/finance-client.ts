@@ -8,6 +8,7 @@ const FINANCE_API_URL =
 
 // Timeouts: Primärer Fetch hat Retry-Logik (s.u.), daher pro Versuch kürzer.
 const PRIMARY_ATTEMPT_MS  = 20_000;  // pro Versuch; 2 Versuche → max ~42s
+const QUICK_ASSET_TIMEOUT_MS = 8_000;
 const IMPORTANT_TIMEOUT_MS = 15_000;
 const SECONDARY_TIMEOUT_MS = 12_000;
 const EDGAR_TIMEOUT_MS = 25_000;
@@ -92,6 +93,22 @@ export async function fetchAssetData(symbol: string) {
     }
   }
   throw lastError;
+}
+
+/**
+ * Schneller Einzelabruf für Cron-/Peer-Prewarming.
+ * Kein Retry, damit ein schwacher Peer-Ticker nicht den ganzen Cron blockiert.
+ */
+export async function fetchAssetDataQuick(symbol: string) {
+  const res = await fetch(`${FINANCE_API_URL}/assets/${symbol}`, {
+    next: { revalidate: 0 },
+    signal: apiSignal(QUICK_ASSET_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function fetchNews(symbol: string): Promise<NewsItem[]> {

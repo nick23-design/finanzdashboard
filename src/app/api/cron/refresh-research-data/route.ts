@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchEdgarFacts } from "@/lib/finance-client";
+import { fetchAssetDataQuick, fetchEdgarFacts } from "@/lib/finance-client";
 import type { EdgarFacts } from "@/lib/finance-client";
+import { expandSymbolsWithPeers, normalizeTickerSymbol } from "@/lib/peer-utils";
 import {
   fetchFmpAnalystConsensus,
   fetchFmpInstitutionalOwnership,
@@ -20,18 +21,13 @@ export const maxDuration = 300;
 type ProviderRunInsert = Database["public"]["Tables"]["provider_runs"]["Insert"];
 type ProviderRunUpdate = Database["public"]["Tables"]["provider_runs"]["Update"];
 type ProviderFieldStatusInsert = Database["public"]["Tables"]["provider_field_status"]["Insert"];
+type AssetSnapshotInsert = Database["public"]["Tables"]["asset_snapshots"]["Insert"];
 
 const DEFAULT_LIMIT = 25;
 const FALLBACK_SYMBOLS = ["AAPL", "MSFT", "NVDA", "AVGO", "AMZN", "GOOGL", "META"];
-const SYMBOL_RE = /^[A-Z0-9.-]{1,12}$/;
 
 function asJson(value: unknown): Json {
   return JSON.parse(JSON.stringify(value ?? null)) as Json;
-}
-
-function normalizeSymbol(symbol: string): string | null {
-  const upper = symbol.trim().toUpperCase();
-  return SYMBOL_RE.test(upper) ? upper : null;
 }
 
 function hasFacts(facts: EdgarFacts | null): boolean {
@@ -39,6 +35,29 @@ function hasFacts(facts: EdgarFacts | null): boolean {
     facts &&
     (facts.revenue.length > 0 || facts.net_income.length > 0 || facts.gross_profit.length > 0),
   );
+}
+
+async function saveAssetSnapshot(
+  client: ReturnType<typeof createServiceClient>,
+  raw: Awaited<ReturnType<typeof fetchAssetDataQuick>>,
+): Promise<void> {
+  const payload: AssetSnapshotInsert = {
+    symbol: raw.symbol,
+    price: raw.price,
+    currency: raw.currency,
+    isin: raw.isin ?? null,
+    description: raw.description ?? null,
+    pe_ratio: raw.pe_ratio,
+    market_cap: raw.market_cap,
+    debt_to_equity: raw.debt_to_equity,
+    revenue_growth: raw.revenue_growth,
+    free_cashflow: raw.free_cashflow,
+    rsi: raw.rsi,
+    moving_average_50: raw.moving_average_50,
+    moving_average_200: raw.moving_average_200,
+  };
+  const { error } = await client.from("asset_snapshots").insert(payload);
+  if (error) throw new Error(error.message);
 }
 
 function hasYahooFallback(facts: EdgarFacts | null): boolean {
@@ -62,9 +81,11 @@ async function collectSymbols(
   const url = new URL(request.url);
   const limitRaw = Number(url.searchParams.get("limit") ?? DEFAULT_LIMIT);
   const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100, Math.round(limitRaw))) : DEFAULT_LIMIT;
+  const includePeers = url.searchParams.get("includePeers") !== "false";
   const explicit = url.searchParams.get("symbols");
   if (explicit) {
-    return [...new Set(explicit.split(",").map(normalizeSymbol).filter((s): s is string => s != null))].slice(0, limit);
+    const seedSymbols = [...new Set(explicit.split(",").map(normalizeTickerSymbol).filter((s): s is string => s != null))];
+    return includePeers ? expandSymbolsWithPeers(seedSymbols, limit) : seedSymbols.slice(0, limit);
   }
 
   const [watchlistResult, portfolioResult, recentAnalysisResult] = await Promise.all([
@@ -76,14 +97,15 @@ async function collectSymbols(
   const symbols = new Set<string>();
   for (const source of [watchlistResult.data, portfolioResult.data, recentAnalysisResult.data]) {
     for (const row of source ?? []) {
-      const symbol = normalizeSymbol(row.symbol);
+      const symbol = normalizeTickerSymbol(row.symbol);
       if (symbol) symbols.add(symbol);
     }
   }
   if (symbols.size === 0) {
     FALLBACK_SYMBOLS.forEach(symbol => symbols.add(symbol));
   }
-  return [...symbols].slice(0, limit);
+  const seedSymbols = [...symbols];
+  return includePeers ? expandSymbolsWithPeers(seedSymbols, limit) : seedSymbols.slice(0, limit);
 }
 
 async function refreshSymbol(
@@ -102,19 +124,35 @@ async function refreshSymbol(
   ) => {
     statusRows.push({
       symbol,
-      provider: field === "quarterly_facts" ? "finance_api/fmp" : "fmp",
+      provider: field === "asset_snapshot"
+        ? "finance_api"
+        : field === "quarterly_facts"
+          ? "finance_api/fmp"
+          : "fmp",
       field,
       status,
       detail: detail ? detail.slice(0, 500) : null,
     });
   };
 
-  const [analystResult, institutionalResult, fmpFactsResult, financeFactsResult] = await Promise.allSettled([
+  const [assetResult, analystResult, institutionalResult, fmpFactsResult, financeFactsResult] = await Promise.allSettled([
+    fetchAssetDataQuick(symbol),
     fetchFmpAnalystConsensus(symbol),
     fetchFmpInstitutionalOwnership(symbol),
     fetchFmpQuarterlyFacts(symbol),
     fetchEdgarFacts(symbol),
   ]);
+
+  if (assetResult.status === "fulfilled" && assetResult.value) {
+    await saveAssetSnapshot(client, assetResult.value);
+    ok.push("asset_snapshot");
+    pushStatus("asset_snapshot", "ok", "Finance API asset snapshot cached for analysis/peer context");
+  } else {
+    const error = settledError(assetResult);
+    if (error) errors.asset_snapshot = error;
+    missing.push("asset_snapshot");
+    pushStatus("asset_snapshot", error ? "error" : "missing", error ?? "Finance API returned no asset snapshot");
+  }
 
   if (analystResult.status === "fulfilled" && analystResult.value) {
     await saveFmpAnalystConsensus(client, symbol, analystResult.value);

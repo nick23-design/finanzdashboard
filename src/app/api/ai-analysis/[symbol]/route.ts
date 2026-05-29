@@ -78,7 +78,7 @@ import type {
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { rateLimit } from "@/lib/rate-limit";
-import { PEER_MAP } from "@/lib/peer-map";
+import { getConfiguredPeers } from "@/lib/peer-utils";
 import { enrichWithDescriptions, fetchArticleDescription } from "@/lib/article-fetch";
 import { loadCachedResearchData } from "@/lib/research-cache";
 import {
@@ -213,25 +213,37 @@ const SynthesisOutputSchema = CompleteAnalysisSchema.extend({
 type SbClient = Awaited<ReturnType<typeof createClient>> | ReturnType<typeof createServiceClient>;
 
 async function fetchPeerContext(symbol: string, client?: SbClient): Promise<string> {
-  // Strip exchange suffix so "VOW3.DE" → "VOW3" matches the peer map
-  const baseSymbol = symbol.split(".")[0].toUpperCase();
-  const peers = PEER_MAP[symbol] ?? PEER_MAP[baseSymbol];
+  const peers = getConfiguredPeers(symbol);
   if (!peers?.length) return "";
 
   const supabase = client ?? await createClient();
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const selectFields = "symbol, pe_ratio, revenue_growth, debt_to_equity, market_cap, fetched_at";
+  const freshCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const staleCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data } = await supabase
+  let stale = false;
+  let { data } = await supabase
     .from("asset_snapshots")
-    .select("symbol, pe_ratio, revenue_growth, debt_to_equity, market_cap")
+    .select(selectFields)
     .in("symbol", peers)
-    .gte("fetched_at", cutoff)
+    .gte("fetched_at", freshCutoff)
     .order("fetched_at", { ascending: false });
+
+  if (!data || data.length === 0) {
+    const staleResult = await supabase
+      .from("asset_snapshots")
+      .select(selectFields)
+      .in("symbol", peers)
+      .gte("fetched_at", staleCutoff)
+      .order("fetched_at", { ascending: false });
+    data = staleResult.data;
+    stale = Boolean(data?.length);
+  }
 
   if (!data || data.length === 0) return "";
 
   const seen = new Set<string>();
-  const rows = (data as { symbol: string; pe_ratio: number | null; revenue_growth: number | null; debt_to_equity: number | null; market_cap: number | null }[])
+  const rows = (data as { symbol: string; pe_ratio: number | null; revenue_growth: number | null; debt_to_equity: number | null; market_cap: number | null; fetched_at: string }[])
     .filter(r => { if (seen.has(r.symbol)) return false; seen.add(r.symbol); return true; });
 
   if (rows.length === 0) return "";
@@ -245,7 +257,9 @@ async function fetchPeerContext(symbol: string, client?: SbClient): Promise<stri
   const growthAvg = avg(growthValues);
   const deAvg = avg(deValues);
 
-  const lines = [`Vergleich mit ${rows.map(r => r.symbol).join(", ")} (Branchen-Peers):`];
+  const lines = [
+    `Vergleich mit ${rows.map(r => r.symbol).join(", ")} (Branchen-Peers${stale ? ", Snapshot älter als 24h" : ""}):`,
+  ];
   if (peAvg != null) lines.push(`  Ø KGV Peers: ${peAvg.toFixed(1)}`);
   if (growthAvg != null) lines.push(`  Ø Umsatzwachstum Peers: ${(growthAvg * 100).toFixed(1)}%`);
   if (deAvg != null) lines.push(`  Ø Debt/Equity Peers: ${deAvg.toFixed(2)}`);
@@ -1329,7 +1343,52 @@ function sourceLabel(source: string | null | undefined): string {
     .replace("finance_api", "Finance-API");
 }
 
+type ProviderFieldDiagnostic = {
+  field: string;
+  status: "ok" | "missing" | "error" | "skipped";
+  provider: string;
+  detail: string | null;
+  fetched_at: string;
+};
+
+async function fetchProviderFieldDiagnostics(
+  symbol: string,
+  client: SbClient,
+): Promise<ProviderFieldDiagnostic[]> {
+  const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await client
+    .from("provider_field_status")
+    .select("field, status, provider, detail, fetched_at")
+    .eq("symbol", symbol.toUpperCase())
+    .gte("fetched_at", cutoff)
+    .in("field", ["asset_snapshot", "analyst_consensus", "institutional_ownership", "quarterly_facts"])
+    .order("fetched_at", { ascending: false })
+    .limit(20);
+
+  if (error || !data) return [];
+  return data as ProviderFieldDiagnostic[];
+}
+
+function latestProviderFieldStatus(
+  diagnostics: ProviderFieldDiagnostic[],
+  field: string,
+): ProviderFieldDiagnostic | null {
+  return diagnostics.find(item => item.field === field) ?? null;
+}
+
+function providerMissingReason(
+  diagnostics: ProviderFieldDiagnostic[],
+  field: string,
+): string {
+  const latest = latestProviderFieldStatus(diagnostics, field);
+  if (!latest) return "kein Cron-Status";
+  const provider = sourceLabel(latest.provider) || latest.provider;
+  const detail = latest.detail ? `: ${latest.detail}` : "";
+  return `${latest.status} ${provider}${detail}`;
+}
+
 function buildDataDiagnostics(
+  symbol: string,
   snapshot: AssetSnapshot,
   googleNews: NewsItemWithDesc[],
   edgarFacts: EdgarFacts | null,
@@ -1340,6 +1399,7 @@ function buildDataDiagnostics(
   peerContext: string,
   fetchErrors: Record<string, string | null>,
   fxContext: FxContext,
+  providerDiagnostics: ProviderFieldDiagnostic[],
 ): { status: AnalysisTraceEntry["status"]; detail: string } {
   const missingCore = [
     snapshot.pe_ratio == null ? "KGV" : null,
@@ -1369,14 +1429,26 @@ function buildDataDiagnostics(
   const hasInstitutional = institutional != null &&
     (institutional.pct_institutions != null || institutional.pct_insider != null || institutionalCount > 0);
   const newsWithExcerpt = googleNews.filter(n => n.description).length;
+  const configuredPeers = getConfiguredPeers(symbol);
+  const analystLabel = hasAnalystConsensus
+    ? `Ziel ${analystData?.mean_target?.toFixed(2) ?? "N/A"}, ${analystRatings > 0 ? `${analystRatings} Ratings (B/H/S)` : (analystData?.rating_count ?? 0) > 0 ? `${analystData!.rating_count} Analysten (kein B/H/S)` : "Anzahl unbekannt"}${sourceLabel(analystData?.source) ? ` (${sourceLabel(analystData?.source)})` : ""}`
+    : `fehlt (${providerMissingReason(providerDiagnostics, "analyst_consensus")})`;
+  const institutionalLabel = hasInstitutional
+    ? `${institutionalCount || "Quote"}${sourceLabel(institutional?.source) ? ` (${sourceLabel(institutional?.source)})` : ""}`
+    : `fehlt (${providerMissingReason(providerDiagnostics, "institutional_ownership")})`;
+  const peerLabel = peerContext
+    ? (peerContext.includes("Snapshot älter als 24h") ? "vorhanden (älter als 24h)" : "vorhanden")
+    : configuredPeers.length
+      ? `keine Snapshots im Cache (${configuredPeers.join(", ")})`
+      : "keine Peer-Map";
 
   const diagnostics = [
     `Asset: ${missingCore.length ? `fehlend ${missingCore.join(", ")}` : "Kernkennzahlen ok"}`,
     `EDGAR/Quartal: ${edgarLabel}`,
-    `Analysten: ${hasAnalystConsensus ? `Ziel ${analystData?.mean_target?.toFixed(2) ?? "N/A"}, ${analystRatings > 0 ? `${analystRatings} Ratings (B/H/S)` : (analystData?.rating_count ?? 0) > 0 ? `${analystData!.rating_count} Analysten (kein B/H/S)` : "Anzahl unbekannt"}${sourceLabel(analystData?.source) ? ` (${sourceLabel(analystData?.source)})` : ""}` : "fehlt"}`,
-    `Marco-Inputs: Insider ${insiderTrades.length}, Institutionen ${hasInstitutional ? `${institutionalCount || "Quote"}${sourceLabel(institutional?.source) ? ` (${sourceLabel(institutional?.source)})` : ""}` : "fehlt"}, Trends ${trends.length}`,
+    `Analysten: ${analystLabel}`,
+    `Marco-Inputs: Insider ${insiderTrades.length}, Institutionen ${institutionalLabel}, Trends ${trends.length}`,
     `News: ${googleNews.length}, Excerpts ${newsWithExcerpt}`,
-    `Peers: ${peerContext ? "vorhanden" : "fehlt"}`,
+    `Peers: ${peerLabel}`,
     `FX: ${fxContext.source}`,
   ];
 
@@ -3125,8 +3197,10 @@ export async function runAnalysisJob(
     );
     tlog("after fetchPeerContext");
 
+    const providerDiagnostics = await fetchProviderFieldDiagnostics(symbol, serviceClient).catch(() => []);
     const diagnosticsEntry = await startTrace("data_diagnostics", "Datenkanäle prüfen", 28);
     const diagnostics = buildDataDiagnostics(
+      symbol,
       snapshot,
       googleNewsEnriched,
       edgarFacts,
@@ -3137,6 +3211,7 @@ export async function runAnalysisJob(
       peerContext,
       dataFetchErrors,
       fxContext,
+      providerDiagnostics,
     );
     await finishTrace(diagnosticsEntry, diagnostics.status, diagnostics.detail);
 
