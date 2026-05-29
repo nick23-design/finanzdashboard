@@ -19,11 +19,15 @@ const CORE_IMPLEMENTED_IDS: AnalysisModelId[] = [
   "reverse_dcf_plausibility",
 ];
 
-const PLANNED_SECTOR_IDS: AnalysisModelId[] = [
-  "bank_valuation",
-  "insurance_underwriting",
+// Models now implemented (graduated from planned)
+const NEWLY_IMPLEMENTED_IDS: AnalysisModelId[] = [
   "reit_affo_nav",
+  "bank_valuation",
   "commodity_energy_midcycle",
+];
+
+const PLANNED_SECTOR_IDS: AnalysisModelId[] = [
+  "insurance_underwriting",
   "commodity_mining_midcycle",
   "software_rule_of_40",
   "semiconductor_cycle",
@@ -67,6 +71,14 @@ describe("MODEL_REGISTRY", () => {
       const entry = getModelById(id);
       expect(entry).toBeDefined();
       expect(entry!.implementationStatus).toBe("planned");
+    }
+  });
+
+  it("marks newly implemented models as implemented", () => {
+    for (const id of NEWLY_IMPLEMENTED_IDS) {
+      const entry = getModelById(id);
+      expect(entry).toBeDefined();
+      expect(["implemented", "partially_implemented"]).toContain(entry!.implementationStatus);
     }
   });
 
@@ -137,22 +149,22 @@ describe("MODEL_REGISTRY", () => {
     expect(entry!.requiredInputs).toContain("segment_revenue");
   });
 
-  it("bank_valuation requires bank-specific inputs", () => {
+  it("bank_valuation requires current_price and tangible book value", () => {
     const entry = getModelById("bank_valuation");
-    expect(entry!.requiredInputs).toContain("cet1");
-    expect(entry!.requiredInputs).toContain("rotce");
-    expect(entry!.requiredInputs).toContain("ptbv");
+    expect(entry!.requiredInputs).toContain("current_price");
+    expect(entry!.requiredInputs).toContain("tangible_book_value_per_share");
   });
 
-  it("reit_affo_nav requires AFFO and NAV inputs", () => {
+  it("reit_affo_nav requires current_price and affo_per_share", () => {
     const entry = getModelById("reit_affo_nav");
-    expect(entry!.requiredInputs).toContain("affo");
-    expect(entry!.requiredInputs).toContain("nav");
+    expect(entry!.requiredInputs).toContain("current_price");
+    expect(entry!.requiredInputs).toContain("affo_per_share");
   });
 
-  it("commodity_energy_midcycle requires oil/gas and production volume", () => {
+  it("commodity_energy_midcycle requires current_price, market_cap, free_cash_flow", () => {
     const entry = getModelById("commodity_energy_midcycle");
-    expect(entry!.requiredInputs).toContain("oil_price");
-    expect(entry!.requiredInputs).toContain("production_volume");
+    expect(entry!.requiredInputs).toContain("current_price");
+    expect(entry!.requiredInputs).toContain("market_cap");
+    expect(entry!.requiredInputs).toContain("free_cash_flow");
   });
 });

@@ -467,7 +467,9 @@ describe("regression fixtures", () => {
     expect(input.sectorBrief.sectorFamily).toBe("commodity_energy");
     expect(input.sectorBrief.primaryValuationLogic.join(" ")).toContain("mid-cycle");
     expect([...input.sectorBrief.requiredDisclosures, ...input.sectorBrief.synthesisWarnings].join(" ").toLowerCase()).toContain("peak");
-    expect(input.modelSelectionSummary.missingButRecommendedModels).toContain("commodity_energy_midcycle");
+    // commodity_energy_midcycle is now implemented and runs when FCF + market cap are
+    // available, so it is a primary model rather than a missing recommendation.
+    expect(input.modelSelectionSummary.primaryModels).toContain("commodity_energy_midcycle");
   });
 });
 

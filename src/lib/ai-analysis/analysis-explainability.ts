@@ -12,6 +12,7 @@ import type {
 } from "./valuation-plausibility";
 import type { ModelSelectionPlan } from "./model-selector";
 import type { StructuredSynthesisInput } from "./structured-synthesis-input";
+import type { SpecializedValuations } from "./models/specialized-models";
 
 export type StructuredSynthesisDebug = {
   sectorFamily: string;
@@ -56,6 +57,7 @@ export type AnalysisDebugSnapshot = {
   finalRatingConfidence: ConfidenceScore;
   modelSelectionPlan?: ModelSelectionPlan | null;
   structuredSynthesisInput?: StructuredSynthesisDebug | null;
+  specializedValuations?: SpecializedValuations | null;
 };
 
 export type AnalysisExplainabilityInput = {
@@ -63,6 +65,7 @@ export type AnalysisExplainabilityInput = {
   companyTypeClassification: CompanyTypeClassification;
   modelSelection: ModelSelectionOutput;
   modelSelectionPlan?: ModelSelectionPlan | null;
+  specializedValuations?: SpecializedValuations | null;
   dcfPlausibility?: DcfPlausibilityOutput | null;
   reverseDcfPlausibility?: ReverseDcfPlausibilityOutput | null;
   valuationDivergenceAnalysis?: ValuationDivergenceOutput | null;
@@ -408,5 +411,6 @@ export function buildAnalysisDebugSnapshot(input: AnalysisExplainabilityInput): 
     finalRatingConfidence: confidenceBreakdown.finalRatingConfidence,
     modelSelectionPlan: input.modelSelectionPlan ?? null,
     structuredSynthesisInput: input.structuredSynthesisInput ?? null,
+    specializedValuations: input.specializedValuations ?? null,
   };
 }

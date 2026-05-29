@@ -301,9 +301,11 @@ describe("buildModelSelectionPlan – financial", () => {
     expect(bank?.fit).toBe("primary");
   });
 
-  it("puts bank_valuation in missingButRecommendedModels", () => {
+  it("bank_valuation is not_run_missing_inputs when tangible_book_value missing", () => {
     const plan = planFor("financial");
-    expect(plan.missingButRecommendedModels.map(m => m.id)).toContain("bank_valuation");
+    const bank = findModel(plan, "bank_valuation");
+    expect(bank?.runStatus).toBe("not_run_missing_inputs");
+    expect(bank?.missingInputs).toContain("tangible_book_value_per_share");
   });
 
   it("disables generic FCFF DCF for financial", () => {
@@ -324,13 +326,11 @@ describe("buildModelSelectionPlan – financial", () => {
     expect(allText).toContain("ROTCE");
   });
 
-  it("bank_valuation reports missing bank-specific inputs when not provided", () => {
+  it("bank_valuation reports missing tangible_book_value_per_share when not provided", () => {
     const plan = planFor("financial");
     const bank = findModel(plan, "bank_valuation");
     expect(bank?.missingInputs.length).toBeGreaterThan(0);
-    expect(bank?.missingInputs).toContain("cet1");
-    expect(bank?.missingInputs).toContain("rotce");
-    expect(bank?.missingInputs).toContain("ptbv");
+    expect(bank?.missingInputs).toContain("tangible_book_value_per_share");
   });
 });
 
@@ -342,9 +342,11 @@ describe("buildModelSelectionPlan – reit", () => {
     expect(reitModel?.fit).toBe("primary");
   });
 
-  it("puts reit_affo_nav in missingButRecommendedModels", () => {
+  it("reit_affo_nav is not_run_missing_inputs when affo_per_share missing", () => {
     const plan = planFor("reit");
-    expect(plan.missingButRecommendedModels.map(m => m.id)).toContain("reit_affo_nav");
+    const reitModel = findModel(plan, "reit_affo_nav");
+    expect(reitModel?.runStatus).toBe("not_run_missing_inputs");
+    expect(reitModel?.missingInputs).toContain("affo_per_share");
   });
 
   it("marks generic FCFF DCF as poor/disabled for REITs", () => {
@@ -359,11 +361,10 @@ describe("buildModelSelectionPlan – reit", () => {
     expect(allText).toContain("AFFO");
   });
 
-  it("reit_affo_nav reports missing AFFO and NAV inputs", () => {
+  it("reit_affo_nav reports missing affo_per_share input", () => {
     const plan = planFor("reit");
     const reitModel = findModel(plan, "reit_affo_nav");
-    expect(reitModel?.missingInputs).toContain("affo");
-    expect(reitModel?.missingInputs).toContain("nav");
+    expect(reitModel?.missingInputs).toContain("affo_per_share");
   });
 });
 
@@ -375,9 +376,11 @@ describe("buildModelSelectionPlan – commodity_cyclical", () => {
     expect(energyModel?.fit).toBe("primary");
   });
 
-  it("puts commodity_energy_midcycle in missingButRecommendedModels", () => {
+  it("commodity_energy_midcycle is should_run when FCF and market cap available", () => {
     const plan = planFor("commodity_cyclical");
-    expect(plan.missingButRecommendedModels.map(m => m.id)).toContain("commodity_energy_midcycle");
+    const energyModel = findModel(plan, "commodity_energy_midcycle");
+    // Base financials provide price, market_cap, free_cashflow → should_run
+    expect(energyModel?.runStatus).toBe("should_run");
   });
 
   it("marks DCF as secondary with partial fit", () => {
@@ -393,11 +396,13 @@ describe("buildModelSelectionPlan – commodity_cyclical", () => {
     expect(allText.toLowerCase()).toContain("peak");
   });
 
-  it("commodity_energy_midcycle reports missing oil/production inputs", () => {
+  it("commodity_energy_midcycle notes optional oil/production inputs not provided", () => {
     const plan = planFor("commodity_cyclical");
     const energyModel = findModel(plan, "commodity_energy_midcycle");
-    expect(energyModel?.missingInputs).toContain("oil_price");
-    expect(energyModel?.missingInputs).toContain("production_volume");
+    // Required inputs (price, market_cap, free_cash_flow) are available → should_run
+    expect(energyModel?.runStatus).toBe("should_run");
+    // Optional oil/production inputs not in base financials but that's fine
+    expect(energyModel?.availableInputs).toContain("free_cash_flow");
   });
 });
 
@@ -452,27 +457,24 @@ describe("missing input scenarios", () => {
     expect(sotp?.missingInputs).toContain("segments");
   });
 
-  it("reit_affo_nav reports AFFO/NAV as missing even when model is planned", () => {
+  it("reit_affo_nav is not_run_missing_inputs and reports affo_per_share as missing", () => {
     const plan = planFor("reit");
     const reitModel = findModel(plan, "reit_affo_nav");
-    expect(reitModel?.missingInputs).toContain("affo");
-    expect(reitModel?.missingInputs).toContain("nav");
-    expect(reitModel?.runStatus).toBe("not_run_not_implemented");
+    expect(reitModel?.missingInputs).toContain("affo_per_share");
+    expect(reitModel?.runStatus).toBe("not_run_missing_inputs");
   });
 
-  it("bank_valuation reports CET1/ROTCE/PTBV as missing when bank data absent", () => {
+  it("bank_valuation reports tangible_book_value_per_share as missing", () => {
     const plan = planFor("financial");
     const bank = findModel(plan, "bank_valuation");
-    expect(bank?.missingInputs).toContain("cet1");
-    expect(bank?.missingInputs).toContain("rotce");
-    expect(bank?.missingInputs).toContain("ptbv");
+    expect(bank?.missingInputs).toContain("tangible_book_value_per_share");
+    expect(bank?.runStatus).toBe("not_run_missing_inputs");
   });
 
-  it("commodity_energy_midcycle reports oil/production data as missing", () => {
+  it("commodity_energy_midcycle is should_run with base financials (FCF + market cap)", () => {
     const plan = planFor("commodity_cyclical");
     const energy = findModel(plan, "commodity_energy_midcycle");
-    expect(energy?.missingInputs).toContain("oil_price");
-    expect(energy?.missingInputs).toContain("production_volume");
+    expect(energy?.runStatus).toBe("should_run");
   });
 
   it("implemented models with available inputs are marked should_run", () => {
@@ -562,10 +564,11 @@ describe("summarizeModelSelectionForSynthesis", () => {
     expect(summary.limitations.length).toBeGreaterThan(0);
   });
 
-  it("missing but recommended models appear as strings (model IDs)", () => {
-    const plan = planFor("reit");
+  it("missing but recommended models (planned) appear as strings (model IDs)", () => {
+    const plan = planFor("platform_conglomerate");
     const summary = summarizeModelSelectionForSynthesis(plan);
-    expect(summary.missingButRecommendedModels).toContain("reit_affo_nav");
+    // platform_sotp is still planned → appears in missingButRecommended
+    expect(summary.missingButRecommendedModels).toContain("platform_sotp");
     for (const id of summary.missingButRecommendedModels) {
       expect(typeof id).toBe("string");
     }
@@ -617,46 +620,43 @@ describe("regression fixtures", () => {
     expect(allText.toLowerCase()).toMatch(/terminal value|working capital/);
   });
 
-  it("JPM-like: financial selects bank_valuation and disables generic DCF", () => {
+  it("JPM-like: financial selects bank_valuation as primary and disables generic DCF", () => {
     const plan = planFor("financial");
     const bank = findModel(plan, "bank_valuation");
     const dcf = findModel(plan, "dcf_scenarios");
     expect(bank?.role).toBe("primary");
-    expect(plan.missingButRecommendedModels.map(m => m.id)).toContain("bank_valuation");
+    expect(bank?.runStatus).toBe("not_run_missing_inputs"); // implemented but needs TBV
     expect(dcf?.fit).toBe("poor");
     expect(dcf?.role).toBe("disabled");
   });
 
-  it("JPM-like: bank_valuation lists CET1/ROTCE/PTBV as missing inputs", () => {
+  it("JPM-like: bank_valuation lists tangible_book_value_per_share as missing", () => {
     const plan = planFor("financial");
     const bank = findModel(plan, "bank_valuation");
-    expect(bank?.missingInputs).toContain("cet1");
-    expect(bank?.missingInputs).toContain("rotce");
-    expect(bank?.missingInputs).toContain("ptbv");
+    expect(bank?.missingInputs).toContain("tangible_book_value_per_share");
   });
 
-  it("PLD-like: reit selects reit_affo_nav and disables generic DCF", () => {
+  it("PLD-like: reit selects reit_affo_nav as primary and disables generic DCF", () => {
     const plan = planFor("reit");
     const reitModel = findModel(plan, "reit_affo_nav");
     const dcf = findModel(plan, "dcf_scenarios");
     expect(reitModel?.role).toBe("primary");
-    expect(plan.missingButRecommendedModels.map(m => m.id)).toContain("reit_affo_nav");
+    expect(reitModel?.runStatus).toBe("not_run_missing_inputs"); // implemented but needs affo_per_share
     expect(dcf?.fit).toBe("poor");
   });
 
-  it("PLD-like: reit_affo_nav lists AFFO/NAV/cap_rates as missing inputs", () => {
+  it("PLD-like: reit_affo_nav lists affo_per_share as missing input", () => {
     const plan = planFor("reit");
     const reitModel = findModel(plan, "reit_affo_nav");
-    expect(reitModel?.missingInputs).toContain("affo");
-    expect(reitModel?.missingInputs).toContain("nav");
+    expect(reitModel?.missingInputs).toContain("affo_per_share");
   });
 
-  it("XOM-like: commodity_cyclical selects energy midcycle and uses DCF only as secondary/partial", () => {
+  it("XOM-like: commodity_cyclical selects energy midcycle (should_run) and uses DCF only as secondary/partial", () => {
     const plan = planFor("commodity_cyclical");
     const energy = findModel(plan, "commodity_energy_midcycle");
     const dcf = findModel(plan, "dcf_scenarios");
     expect(energy?.role).toBe("primary");
-    expect(plan.missingButRecommendedModels.map(m => m.id)).toContain("commodity_energy_midcycle");
+    expect(energy?.runStatus).toBe("should_run"); // implemented and FCF+marketCap available
     expect(dcf?.role).toBe("secondary");
     expect(dcf?.fit).toBe("partial");
   });

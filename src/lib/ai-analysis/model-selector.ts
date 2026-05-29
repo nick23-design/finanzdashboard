@@ -518,20 +518,31 @@ export function detectAvailableModelInputs(context: ModelInputAvailabilityContex
     available.add("segments");
   }
 
-  // REIT-specific
+  // REIT-specific (total values)
   if (hasAnyValue(fin, "affo", "adjustedFundsFromOperations")) available.add("affo");
   if (hasAnyValue(fin, "nav", "netAssetValue")) available.add("nav");
   if (hasAnyValue(fin, "occupancy", "occupancyRate")) available.add("occupancy");
   if (hasAnyValue(fin, "sameStoreNoi", "same_store_noi")) available.add("same_store_noi");
   if (hasAnyValue(fin, "capRate", "cap_rates", "capRates")) available.add("cap_rates");
+  // REIT per-share values
+  if (hasFiniteNumber(fin, "affoPerShare", "affo_per_share")) available.add("affo_per_share");
+  if (hasFiniteNumber(fin, "ffoPerShare", "ffo_per_share")) available.add("ffo_per_share");
+  if (hasFiniteNumber(fin, "navPerShare", "nav_per_share")) available.add("nav_per_share");
+  if (hasFiniteNumber(fin, "dividendPerShare", "dividend_per_share")) available.add("dividend_per_share");
+  if (hasFiniteNumber(fin, "netDebtToEbitda", "net_debt_to_ebitda")) available.add("net_debt_to_ebitda");
 
   // Bank-specific
   if (hasAnyValue(fin, "cet1", "tier1CapitalRatio")) available.add("cet1");
   if (hasAnyValue(fin, "nim", "netInterestMargin")) available.add("nim");
   if (hasAnyValue(fin, "rotce", "returnOnTangibleCommonEquity")) available.add("rotce");
+  if (hasAnyValue(fin, "roe", "returnOnEquity", "roePercent")) available.add("roe");
   if (hasAnyValue(fin, "ptbv", "priceToTangibleBookValue")) available.add("ptbv");
   if (hasAnyValue(fin, "loanLosses", "loan_losses", "creditLosses")) available.add("loan_losses");
   if (hasAnyValue(fin, "efficiencyRatio", "efficiency_ratio")) available.add("efficiency_ratio");
+  // Bank per-share values
+  if (hasFiniteNumber(fin, "tangibleBookValuePerShare", "tangible_book_value_per_share", "tbvps")) available.add("tangible_book_value_per_share");
+  if (hasFiniteNumber(fin, "bookValuePerShare", "book_value_per_share", "bvps")) available.add("book_value_per_share");
+  if (hasFiniteNumber(fin, "eps", "earningsPerShare", "dilutedEps")) available.add("eps");
 
   // Commodity-specific
   if (hasAnyValue(fin, "oilPrice", "oil_price")) available.add("oil_price");
@@ -539,6 +550,12 @@ export function detectAvailableModelInputs(context: ModelInputAvailabilityContex
   if (hasAnyValue(fin, "productionVolume", "production_volume")) available.add("production_volume");
   if (hasAnyValue(fin, "reserves")) available.add("reserves");
   if (hasAnyValue(fin, "commodityScenarios", "commodity_scenarios")) available.add("commodity_scenarios");
+  if (hasAnyValue(fin, "midcycleOilPrice", "midcycle_oil_price")) available.add("midcycle_oil_price");
+  if (hasFiniteNumber(fin, "enterpriseValue", "enterprise_value", "ev")) available.add("enterprise_value");
+  if (hasFiniteNumber(fin, "ebitda")) available.add("ebitda");
+  if (hasFiniteNumber(fin, "dividendPaid", "dividend_paid", "dividends")) available.add("dividend_paid");
+  if (hasFiniteNumber(fin, "buybacks", "shareRepurchases", "buybacksValue")) available.add("buybacks");
+  if (hasFiniteNumber(fin, "reserveLife", "reserve_life_years")) available.add("reserve_life");
 
   // SaaS-specific
   if (hasAnyValue(fin, "arr", "annualRecurringRevenue")) available.add("arr");
@@ -732,9 +749,13 @@ export function buildModelSelectionPlan(input: ModelSelectionPlanInput): ModelSe
   const disabledModels = models.filter(
     m => m.role === "disabled" || m.runStatus === "disabled_by_company_type" || m.runStatus === "not_run_not_applicable",
   );
+  // A model is "recommended but not available" if it is a primary/good-fit
+  // model that did not produce output — whether because it is still planned
+  // (not_run_not_implemented) or because it is implemented but lacks the
+  // required inputs (not_run_missing_inputs).
   const missingButRecommendedModels = activeModels.filter(
     m =>
-      m.runStatus === "not_run_not_implemented" &&
+      (m.runStatus === "not_run_not_implemented" || m.runStatus === "not_run_missing_inputs") &&
       (m.fit === "primary" || m.fit === "good") &&
       m.role !== "disabled" &&
       m.role !== "context",

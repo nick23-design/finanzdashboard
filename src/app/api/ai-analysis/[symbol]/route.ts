@@ -145,6 +145,13 @@ import {
   buildGrowthOutlookToolDescription,
   type StructuredSynthesisInput,
 } from "@/lib/ai-analysis/structured-synthesis-input";
+import {
+  runReitAffoNav,
+  runBankValuation,
+  runCommodityEnergyMidcycle,
+  formatSpecializedValuationsForPrompt,
+  type SpecializedValuations,
+} from "@/lib/ai-analysis/models/specialized-models";
 import type { StructuredSynthesisDebug } from "@/lib/ai-analysis/analysis-explainability";
 import type { AssetSnapshot, Database, Json } from "@/types/database";
 
@@ -534,6 +541,7 @@ interface ValuationContext {
   currentPriceUsd: number | null;
   alphaFramework: AlphaFrameworkOutput | null;
   structuredSynthesisInput: StructuredSynthesisInput;
+  specializedValuations: SpecializedValuations;
 }
 
 // --- Helpers ---
@@ -1334,12 +1342,39 @@ function buildValuationContext(
     modelSelectionSummary: structuredSynthesisInput.modelSelectionSummary,
   };
 
+  // Run specialized deterministic models based on company type
+  const primaryType = companyTypeClassification.primaryType;
+  const specializedValuations: SpecializedValuations = {};
+
+  if (primaryType === "reit") {
+    specializedValuations.reitAffoNav = runReitAffoNav({
+      currentPrice: snapshot.price ?? undefined,
+      // Per-share values not available in snapshot — model returns not_run_missing_inputs
+    });
+  }
+
+  if (primaryType === "financial") {
+    specializedValuations.bankValuation = runBankValuation({
+      currentPrice: snapshot.price ?? undefined,
+      // TBV/BV not available in snapshot — model returns not_run_missing_inputs
+    });
+  }
+
+  if (primaryType === "commodity_cyclical") {
+    specializedValuations.commodityEnergyMidcycle = runCommodityEnergyMidcycle({
+      currentPrice: snapshot.price ?? undefined,
+      freeCashFlow: snapshot.free_cashflow ?? undefined,
+      marketCap: snapshot.market_cap ?? undefined,
+    });
+  }
+
   const explainabilityInput = {
     ticker: symbol,
     companyTypeClassification,
     modelSelection,
     modelSelectionPlan,
     structuredSynthesisInput: structuredSynthesisDebug,
+    specializedValuations,
     dcfPlausibility,
     reverseDcfPlausibility,
     valuationDivergenceAnalysis,
@@ -1360,6 +1395,7 @@ function buildValuationContext(
     modelSelection,
     modelSelectionPlan,
     structuredSynthesisInput,
+    specializedValuations,
     analystConsensusRange,
     modelValuationRange,
     dcfValuationRange,
@@ -1870,6 +1906,9 @@ Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kerna
   const structuredBriefingSection = formatStructuredBriefingForPrompt(valuationContext.structuredSynthesisInput);
   const sectorSynthesisTemplate = formatSectorSynthesisTemplate(valuationContext.structuredSynthesisInput);
   const growthOutlookDesc = buildGrowthOutlookToolDescription(valuationContext.structuredSynthesisInput, DEFAULT_GROWTH_OUTLOOK);
+  const specializedValuationsSection = Object.keys(valuationContext.specializedValuations).length > 0
+    ? formatSpecializedValuationsForPrompt(valuationContext.specializedValuations)
+    : "";
   const dcfSection = valuationContext.dcfValuationRange
     ? `\nDCF-FAIRER-WERT (FCFF-Modell, deterministisch — erkläre qualitativ auf Deutsch, rechne NICHT nach):
 ${formatRangeForPrompt(valuationContext.dcfValuationRange)}
@@ -2008,6 +2047,7 @@ STRUKTURIERTES ANALYSTEN-BRIEFING (deterministisch — höchste Priorität, benu
 ${structuredBriefingSection}
 
 ${sectorSynthesisTemplate}
+${specializedValuationsSection ? `\nSPEZIALISIERTE BEWERTUNGSMODELLE (deterministisch — benutze als primäre Bewertungsquelle wenn Status "success"):\n${specializedValuationsSection}` : ""}
 
 SEKTOR- UND WERTTREIBER-MODELL:
 ${driverSection}
