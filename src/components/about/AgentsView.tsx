@@ -231,7 +231,7 @@ const AGENTS: AgentDoc[] = [
     id: "vera",
     model: "Claude Haiku 4.5",
     modelColor: "#ef4444",
-    trigger: "Nachgelagerter Fact-Check nach der Vollanalyse",
+    trigger: "Automatisch per 2h-Cron (Status pending_factcheck) oder manuell on-demand in der Analyse-Karte",
     cache: "6 Stunden (als Teil des Gesamtergebnisses)",
     pipeline: "Nachgang — Ergebnis ist bereits sichtbar, Vera aktualisiert Status/Protokoll",
     inputs: [
@@ -258,13 +258,13 @@ const AGENTS: AgentDoc[] = [
       "Kein Artikel-Nachladen im stabilen Hauptpfad; Vera nutzt bereits angereicherte Excerpts",
       "Bei nachweislichen Fehlern: Conviction senken + Summary/Bull-/Bear-Case korrigieren",
       "Strukturierte Findings (issue_type, severity, confidence 1–10) werden in fact_check_findings gespeichert",
-      "High-confidence Findings (≥7 symbol-spez., ≥9 global) fließen bei der nächsten Analyse als Guardrails in Opus zurück",
+      "Findings werden in fact_check_findings gespeichert (Status 'ausstehend') und fließen ERST nach Nutzer-Bestätigung als Guardrails in künftige Opus-Analysen zurück (symbol-spez.; global nur 'high')",
     ],
     strengths: [
       "Autoritative Marktdaten (Kurs, MA50/200) schützen vor falschen Preiskorrekturen durch veraltete Artikel",
       "Altersbasierte Vertrauensregeln: ältere Artikel lösen keine Korrekturen bei zeitkritischen Zahlen aus",
       "Fail-open Design: Die Hauptanalyse bleibt verfügbar, auch wenn Vera in den Timeout läuft",
-      "Feedback-Loop: Korrekturen werden strukturiert gespeichert und automatisch zu Guardrails für künftige Opus-Analysen",
+      "Opt-in-Feedback-Loop: bestätigte Findings werden zu Guardrails für künftige Opus-Analysen; der Nutzer behält die Kontrolle (übernehmen/ablehnen)",
       "Eigener Status im Analysebericht macht den Fact-Check transparent",
     ],
     weaknesses: [

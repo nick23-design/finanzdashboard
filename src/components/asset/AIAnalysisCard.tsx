@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import type { AIAnalysisResult, DianaQualityReport, PriceLevels, ProtocolEntry, AnalysisTraceEntry } from "@/app/api/ai-analysis/[symbol]/route";
-import type { VeraFactCheckResult } from "@/types/vera";
 import { AgentAvatar, AgentAvatarGroup } from "@/components/ui/AgentAvatar";
+import { VeraFactCheckSection } from "@/components/asset/VeraFactCheckSection";
 
 interface Props {
   analysis: AIAnalysisResult;
+  symbol?: string;
 }
 
 const RECOMMENDATION_STYLES: Record<string, { bg: string; text: string }> = {
@@ -836,71 +837,7 @@ function FactCheckStatusBadge({ status }: { status: string }) {
   );
 }
 
-function FactCheckIssuesCard({ result }: { result: VeraFactCheckResult }) {
-  const [expanded, setExpanded] = useState(false);
-  if (!result.issues.length) return null;
-
-  const sevColor: Record<string, string> = { low: "#6b7280", medium: "#f59e0b", high: "#ef4444" };
-
-  return (
-    <div
-      className="rounded-xl p-3 space-y-2"
-      style={{ background: "rgba(100,116,139,0.06)", border: "1px solid var(--card-border)" }}>
-      <button
-        type="button"
-        onClick={() => setExpanded(e => !e)}
-        className="w-full flex items-center justify-between text-left"
-      >
-        <p className="text-xs font-semibold text-white">
-          VERA Hinweise ({result.issues.length})
-        </p>
-        <span className="text-[10px]" style={{ color: "var(--muted)" }}>
-          {expanded ? "▲ Einklappen" : "▼ Details"}
-        </span>
-      </button>
-      {expanded && (
-        <div className="space-y-2 mt-1">
-          {result.issues.map((issue, i) => {
-            const sev = (issue as unknown as { severity?: string }).severity ?? "low";
-            const color = sevColor[sev] ?? "#6b7280";
-            return (
-              <div
-                key={i}
-                className="rounded-lg p-2.5 space-y-1"
-                style={{ background: `${color}10`, border: `1px solid ${color}30` }}>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-                    style={{ color, background: `${color}22` }}>
-                    {sev}
-                  </span>
-                  <span className="text-[10px] font-medium" style={{ color: "var(--muted)" }}>
-                    {issue.type}
-                  </span>
-                  {issue.affectedSection && (
-                    <span className="text-[10px]" style={{ color: "var(--muted)" }}>
-                      · {issue.affectedSection}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
-                  {issue.message}
-                </p>
-                {issue.suggestedFix && (
-                  <p className="text-[11px] leading-relaxed" style={{ color: "#38bdf8" }}>
-                    Vorschlag: {issue.suggestedFix}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function AIAnalysisCard({ analysis }: Props) {
+export function AIAnalysisCard({ analysis, symbol }: Props) {
   const recStyle = RECOMMENDATION_STYLES[analysis.recommendation] ?? {
     bg: "#6b7280",
     text: "#ffffff",
@@ -1075,15 +1012,12 @@ export function AIAnalysisCard({ analysis }: Props) {
       <VeraReviewCard entries={analysis.protocol ?? []} />
 
       {/* Async VERA Fact-Check Issues */}
-      {analysis.fact_check_status &&
-        analysis.fact_check_status !== "pending_factcheck" &&
-        analysis.fact_check_status !== "running_factcheck" && (() => {
-          const fcResult = (analysis as unknown as { fact_check_result?: VeraFactCheckResult }).fact_check_result;
-          if (fcResult?.issues?.length) {
-            return <FactCheckIssuesCard result={fcResult} />;
-          }
-          return null;
-        })()}
+      {symbol && (
+        <VeraFactCheckSection
+          symbol={symbol}
+          initialStatus={(analysis as unknown as { fact_check_status?: string | null }).fact_check_status}
+        />
+      )}
 
       {/* Footer – KI-Team */}
       <div className="pt-2 border-t" style={{ borderColor: "var(--card-border)" }}>

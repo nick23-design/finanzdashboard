@@ -939,7 +939,7 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         </div>
       )}
 
-      {aiAnalysis && <AIAnalysisCard analysis={aiAnalysis} />}
+      {aiAnalysis && <AIAnalysisCard analysis={aiAnalysis} symbol={symbol} />}
 
       {/* Analyse-Scoreverlauf (falls vorhanden) */}
       <AnalysisHistoryCard symbol={symbol} />

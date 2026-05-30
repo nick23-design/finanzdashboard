@@ -2767,19 +2767,21 @@ async function fetchGuardrails(symbol: string, client?: SbClient): Promise<strin
     const supabase = client ?? await createClient();
     const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
 
+    // Opt-in: nur vom Nutzer bestätigte (review_status='confirmed') Findings wirken
+    // als Guardrail. Symbol-spezifisch zählen alle bestätigten; global nur die
+    // schwerwiegenden (confidence >= 9 = severity 'high').
     const [{ data: symbolData }, { data: globalData }] = await Promise.all([
       supabase.from("fact_check_findings")
         .select("correction, issue_type")
         .eq("symbol", symbol)
         .gte("created_at", cutoff)
-        .neq("review_status", "rejected")
-        .gte("confidence", 7)
+        .eq("review_status", "confirmed")
         .order("created_at", { ascending: false })
         .limit(5),
       supabase.from("fact_check_findings")
         .select("correction, issue_type")
         .gte("created_at", cutoff)
-        .neq("review_status", "rejected")
+        .eq("review_status", "confirmed")
         .gte("confidence", 9)
         .order("created_at", { ascending: false })
         .limit(5),
@@ -2800,31 +2802,6 @@ async function fetchGuardrails(symbol: string, client?: SbClient): Promise<strin
   } catch {
     return "";
   }
-}
-
-async function saveFactCheckFindings(
-  analysisId: string | null,
-  symbol: string,
-  findings: StructuredFinding[],
-  client?: SbClient,
-): Promise<void> {
-  if (!findings.length || !analysisId) return;
-  try {
-    const supabase = client ?? await createClient();
-    await supabase.from("fact_check_findings").insert(
-      findings.map(f => ({
-        analysis_id: analysisId,
-        symbol,
-        claim: f.claim,
-        issue_type: f.issue_type,
-        correction: f.correction,
-        severity: f.severity,
-        evidence_urls: f.evidence_urls ?? [],
-        confidence: clampConviction(f.confidence),
-        review_status: "auto",
-      })),
-    );
-  } catch { /* Non-critical */ }
 }
 
 // --- Diana · Datenqualitäts-Modul ---
@@ -3151,140 +3128,6 @@ function buildAnalysisExtraData(result: AIAnalysisResult): import("@/types/datab
     ...(result.trace ? { analysis_trace: result.trace } : {}),
     protocol: result.protocol,
   }) as unknown as import("@/types/database").Json;
-}
-
-async function runDeferredVeraCheck({
-  analysisId,
-  jobId,
-  userId,
-  symbol,
-  result,
-  analystData,
-  googleNews,
-  snapshot,
-  confidenceCap,
-  serviceClient,
-  startTrace,
-  finishTrace,
-  getTrace,
-}: {
-  analysisId: string | null;
-  jobId: string;
-  userId: string;
-  symbol: string;
-  result: AIAnalysisResult;
-  analystData: AnalystData | null;
-  googleNews: NewsItemWithDesc[];
-  snapshot: AssetSnapshot;
-  confidenceCap: number;
-  serviceClient: ReturnType<typeof createServiceClient>;
-  startTrace?: (step: string, label: string, progress: number) => Promise<AnalysisTraceEntry>;
-  finishTrace?: (entry: AnalysisTraceEntry, status: AnalysisTraceEntry["status"], detail?: string, error?: string) => Promise<void>;
-  getTrace?: () => AnalysisTraceEntry[];
-}): Promise<void> {
-  const ts = () => new Date().toISOString();
-
-  const completeWith = async (finalResult: AIAnalysisResult) => {
-    if (analysisId) {
-      await serviceClient.from("ai_analyses").update({
-        recommendation: finalResult.recommendation,
-        conviction: finalResult.conviction,
-        summary: finalResult.summary,
-        bull_case: finalResult.bull_case,
-        bear_case: finalResult.bear_case,
-        growth_outlook: finalResult.growth_outlook,
-        extra_data: buildAnalysisExtraData(finalResult),
-      }).eq("id", analysisId);
-    }
-
-    await serviceClient.from("analysis_jobs").update({
-      status: "completed",
-      current_step: "completed",
-      progress: 100,
-      result: finalResult as unknown as import("@/types/database").Json,
-      updated_at: ts(),
-    }).eq("id", jobId).eq("user_id", userId);
-  };
-
-  const veraTrace = startTrace
-    ? await startTrace("vera_fact_check", "Vera Faktencheck", 98).catch(() => null)
-    : null;
-  const timeoutResult = Symbol("vera-timeout");
-  const factCheckPromise = runFactCheckAgent(
-    symbol, result, analystData, googleNews, snapshot, true,
-  ).catch(() => null);
-
-  const factCheck = await Promise.race([
-    factCheckPromise,
-    new Promise<typeof timeoutResult>(resolve =>
-      setTimeout(() => resolve(timeoutResult), DEFERRED_VERA_TIMEOUT_MS),
-    ),
-  ]);
-
-  if (!factCheck || factCheck === timeoutResult) {
-    if (veraTrace && finishTrace) {
-      await finishTrace(veraTrace, "timeout", "Vera überschritt das nachgelagerte Zeitbudget").catch(() => {});
-    }
-    const skippedResult: AIAnalysisResult = {
-      ...result,
-      trace: getTrace ? getTrace() : result.trace,
-      protocol: replaceVeraProtocolEntry(result.protocol, {
-        agent: "Vera",
-        status: "skipped",
-        detail: "Fact-Check wegen Timeout übersprungen",
-      }),
-    };
-    await completeWith(skippedResult);
-    return;
-  }
-
-  if (veraTrace && finishTrace) {
-    const veraUnavailable = factCheck.entry.status === "skipped";
-    await finishTrace(
-      veraTrace,
-      veraUnavailable ? "warning" : factCheck.findings.length ? "warning" : "ok",
-      veraUnavailable
-        ? factCheck.entry.detail
-        : factCheck.findings.length
-        ? `${factCheck.findings.length} Korrektur(en) oder Findings`
-        : "Keine belegten Fehler gefunden",
-    ).catch(() => {});
-  }
-
-  const verifiedResult: AIAnalysisResult = {
-    ...result,
-    recommendation: factCheck.result.recommendation,
-    conviction: Math.min(factCheck.result.conviction, confidenceCap),
-    summary: factCheck.result.summary,
-    bull_case: factCheck.result.bull_case,
-    bear_case: factCheck.result.bear_case,
-    growth_outlook: factCheck.result.growth_outlook,
-    price_levels: factCheck.result.price_levels ?? result.price_levels,
-    thesis_type: factCheck.result.thesis_type ?? result.thesis_type,
-    time_horizon_view: factCheck.result.time_horizon_view ?? result.time_horizon_view,
-    entry_quality: factCheck.result.entry_quality ?? result.entry_quality,
-    valuation_confidence: factCheck.result.valuation_confidence ?? result.valuation_confidence,
-    valuation_range: factCheck.result.valuation_range ?? result.valuation_range,
-    analyst_consensus_range: factCheck.result.analyst_consensus_range ?? result.analyst_consensus_range,
-    model_valuation_range: factCheck.result.model_valuation_range ?? result.model_valuation_range,
-    dcf_valuation_range: result.dcf_valuation_range,
-    valuation_divergence: factCheck.result.valuation_divergence ?? result.valuation_divergence,
-    business_drivers: factCheck.result.business_drivers ?? result.business_drivers,
-    alpha_framework: result.alpha_framework,
-    thesis_change_triggers: factCheck.result.thesis_change_triggers ?? result.thesis_change_triggers,
-    confidence_breakdown: factCheck.result.confidence_breakdown ?? result.confidence_breakdown,
-    analysis_debug: factCheck.result.analysis_debug ?? result.analysis_debug,
-    data_quality_guardrails: factCheck.result.data_quality_guardrails ?? result.data_quality_guardrails,
-    claims: factCheck.result.claims ?? result.claims,
-    trace: getTrace ? getTrace() : result.trace,
-    protocol: replaceVeraProtocolEntry(result.protocol, factCheck.entry),
-  };
-
-  if (analysisId && factCheck.findings.length) {
-    void saveFactCheckFindings(analysisId, symbol, factCheck.findings, serviceClient);
-  }
-
-  await completeWith(verifiedResult);
 }
 
 // ─── Background Job ───────────────────────────────────────────────────────────
