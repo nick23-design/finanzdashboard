@@ -212,14 +212,40 @@ function fmtHistoryMoney(value: number | null | undefined, currency: string) {
   return `${symbol}${value.toFixed(2)}`;
 }
 
+/**
+ * Rechnet einen in `native` notierten Betrag in `target` um (nur USD↔EUR) und
+ * liefert Wert + tatsächlich genutzte Währung. Ohne Kurs oder bei anderem Paar
+ * bleibt der native Wert erhalten — so wird nie ein falscher Wert vorgegaukelt.
+ */
+function resolveHistoryMoney(
+  value: number | null | undefined,
+  native: string,
+  target: "USD" | "EUR",
+  eurUsd: number | null,
+): { value: number | null; currency: string } {
+  if (value == null) return { value: null, currency: target };
+  if (native === target) return { value, currency: native };
+  const convertible =
+    (native === "USD" || native === "EUR") && eurUsd != null && eurUsd > 0;
+  if (convertible) {
+    const converted = native === "USD" ? value / eurUsd! : value * eurUsd!;
+    return { value: converted, currency: target };
+  }
+  return { value, currency: native }; // kein Kurs / fremde Währung: native zeigen
+}
+
 function HistoryValuationMiniCard({
   title,
   subtitle,
   range,
+  displayCurrency,
+  eurUsd,
 }: {
   title: string;
   subtitle: string;
   range: HistoryValuationRange;
+  displayCurrency: "USD" | "EUR";
+  eurUsd: number | null;
 }) {
   return (
     <div className="rounded-xl p-3 space-y-2"
@@ -241,16 +267,46 @@ function HistoryValuationMiniCard({
           ["Bear", range.bear, "#ef4444"],
           ["Base", range.base, "#f59e0b"],
           ["Bull", range.bull, "#22c55e"],
-        ].map(([label, value, color]) => (
-          <div key={label}>
-            <p className="font-bold" style={{ color: String(color) }}>
-              {fmtHistoryMoney(value as number | null, range.currency)}
-            </p>
-            <p className="font-medium" style={{ color: String(color) }}>{label}</p>
-          </div>
-        ))}
+        ].map(([label, value, color]) => {
+          const resolved = resolveHistoryMoney(value as number | null, range.currency, displayCurrency, eurUsd);
+          return (
+            <div key={label as string}>
+              <p className="font-bold" style={{ color: String(color) }}>
+                {fmtHistoryMoney(resolved.value, resolved.currency)}
+              </p>
+              <p className="font-medium" style={{ color: String(color) }}>{label}</p>
+            </div>
+          );
+        })}
       </div>
       <p className="text-[11px] leading-relaxed">{range.rationale}</p>
+    </div>
+  );
+}
+
+/** Kompakter USD/EUR-Umschalter, optisch wie in der Live-Analyse-Karte. */
+function CurrencyToggle({
+  value,
+  onChange,
+}: {
+  value: "USD" | "EUR";
+  onChange: (c: "USD" | "EUR") => void;
+}) {
+  return (
+    <div className="flex rounded-full p-0.5" style={{ background: "var(--card-border)" }}>
+      {(["USD", "EUR"] as const).map(c => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => onChange(c)}
+          className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold"
+          style={{
+            background: value === c ? "var(--primary)" : "transparent",
+            color: value === c ? "#000" : "var(--muted)",
+          }}>
+          {c}
+        </button>
+      ))}
     </div>
   );
 }
@@ -310,6 +366,8 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
   const [data, setData] = useState<AIAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [protocolOpen, setProtocolOpen] = useState(false);
+  const [displayCurrency, setDisplayCurrency] = useState<"USD" | "EUR">("USD");
+  const [eurUsd, setEurUsd] = useState<number | null>(null);
 
   useEffect(() => {
     fetch(`/api/ai-analysis/${symbol}/history/${id}`)
@@ -317,6 +375,15 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
       .then(d => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
   }, [id, symbol]);
+
+  // Aktueller EUR/USD-Kurs für die clientseitige Umrechnung der gespeicherten
+  // (nativen) Beträge — analog zur Live-Analyse-Karte.
+  useEffect(() => {
+    fetch("/api/fx")
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { eurUsd?: number } | null) => { if (d?.eurUsd) setEurUsd(d.eurUsd); })
+      .catch(() => {});
+  }, []);
 
   if (loading) {
     return (
@@ -343,7 +410,18 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
   const modelValuation = extra?.model_valuation_range as HistoryValuationRange | null;
   const valuationDivergence = extra?.valuation_divergence as HistoryValuationDivergence | null;
 
-  const fmt = (n: number | null) => n != null ? `$${n.toFixed(2)}` : "—";
+  // Kursziele sind in der Heimatwährung der Analyse notiert (= Währung der
+  // Bewertungs-Ranges); ohne Range fällt es auf USD zurück.
+  const priceNativeCurrency =
+    analystConsensus?.currency ?? modelValuation?.currency ?? "USD";
+  const fmt = (n: number | null) => {
+    const r = resolveHistoryMoney(n, priceNativeCurrency, displayCurrency, eurUsd);
+    return fmtHistoryMoney(r.value, r.currency);
+  };
+  const hasMoney = !!(analystConsensus || modelValuation || priceLevels);
+  const fxNote = eurUsd
+    ? `Umrechnung mit EUR/USD ${eurUsd.toFixed(4)} — nur Orientierung, kein Börsenkurs in dieser Währung.`
+    : null;
   const sentColor = SENTIMENT_COLOR[data.news_sentiment] ?? "var(--muted)";
 
   const factCheckStatus = (data as unknown as { fact_check_status?: string }).fact_check_status;
@@ -375,6 +453,14 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
       {/* Zusammenfassung */}
       <p className="leading-relaxed">{data.summary}</p>
 
+      {/* Währungsumschalter (USD/EUR) für alle Geldwerte dieser Analyse */}
+      {hasMoney && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px]" style={{ color: "var(--muted)" }}>Anzeige in</span>
+          <CurrencyToggle value={displayCurrency} onChange={setDisplayCurrency} />
+        </div>
+      )}
+
       {(analystConsensus || modelValuation || valuationDivergence) && (
         <div className="space-y-2">
           {analystConsensus && (
@@ -382,6 +468,8 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
               title="Analystenkonsens"
               subtitle="Marktmeinung, kein eigenes Modell"
               range={analystConsensus}
+              displayCurrency={displayCurrency}
+              eurUsd={eurUsd}
             />
           )}
           {modelValuation && (
@@ -389,6 +477,8 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
               title="Eigenes Modell"
               subtitle="Gespeicherte FCF-/Multiple-Szenarien"
               range={modelValuation}
+              displayCurrency={displayCurrency}
+              eurUsd={eurUsd}
             />
           )}
           {valuationDivergence && (() => {
@@ -442,6 +532,11 @@ function FullAnalysisView({ id, symbol }: { id: string; symbol: string }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* FX-Hinweis, sobald in eine andere als die Heimatwährung umgerechnet wird */}
+      {hasMoney && fxNote && displayCurrency !== priceNativeCurrency && (
+        <p className="text-[10px]" style={{ color: "var(--muted)" }}>{fxNote}</p>
       )}
 
       {/* Bull / Bear */}
