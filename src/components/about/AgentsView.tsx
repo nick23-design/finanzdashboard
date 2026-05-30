@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp, Zap, Clock, Database, AlertTriangle, CheckCircle } from "lucide-react";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import type { AgentId } from "@/components/ui/AgentAvatar";
+import { QuantEngineDocs } from "@/components/about/QuantEngineDocs";
 
 interface AgentDoc {
   id: AgentId;
@@ -751,9 +752,10 @@ export function AgentsView() {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold text-white">KI-Agenten</h2>
+        <h2 className="text-xl font-bold text-white">KI-Agenten & Engine</h2>
         <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--muted)" }}>
-          Technische Dokumentation aller Agenten — Modelle, Prompts, Stärken und Grenzen.
+          Technische Dokumentation: die quantitative Bewertungs-Engine, die KI-Agenten und die
+          regelbasierten Guardrails — mit Modellen, Prompts, Stärken und Grenzen.
         </p>
       </div>
 
@@ -794,6 +796,9 @@ export function AgentsView() {
           {standaloneAgents.map(doc => <AgentCard key={doc.id} doc={doc} />)}
         </div>
       </div>
+
+      {/* Deterministische Engine + Guardrails */}
+      <QuantEngineDocs />
     </div>
   );
 }
