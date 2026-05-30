@@ -1,8 +1,66 @@
 import Link from "next/link";
+import {
+  User, Database, ChevronRight,
+  Sparkles, ListFilter, Scale, LayoutGrid, Bell,
+  Bot, Users, Info,
+  type LucideIcon,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { logout } from "@/app/auth/actions";
 import { PushToggle } from "@/components/settings/PushToggle";
+import { AnalysisExplainer } from "@/components/settings/AnalysisExplainer";
+
+interface NavLink {
+  href: string;
+  label: string;
+  Icon: LucideIcon;
+  badge?: string;
+}
+
+const NAV_GROUPS: { title: string; links: NavLink[] }[] = [
+  {
+    title: "Analyse & Tools",
+    links: [
+      { href: "/dashboard/search",   label: "NH Select",        Icon: Sparkles },
+      { href: "/dashboard/screener", label: "Screener",         Icon: ListFilter, badge: "NEU" },
+      { href: "/dashboard/compare",  label: "Aktienvergleich",  Icon: Scale },
+      { href: "/dashboard/sectors",  label: "Sektor-Übersicht", Icon: LayoutGrid },
+      { href: "/dashboard/alerts",   label: "Preis-Alerts",     Icon: Bell },
+    ],
+  },
+  {
+    title: "Hintergrund & Team",
+    links: [
+      { href: "/dashboard/agents", label: "KI-Agenten",         Icon: Bot },
+      { href: "/dashboard/team",   label: "KI-Team",            Icon: Users },
+      { href: "/dashboard/about",  label: "Über Next Horizon",  Icon: Info },
+    ],
+  },
+];
+
+function NavRow({ href, label, Icon, badge, last }: NavLink & { last: boolean }) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center gap-3 px-4 py-3"
+      style={last ? undefined : { borderBottom: "1px solid var(--card-border)" }}>
+      <span
+        className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
+        style={{ background: "var(--card-border)" }}>
+        <Icon size={16} style={{ color: "var(--primary)" }} />
+      </span>
+      <span className="text-sm text-white flex-1">{label}</span>
+      {badge && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+          style={{ background: "rgba(99,102,241,0.2)", color: "#818cf8" }}>
+          {badge}
+        </span>
+      )}
+      <ChevronRight size={16} style={{ color: "var(--muted)" }} />
+    </Link>
+  );
+}
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -12,104 +70,65 @@ export default async function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-white">Einstellungen</h2>
+      <h2 className="text-lg font-semibold text-white">Mehr</h2>
 
       {/* Account info */}
       <div
-        className="rounded-2xl border p-4 space-y-2"
+        className="rounded-2xl border p-4"
         style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-        <p className="text-xs uppercase tracking-wide font-medium" style={{ color: "var(--muted)" }}>
-          Konto
-        </p>
-        <p className="text-white">{user?.email}</p>
-        <p className="text-xs" style={{ color: "var(--muted)" }}>
-          Registriert: {user?.created_at ? new Date(user.created_at).toLocaleDateString("de-DE") : "—"}
-        </p>
+        <div className="flex items-center gap-3">
+          <span
+            className="flex items-center justify-center w-10 h-10 rounded-full flex-shrink-0"
+            style={{ background: "var(--card-border)" }}>
+            <User size={18} style={{ color: "var(--primary)" }} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-white truncate">{user?.email}</p>
+            <p className="text-xs" style={{ color: "var(--muted)" }}>
+              Registriert: {user?.created_at ? new Date(user.created_at).toLocaleDateString("de-DE") : "—"}
+            </p>
+          </div>
+        </div>
       </div>
 
-      {/* Info */}
+      {/* KI-Aktienanalyse erklärt */}
+      <AnalysisExplainer />
+
+      {/* Gruppierte Navigation */}
+      {NAV_GROUPS.map(group => (
+        <div key={group.title}>
+          <p className="text-xs uppercase tracking-wide font-medium px-1 pb-2" style={{ color: "var(--muted)" }}>
+            {group.title}
+          </p>
+          <div
+            className="rounded-2xl border overflow-hidden"
+            style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
+            {group.links.map((link, i) => (
+              <NavRow key={link.href} {...link} last={i === group.links.length - 1} />
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Benachrichtigungen */}
+      <PushToggle />
+
+      {/* Datenquelle */}
       <div
         className="rounded-2xl border p-4 space-y-2 text-sm"
         style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-        <p className="text-xs uppercase tracking-wide font-medium" style={{ color: "var(--muted)" }}>
-          Datenquelle
-        </p>
+        <div className="flex items-center gap-2">
+          <Database size={14} style={{ color: "var(--muted)" }} />
+          <p className="text-xs uppercase tracking-wide font-medium" style={{ color: "var(--muted)" }}>
+            Datenquelle
+          </p>
+        </div>
         <p style={{ color: "var(--muted)" }}>
-          Yahoo Finance via yfinance (inoffiziell). Daten ohne Gewähr.
-          Cache-TTL: 6 Stunden.
+          Kurse & Kennzahlen: Yahoo Finance via yfinance (inoffiziell). Wechselkurse:
+          Yahoo Finance, abgesichert über den EZB-Referenzkurs. Alle Daten ohne Gewähr,
+          Cache-TTL 6 Stunden.
         </p>
       </div>
-
-      {/* Navigation */}
-      <div
-        className="rounded-2xl border overflow-hidden"
-        style={{ background: "var(--card)", borderColor: "var(--card-border)" }}>
-        <p className="text-xs uppercase tracking-wide font-medium px-4 pt-4 pb-2" style={{ color: "var(--muted)" }}>
-          Weitere Seiten
-        </p>
-        <Link
-          href="/dashboard/search"
-          className="flex items-center justify-between px-4 py-3 border-t"
-          style={{ borderColor: "var(--card-border)" }}>
-          <span className="text-sm text-white">NH Select</span>
-          <span style={{ color: "var(--muted)" }}>›</span>
-        </Link>
-        <Link
-          href="/dashboard/team"
-          className="flex items-center justify-between px-4 py-3 border-t"
-          style={{ borderColor: "var(--card-border)" }}>
-          <span className="text-sm text-white">KI-Team</span>
-          <span style={{ color: "var(--muted)" }}>›</span>
-        </Link>
-        <Link
-          href="/dashboard/alerts"
-          className="flex items-center justify-between px-4 py-3 border-t"
-          style={{ borderColor: "var(--card-border)" }}>
-          <span className="text-sm text-white">Preis-Alerts</span>
-          <span style={{ color: "var(--muted)" }}>›</span>
-        </Link>
-        <Link
-          href="/dashboard/screener"
-          className="flex items-center justify-between px-4 py-3 border-t"
-          style={{ borderColor: "var(--card-border)" }}>
-          <div>
-            <span className="text-sm text-white">Screener</span>
-            <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded font-medium"
-              style={{ background: "rgba(99,102,241,0.2)", color: "#818cf8" }}>NEU</span>
-          </div>
-          <span style={{ color: "var(--muted)" }}>›</span>
-        </Link>
-        <Link
-          href="/dashboard/sectors"
-          className="flex items-center justify-between px-4 py-3 border-t"
-          style={{ borderColor: "var(--card-border)" }}>
-          <span className="text-sm text-white">Sektor-Übersicht</span>
-          <span style={{ color: "var(--muted)" }}>›</span>
-        </Link>
-        <Link
-          href="/dashboard/compare"
-          className="flex items-center justify-between px-4 py-3 border-t"
-          style={{ borderColor: "var(--card-border)" }}>
-          <span className="text-sm text-white">Aktienvergleich</span>
-          <span style={{ color: "var(--muted)" }}>›</span>
-        </Link>
-        <Link
-          href="/dashboard/agents"
-          className="flex items-center justify-between px-4 py-3 border-t"
-          style={{ borderColor: "var(--card-border)" }}>
-          <span className="text-sm text-white">KI-Agenten</span>
-          <span style={{ color: "var(--muted)" }}>›</span>
-        </Link>
-        <Link
-          href="/dashboard/about"
-          className="flex items-center justify-between px-4 py-3 border-t"
-          style={{ borderColor: "var(--card-border)" }}>
-          <span className="text-sm text-white">Über Next Horizon</span>
-          <span style={{ color: "var(--muted)" }}>›</span>
-        </Link>
-      </div>
-
-      <PushToggle />
 
       <Disclaimer />
 
