@@ -292,6 +292,7 @@ const AGENTS: AgentDoc[] = [
       "Marco-Ergebnis: Insider-Signal, institutioneller Trend, Trends-Momentum",
       "Analysten-Konsens: Kursziel-Spanne, Buy/Hold/Sell-Verteilung",
       "Strukturiertes Briefing der Quant-Engine: Company-Type-Routing & Modellauswahl, DCF-/Reverse-DCF-Plausibilität, Spezialmodelle, Divergenz-Analyse, Alpha-Faktoren, Sektor-Template, Datenqualitäts-Cap",
+      "Historische Guardrails: symbol-spezifische Vera-Korrekturen (Konfidenz ≥ 7) + globale Patterns (Konfidenz ≥ 9, letzte 90 Tage)",
     ],
     outputs: [
       "Empfehlung: Kaufen / Leicht kaufen / Halten / Leicht verkaufen / Verkaufen",
@@ -306,6 +307,7 @@ const AGENTS: AgentDoc[] = [
     systemPrompt: AGENT_SYSTEM_PROMPTS["opus"],
     workflow: [
       "Bekommt das fertige strukturierte Briefing — die KI-Agenten (Felix/Nina/Marco) und die deterministische Bewertungs-Engine laufen davor",
+      "Historische Guardrails aus früheren Vera-Korrekturen werden geladen und in den Synthese-Prompt eingespeist (strikt einzuhalten)",
       "Single-Shot-Synthese (kein Tool-Orchestrierungs-Loop): nutzt das Briefing als Source of Truth und rechnet keine eigenen Bewertungen nach",
       "Trennt Analystenkonsens, eigenes Bewertungsmodell, kurzfristiges Timing und langfristige These",
       "Gibt das Ergebnis ausschließlich über den Tool-Call complete_synthesis zurück (Zod-validiert)",
@@ -317,6 +319,7 @@ const AGENTS: AgentDoc[] = [
       "Strukturiertes Briefing als Source of Truth: deterministische Modelle und Scores werden nicht stillschweigend überschrieben",
       "Strikte Trennung von Analystenkonsens und eigenem Bewertungsmodell",
       "Zod-Validierung des Tool-Outputs verhindert fehlerhafte Werte (falsche Enum, Conviction außerhalb Bereich)",
+      "Feedback-Loop: frühere Vera-Korrekturen fließen als Guardrails in den Prompt zurück und reduzieren wiederkehrende Fehler bei bekannten Aktien",
       "Haiku-Fallback sichert ein Ergebnis ab, falls Opus das Zeitbudget überschreitet",
     ],
     weaknesses: [
@@ -327,7 +330,7 @@ const AGENTS: AgentDoc[] = [
       "Qualität hängt vollständig vom vorgelagerten Briefing ab (Agenten + Engine)",
     ],
     reliability: 4,
-    reliabilityNote: "Beste Reasoning-Qualität im System. Verlässt sich strikt auf das strukturierte Briefing — der Output ist nur so gut wie die vorgelagerte Engine und der schwächste Eingangs-Agent.",
+    reliabilityNote: "Beste Reasoning-Qualität im System. Verlässt sich strikt auf das strukturierte Briefing — der Output ist nur so gut wie die vorgelagerte Engine und der schwächste Eingangs-Agent. Der Vera-Guardrail-Feedback-Loop stärkt die Qualität bei bekannten Aktien über Zeit.",
   },
   {
     id: "kai",

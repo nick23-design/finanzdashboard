@@ -2134,6 +2134,7 @@ async function runSynthesisAgent(
   analystData: AnalystData | null,
   valuationContext: ValuationContext,
   dataQuality?: DianaQualityReport | null,
+  guardrails: string = "",
 ): Promise<SynthesisResult> {
   const client = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
@@ -2332,7 +2333,7 @@ ${dataQuality ? `\nDATENQUALITÄT: ${dataQuality.completeness_score}/100 · Conv
   const response = await client.messages.create({
     model: SYNTHESIS_OPUS_MODEL,
     max_tokens: 2200,
-    system: buildOpusSynthesisSystemPrompt({ defaultGrowthOutlook: DEFAULT_GROWTH_OUTLOOK }),
+    system: buildOpusSynthesisSystemPrompt({ defaultGrowthOutlook: DEFAULT_GROWTH_OUTLOOK, guardrailsBlock: guardrails }),
     tools: [synthesisTool],
     tool_choice: { type: "tool", name: "complete_synthesis" } as Anthropic.Messages.ToolChoiceTool,
     messages: [
@@ -3046,7 +3047,7 @@ async function runAnalysisPipeline(
       "run_synthesis",
       "Opus Synthese erstellen",
       65,
-      () => runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, valuationContext, dataQuality),
+      () => runSynthesisAgent(symbol, snapshot, fundamental, sentiment, marketIntel, analystData, valuationContext, dataQuality, guardrails),
     );
   } catch {
     console.log(`[PIPELINE][${symbol}] Opus-Timeout → Haiku-Fallback`);

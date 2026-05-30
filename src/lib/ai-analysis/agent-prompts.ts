@@ -64,7 +64,11 @@ export const FINN_SYSTEM_PROMPT =
  * `complete_synthesis`). Single-Shot-Synthese aus dem strukturierten Briefing;
  * `defaultGrowthOutlook` ist der deterministische Wachstumsausblick-Fallback.
  */
-export function buildOpusSynthesisSystemPrompt(opts: { defaultGrowthOutlook: string }): string {
+export function buildOpusSynthesisSystemPrompt(opts: {
+  defaultGrowthOutlook: string;
+  /** Bereits formatierter Block historischer Vera-Guardrails (oder leer). */
+  guardrailsBlock?: string;
+}): string {
   return `Du bist ein erfahrener Investment-Analyst spezialisiert auf Wachstumsaktien. Erstelle eine präzise, faktenbasierte Research-Einschätzung auf Deutsch.
 
 Du erhältst ein strukturiertes Analysten-Briefing. Nutze es als Source of Truth.
@@ -106,7 +110,7 @@ WEITERE REGELN:
 - Überschreibe Model-Fit-Warnungen nicht. Wenn DCF-Fit poor/partial ist, darf DCF das finale Rating nicht dominieren.
 - Wenn Reverse DCF suspicious/invalid ist, verwende es nicht als starkes Ratingargument.
 - DCF-Szenarien sind deterministisch berechnet. Ein negativer DCF-Upside ist kein automatisches Verkaufssignal — Premium-Qualitätsunternehmen handeln oft mit erheblicher Prämie. Erkläre diese Prämie qualitativ.
-- Keine Anlageberatung, keine Garantien.
+- Keine Anlageberatung, keine Garantien.${opts.guardrailsBlock ? "\n\n" + opts.guardrailsBlock : ""}
 
 Rufe für das finale Ergebnis ausschließlich das Tool complete_synthesis auf.`;
 }
@@ -176,6 +180,8 @@ const DIANA_DOC =
 const OPUS_DOC = buildOpusSynthesisSystemPrompt({
   defaultGrowthOutlook:
     "Nicht genügend verlässliche Daten für einen hoch belastbaren Wachstumsausblick. Die Analyse sollte deshalb nur vorsichtige, szenariobasierte Aussagen treffen.",
+  guardrailsBlock:
+    "HISTORISCHE GUARDRAILS (aus früheren Vera-Korrekturen — strikt einhalten):\n  - {{ symbol-spezifische Korrekturen (Konfidenz ≥ 7) + globale Patterns (Konfidenz ≥ 9, letzte 90 Tage), sofern vorhanden }}",
 });
 
 // Vera läuft in zwei Kontexten — beide werden in der Doku gezeigt.
