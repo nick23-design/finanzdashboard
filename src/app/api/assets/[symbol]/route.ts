@@ -1,3 +1,11 @@
+/*
+ * Supabase-Migration (einmalig im SQL-Editor ausführen):
+ *   ALTER TABLE public.asset_snapshots
+ *     ADD COLUMN IF NOT EXISTS name TEXT;
+ * Ohne die Spalte funktioniert die Route weiter; der Firmenname kommt dann
+ * nur aus dem Live-Abruf bzw. der statischen Stockliste (Fallback im Client).
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
@@ -53,7 +61,7 @@ async function getStoredIsin(symbol: string): Promise<string | null> {
 
 async function saveSnapshot(raw: Awaited<ReturnType<typeof fetchAssetData>>) {
   const supabase = await createClient();
-  const insertPayload: AssetSnapshotInsert = {
+  const base: AssetSnapshotInsert = {
     symbol: raw.symbol,
     price: raw.price,
     currency: raw.currency,
@@ -68,7 +76,13 @@ async function saveSnapshot(raw: Awaited<ReturnType<typeof fetchAssetData>>) {
     moving_average_50: raw.moving_average_50,
     moving_average_200: raw.moving_average_200,
   };
-  await supabase.from("asset_snapshots").insert(insertPayload);
+  // Mit Firmennamen speichern; fällt ohne name zurück, falls die Spalte noch
+  // fehlt (name ist noch nicht im generierten DB-Typ → Cast).
+  const withName = { ...base, name: raw.name ?? null } as AssetSnapshotInsert;
+  const { error } = await supabase.from("asset_snapshots").insert(withName);
+  if (error) {
+    await supabase.from("asset_snapshots").insert(base);
+  }
 }
 
 export async function GET(

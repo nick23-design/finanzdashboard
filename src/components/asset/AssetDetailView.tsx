@@ -18,6 +18,7 @@ import type { EarningsCalendar } from "@/lib/finance-client";
 import type { SignalType } from "@/types/finance";
 import type { AIAnalysisResult, AnalysisTraceEntry } from "@/app/api/ai-analysis/[symbol]/route";
 import { formatCountdown, formatRelativeTime } from "@/lib/time";
+import { STOCKS } from "@/lib/stocks-list";
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import { Bell, TrendingUp, RotateCw, Newspaper, Info } from "lucide-react";
 import type { PortfolioGroup } from "@/app/api/portfolio/route";
@@ -568,6 +569,14 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
     (baseCurrency === "USD" || baseCurrency === "EUR") && eurUsd != null && eurUsd > 0;
   const effectiveCurrency = canToggleCurrency ? priceCurrency : baseCurrency;
 
+  // Firmenname: bevorzugt aus den Asset-Daten (Finance-API/DB), sonst aus der
+  // statischen Stockliste. Wenn die API nur das Symbol zurückgibt, ignorieren.
+  const assetName = (asset as { name?: string | null } | null)?.name?.trim();
+  const companyName =
+    (assetName && assetName !== symbol ? assetName : null) ??
+    STOCKS.find(s => s.symbol === symbol)?.name ??
+    null;
+
   const convertPrice = (value: number | null): number | null => {
     if (value == null) return null;
     if (!canToggleCurrency || effectiveCurrency === baseCurrency) return value;
@@ -645,6 +654,11 @@ export function AssetDetailView({ symbol }: AssetDetailViewProps) {
         <div className="flex items-start justify-between gap-2">
           <div>
             <h2 className="text-2xl font-bold text-white">{symbol}</h2>
+            {companyName && (
+              <p className="text-sm mt-0.5 leading-snug" style={{ color: "var(--muted)" }}>
+                {companyName}
+              </p>
+            )}
             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
               {asset?.isin && (
                 <span
