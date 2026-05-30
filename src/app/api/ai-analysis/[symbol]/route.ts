@@ -94,6 +94,13 @@ import { computeDcfScenarios } from "@/lib/ai-analysis/dcf-pipeline";
 import type { DcfScenariosOutput } from "@/lib/ai-analysis/dcf";
 import { calculateAlphaFramework, type AlphaFrameworkOutput } from "@/lib/ai-analysis/alpha-framework";
 import {
+  FELIX_SYSTEM_PROMPT,
+  NINA_SYSTEM_PROMPT,
+  MARCO_SYSTEM_PROMPT,
+  buildOpusSynthesisSystemPrompt,
+  buildVeraFactCheckSystemPrompt,
+} from "@/lib/ai-analysis/agent-prompts";
+import {
   DEFAULT_GROWTH_OUTLOOK,
   logSynthesisNormalizationEvents,
   normalizeClaimConfidenceValue,
@@ -1890,7 +1897,7 @@ async function runFundamentalAgent(s: AssetSnapshot, edgar: EdgarFacts | null, p
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1200,
-    system: "Du bist ein wachstumsorientierter Aktienanalyst. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
+    system: FELIX_SYSTEM_PROMPT,
     messages: [{ role: "user", content: prompt }],
   });
 
@@ -2098,7 +2105,7 @@ async function runSentimentAgent(news: NewsItemWithDesc[]): Promise<SentimentAna
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
-    system: "Du bist ein Finanz-Nachrichtenanalyst. Artikel von Quellen mit [★] sind besonders zuverlässig und sollen stärker gewichtet werden. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach.",
+    system: NINA_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
@@ -2529,25 +2536,7 @@ ${(synthesis.claims ?? []).map(c => `- ${c.claim} | Evidence: ${c.evidence} | Co
     ? "Du hast in diesem Lauf kein fetch_article Tool. Nutze nur die gelieferten Finance-API-Daten, Analysten-Daten und News-Excerpts. Wenn ein Claim damit nicht belegbar ist, korrigiere ihn nur bei klarem Widerspruch; sonst vermerke höchstens niedrige Evidenz."
     : "Du kannst mit fetch_article (max. 3 Aufrufe) vollständige Artikel abrufen um strittige Behauptungen zu verifizieren.";
 
-  const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. ${toolInstruction} Korrigiere nur was durch die gelieferten Fakten nachweislich falsch ist. Antworte am Ende ausschließlich mit kompaktem validem JSON.
-
-REGELN — Autoritative Daten & Artikel-Freshness:
-1. AUTORITATIVE MARKTDATEN (Finance API, live) haben immer Vorrang — alle Werte in diesem Abschnitt (Kurs, MAs, KGV, FCF, D/E, Marktkapitalisierung, Umsatzwachstum, RSI) dürfen NICHT durch Artikelangaben überschrieben oder als "unbelegt" markiert werden. Sie stammen direkt von der Finance API und sind per Definition belegt.
-2. Altersbasierte Vertrauensregeln — eine Korrektur ist nur zulässig wenn der Beleg-Artikel aktuell genug ist:
-   - Kurse, Marktpreise, aktuelle Kennzahlen: nur Artikel < 2 Tage (älter = veraltet, keine Korrektur)
-   - Quartalsergebnisse, Guidance, Prognosen: nur Artikel < 14 Tage
-   - Ereignisse (M&A, Produktlaunch, Personalwechsel): nur Artikel < 30 Tage
-   - Strukturelle Fakten (Geschäftsmodell, Branche, Produktkategorien): kein Alterslimit
-   - Bei zu alten Artikeln: KEINE Korrektur — ggf. als findings-Eintrag mit confidence ≤ 4 und Hinweis "Artikel möglicherweise veraltet (vor X Tagen)"
-3. Prozentzahlen in Artikeln (z.B. "51% Rally vom März-Tief") sind historische Kursbewegungen, keine MA-Abstände — nicht als MA-Korrektur verwenden.
-4. Umsatzwachstum (TTM, YoY) ist der korrekte Jahresvergleich — einzelne positive Quartale widerlegen einen negativen TTM-Wert nicht.
-5. Währungsumrechnung bei Analysten-Kurszielen: Finance API liefert Kursziele immer in USD. Bei Aktien die nicht in USD notieren darf Opus diese in die lokale Notierungswährung umrechnen — das ist kein Fehler.
-6. Konsistenzprüfung: Prüfe, ob Empfehlung, RSI, Abstand zu MA50/MA200, Datenqualität, Entry Quality und valuation_range logisch zusammenpassen.
-7. Wenn die Datenbasis lückenhaft ist, sind hohe Conviction und präzise Kursziele verdächtig. Eine breite Szenario-Spanne ist dagegen zulässig.
-8. Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf keine Kernthese stützen.
-9. Analystenkonsens und eigenes Bewertungsmodell dürfen nicht vermischt werden. Konsens-Kursziele sind Marktmeinung, kein Fair Value aus eigenem Modell.
-10. Prüfe, ob die verwendeten Werttreiber zum Unternehmenstyp passen, z.B. Hyperscaler mit AI-Capex/Margenlogik, Semis mit Zyklus/Inventar/Margen, spekulative Growth-Titel mit Cashburn/Execution.
-11. Fehlende Kennzahlen, EDGAR-Daten oder Analystendaten sind Provider-/Ingestion-Limitationen. Sie dürfen nicht als operative Unternehmensrisiken oder Bear-Case-Punkte bewertet werden.`;
+  const systemPrompt = buildVeraFactCheckSystemPrompt({ toolInstruction });
 
   const fetchArticleLine = skipArticleFetch
     ? "Kein Artikel-Nachladen in diesem Lauf. Prüfe nur gegen die gelieferten Excerpts und autoritativen Daten."
@@ -2792,14 +2781,7 @@ async function runMarketIntelAgent(
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 500,
-    system: `Du bist ein vorsichtiger Marktanalyse-Experte. Bewerte Insider-Aktivität und institutionelle Positionierung nüchtern.
-Regeln:
-- Niedrige Insider-Ownership ist bei Mega-Caps und Gründer-/Index-getriebenen Unternehmen NICHT automatisch bearish.
-- BlackRock, Vanguard, State Street und ähnliche Top-Holder sind meist passive Index-/ETF-Positionen; nicht als aktive Conviction interpretieren.
-- Insider-Verkäufe sind nur stark bearish, wenn sie groß, gehäuft und nicht plausibel planbasiert sind.
-- Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf nie als Kernargument gewertet werden.
-- Formuliere Beobachtungen als "Hinweis" oder "schwaches Signal", wenn die Daten keine harte Aussage tragen.
-Antworte ausschließlich mit validem JSON.`,
+    system: MARCO_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
@@ -3060,21 +3042,11 @@ KURSZIELE (immer angeben): entry = idealer Einstieg (nahe MA50 oder −3% vom ak
     },
   ];
 
-  const systemPrompt = `Du bist Opus, der leitende Investment-Stratege. Du koordinierst dein Analyse-Team:
-- Felix (analyze_fundamentals): Fundamental-Analyst, kann mit Fokus mehrfach aufgerufen werden
-- Nina (analyze_sentiment): Sentiment-Analystin
-- Marco (analyze_market_intelligence): Markt-Intelligence-Spezialist
-
-Du erkennst widersprüchliche Signale, hinterfragst unzureichende Ergebnisse und entscheidest selbst welche Analysen du benötigst. Erstelle faktenbasierte, präzise Empfehlungen auf Deutsch. Beziehe dich ausschließlich auf bereitgestellte Daten.
-
-KRITISCHE REGELN zur Datentreue:
-1. Der aktuelle Kurs steht unter "AKTUELLER KURS:" und "Preis:" in den Kennzahlen — das Analysten-Kursziel ist ein Zukunftsziel, nie der aktuelle Kurs.
-2. Prozentzahlen in Nachrichtentexten (z.B. "51% Rally vom Tief") beziehen sich auf historische Kursbewegungen, NICHT auf den Abstand zu MA50/MA200 — diese Werte nie als technische Indikatoren zitieren.
-3. Umsatzwachstum (TTM, YoY) ist der gleitende Jahresvergleich — einzelne Quartale können abweichen; korrekte Formulierung: "Umsatz TTM −3,5% YoY".
-4. entry-Preis für Kursziele muss nahe dem AKTUELLEN KURS liegen (±15%), nicht nahe dem Analysten-Kursziel.${guardrails ? "\n\n" + guardrails : ""}
-5. growth_outlook ist Pflicht. Wenn kein belastbarer Wachstumsausblick möglich ist, verwende exakt: "${DEFAULT_GROWTH_OUTLOOK}".
-
-DATENQUALITÄT (Diana): Maximale erlaubte Conviction für diese Analyse: ${confidenceCap}/10. Vergib keine höhere Conviction — die Datenbasis ist entsprechend bewertet.`;
+  const systemPrompt = buildOpusSynthesisSystemPrompt({
+    guardrailsBlock: guardrails ? "\n\n" + guardrails : "",
+    defaultGrowthOutlook: DEFAULT_GROWTH_OUTLOOK,
+    confidenceCap,
+  });
 
   for (let i = 0; i < 10; i++) {
     const response = await client.messages.create({

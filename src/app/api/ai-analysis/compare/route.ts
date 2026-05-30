@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { KAI_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { tickerSchema } from "@/lib/validation";
 import { createClient } from "@/lib/supabase/server";
@@ -257,7 +258,7 @@ Antworte ausschließlich mit validem JSON:
       model: "claude-opus-4-7",
       max_tokens: 2000,
       thinking: { type: "adaptive" },
-      system: "Du bist Kai, ein präziser Aktienvergleichs-Analyst. Du hast Zugang zu Kennzahlen, Branchen-Peers und aktuellen News beider Aktien. Antworte ausschließlich mit validem JSON.",
+      system: KAI_SYSTEM_PROMPT,
       messages: [{ role: "user", content: prompt }],
     });
 

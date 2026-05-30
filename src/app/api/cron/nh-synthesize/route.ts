@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { SYNTHESIZER_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import { createServiceClient } from "@/lib/supabase/service";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -104,11 +105,7 @@ export async function GET(request: NextRequest) {
     model: "claude-opus-4-7",
     max_tokens: 1024,
     thinking: { type: "enabled", budget_tokens: 2000 },
-    system: `Du bist Opus, der leitende Investment-Stratege von NextHorizon. Deine Aufgabe ist die tägliche NH-Select-Empfehlung: die eine vielversprechendste Aktie des Tages, basierend auf Radar-Signalen und Scout-Recherchen.
-
-Berücksichtige die aktuellen Kurse bei der Entscheidung: Aktien die bereits stark gestiegen sind (mögliche Überhitzung) oder nahe Widerständen notieren sind kritisch zu bewerten.
-
-Antworte ausschließlich als JSON-Objekt.`,
+    system: SYNTHESIZER_SYSTEM_PROMPT,
     messages: [{
       role: "user",
       content: `Heute ist ${today}.

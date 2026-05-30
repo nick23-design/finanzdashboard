@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { PODCAST_SCOUT_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import { createServiceClient } from "@/lib/supabase/service";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -117,7 +118,7 @@ export async function GET(request: NextRequest) {
   const msg = await anthropic.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
-    system: `Du bist Podcast-Scout, ein Investment-Podcast Analyst. Analysiere aktuelle Investment-Podcast-Episoden und extrahiere konkret genannte Aktien-Empfehlungen. Nur Aktien die wirklich im Podcast-Kontext positiv erwähnt werden. Antworte ausschließlich als JSON-Array.`,
+    system: PODCAST_SCOUT_SYSTEM_PROMPT,
     messages: [{
       role: "user",
       content: `Aktuelle Investment-Podcast-Episoden:\n\n${episodeText}\n\nExtrahiere 1-3 konkret empfohlene Aktien. Nur wenn ein Ticker oder Unternehmensname klar erkennbar ist. Format:\n[{"symbol":"AAPL","name":"Apple Inc.","recommendation":"Kaufen","conviction":1-10,"rationale":"Podcast-Kontext auf Deutsch","sources":["Podcast-Name"]}]`,

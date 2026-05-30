@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { LISA_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
 import { fetchGoogleNews } from "@/lib/finance-client";
@@ -30,8 +31,7 @@ async function runLenaAgent(items: { title: string; symbol: string; description?
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1200,
-    system:
-      "Du bist eine Finanz-Nachrichtenredakteurin. Antworte ausschließlich mit validem JSON.",
+    system: LISA_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",

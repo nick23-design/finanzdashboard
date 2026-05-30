@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { RADAR_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import { createServiceClient } from "@/lib/supabase/service";
 import { enrichWithDescriptions } from "@/lib/article-fetch";
 
@@ -221,7 +222,7 @@ export async function GET(request: NextRequest) {
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 1024,
-    system: `Du bist Radar, ein autonomer Markt-Scanner. Analysiere die folgenden Trending-Aktien mit ihren News-Auszügen und identifiziere die 3-5 interessantesten Signale für Investoren. Unterscheide klar zwischen substanziellem Trend (Earnings, Guidance, M&A, Regulierung) und reinem Hype (Social Media, Clickbait, generische Artikel). Antworte ausschließlich als JSON-Array.`,
+    system: RADAR_SYSTEM_PROMPT,
     messages: [{
       role: "user",
       content: `Aktuelle Trending-Aktien mit News-Auszügen:\n\n${context}\n\nIdentifiziere 3-5 substanzielle Signale. Format:\n[{"symbol":"AAPL","signal_type":"momentum|breakout|sentiment|value|risk","description":"Kurze Begründung auf Deutsch","confidence":1-10}]`,

@@ -24,6 +24,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { FINN_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Json } from "@/types/database";
@@ -341,7 +342,7 @@ JSON (exakt dieses Format):
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 900,
-      system: "Du bist ein nüchterner Research-Assistent für ein privates Finanz-Dashboard. Erstelle faktenbasierte Morgen-Briefings auf Deutsch. Keine Kauf-/Verkaufsempfehlungen, keine Renditeversprechen, keine Kursziele. Verwende für Indexbewegungen ausschließlich die im Prompt vorberechneten RICHTUNG-Labels. Beziehe dich nur auf bereitgestellte Daten. Antworte ausschließlich mit validem JSON.",
+      system: FINN_SYSTEM_PROMPT,
       messages: [{ role: "user", content: prompt }],
     });
 

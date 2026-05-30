@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { LISA_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { fetchGoogleNews } from "@/lib/finance-client";
 import { enrichWithDescriptions } from "@/lib/article-fetch";
@@ -41,7 +42,7 @@ export async function GET(
       const res = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 700,
-        system: "Du bist eine Finanz-Nachrichtenredakteurin. Antworte ausschließlich mit validem JSON.",
+        system: LISA_SYSTEM_PROMPT,
         messages: [{
           role: "user",
           content: `Klassifiziere und übersetze diese Nachrichten über ${symbol} für Investoren.

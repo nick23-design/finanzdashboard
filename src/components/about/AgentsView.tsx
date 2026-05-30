@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, Zap, Clock, Database, AlertTriangle, CheckCircl
 import { AgentAvatar } from "@/components/ui/AgentAvatar";
 import type { AgentId } from "@/components/ui/AgentAvatar";
 import { QuantEngineDocs } from "@/components/about/QuantEngineDocs";
+import { AGENT_SYSTEM_PROMPTS } from "@/lib/ai-analysis/agent-prompts";
 
 interface AgentDoc {
   id: AgentId;
@@ -42,7 +43,7 @@ const AGENTS: AgentDoc[] = [
       "Warnungen (z. B. kein EDGAR für EU-Aktien, Preis fehlt)",
       "Analysis-Confidence-Cap 4–10 für Opus",
     ],
-    systemPrompt: `"Kein LLM — Diana ist vollständig regelbasiert. Kein API-Call, kein Modell, kein Prompt."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["diana"],
     workflow: [
       "Alle Kennzahlen des Asset-Snapshots werden gegen eine Pflichtfeld-Liste geprüft",
       "Fehlende Pflichtfelder (KGV, Marktkapitalisierung, etc.) werden mit Punktabzug bewertet",
@@ -82,7 +83,7 @@ const AGENTS: AgentDoc[] = [
       "Wichtigkeits-Klassifizierung: hoch / mittel / niedrig",
       "Deutsche Übersetzung des Titels",
     ],
-    systemPrompt: `"Du bist eine Finanz-Nachrichtenredakteurin. Antworte ausschließlich mit validem JSON."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["lisa"],
     workflow: [
       "Google News RSS wird für jede Watchlist-Aktie abgerufen",
       "Artikel-URLs werden parallel an Jina AI Reader geschickt (r.jina.ai/{url}, 5 s Timeout)",
@@ -123,7 +124,7 @@ const AGENTS: AgentDoc[] = [
       "Key Risks (Array)",
       "Bewertungskommentar (Text) — jetzt mit relativem Peer-Vergleich",
     ],
-    systemPrompt: `"Du bist ein wachstumsorientierter Aktienanalyst. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["felix"],
     workflow: [
       "Snapshot-Daten und EDGAR-Quartalszahlen werden als strukturierter Text formatiert",
       "Peer-Snapshots der letzten 24h werden aus Supabase geladen (falls gecacht)",
@@ -163,7 +164,7 @@ const AGENTS: AgentDoc[] = [
       "Key Themes (Array)",
       "Sentiment Summary (Text)",
     ],
-    systemPrompt: `"Du bist ein Finanz-Nachrichtenanalyst. Artikel von Quellen mit [★] sind besonders zuverlässig und sollen stärker gewichtet werden. Antworte ausschließlich mit validem JSON, ohne Erklärungen davor oder danach."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["nina"],
     workflow: [
       "Google News RSS liefert aktuelle Schlagzeilen zur Aktie",
       "Artikel-URLs werden parallel an Jina AI Reader geschickt (5 s Timeout)",
@@ -204,7 +205,7 @@ const AGENTS: AgentDoc[] = [
       "Trends-Momentum: rising / stable / declining",
       "Key Observations (Array)",
     ],
-    systemPrompt: `"Du bist ein Marktanalyse-Experte. Bewerte Insider-Aktivität, institutionelle Positionierung und Suchtrends als Investmentsignale. Antworte ausschließlich mit validem JSON."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["marco"],
     workflow: [
       "Insider-Trades, institutionelle Daten und Google Trends werden parallel abgerufen",
       "Marco bewertet ob Insider kaufen oder verkaufen und ob Institutionen akkumulieren",
@@ -247,7 +248,7 @@ const AGENTS: AgentDoc[] = [
       "Strukturierte Findings: claim, issue_type, correction, severity, confidence → fact_check_findings DB",
       "Vera-Status im Analysebericht: läuft, fehlgeschlagen, Änderungen gefunden oder verifiziert",
     ],
-    systemPrompt: `"Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen. Nutze nur Finance-API-Daten, Analysten-Daten und News-Excerpts. [...] REGELN: (1) Autoritative Marktdaten dürfen nicht durch Artikelpreise überschrieben werden. (2) Altersbasierte Vertrauensregeln. (3) Prozentzahlen in Artikeln sind historische Kursbewegungen, keine MA-Abstände. (4) Korrigiere nur klar belegte Fehler."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["vera"],
     workflow: [
       "Opus schließt Analyse mit complete_analysis-Tool-Call ab (Zod-validiert: Empfehlung aus Enum, Conviction 1–10)",
       "Die Hauptanalyse wird gespeichert und dem Nutzer angezeigt, bevor Vera fertig sein muss",
@@ -301,7 +302,7 @@ const AGENTS: AgentDoc[] = [
       "Wachstumsausblick (Text)",
       "Kursziele: Entry, Target, Stop-Loss mit Begründung",
     ],
-    systemPrompt: `"Du bist Opus, der leitende Investment-Stratege. [...] HISTORISCHE GUARDRAILS (aus früheren Vera-Korrekturen — strikt einhalten): - [Symbol] Korrektur... - [Global] Korrektur..."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["opus"],
     workflow: [
       "Historische Guardrails aus fact_check_findings werden geladen (symbol-spezifisch + global) und in den System-Prompt injiziert",
       "Erhält aggregierten Kontext aus Felix (mit Peer-Daten), Nina (mit Auszügen), Marco + Rohdaten",
@@ -349,7 +350,7 @@ const AGENTS: AgentDoc[] = [
       "Schwächen A + B (je 2 Punkte)",
       "Verdict (1–2 Sätze mit konkreter Begründung)",
     ],
-    systemPrompt: `"Du bist Kai, ein präziser Aktienvergleichs-Analyst. Du hast Zugang zu Kennzahlen, Branchen-Peers und aktuellen News beider Aktien. Antworte ausschließlich mit validem JSON."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["kai"],
     workflow: [
       "Snapshot-Daten, Scores, News und Peer-Kontext für beide Aktien werden parallel abgerufen",
       "News-URLs beider Aktien werden parallel an Jina AI Reader geschickt — bis zu 5 Artikel pro Symbol mit echtem Inhalt",
@@ -388,7 +389,7 @@ const AGENTS: AgentDoc[] = [
       "2–4 US-Aktien mit Symbol, Name, Empfehlung, Conviction 1–10, Begründung, Quellen",
       "Nur Symbole die von der Finance API validiert wurden (existierende Ticker)",
     ],
-    systemPrompt: `"Du bist US-Scout, ein US-Markt Analyst. Analysiere aktuelle US-Finanznachrichten und identifiziere 2-4 vielversprechende US-Aktien mit konkreten Ticker-Symbolen. Antworte ausschließlich als JSON-Array."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["us-scout"],
     workflow: [
       "Drei thematische Google News RSS-Feeds + drei Premium RSS-Feeds werden parallel abgerufen",
       "Premium-Feeds (Reuters, AP, MarketWatch) liefern plain-text Beschreibungen — HTML-Descriptions werden übersprungen",
@@ -427,7 +428,7 @@ const AGENTS: AgentDoc[] = [
       "2–4 DE/EU-Aktien mit Symbol, Name, Empfehlung, Conviction, Begründung",
       "Symbole validiert — .DE-Suffix wird automatisch ergänzt wenn nötig",
     ],
-    systemPrompt: `"Du bist DE-Scout, ein DACH- und Europa-Markt Analyst. Analysiere aktuelle deutschsprachige Finanznachrichten und identifiziere 2-4 vielversprechende Aktien. Antworte ausschließlich als JSON-Array."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["de-scout"],
     workflow: [
       "Drei deutschsprachige Google News RSS-Feeds + drei Premium RSS-Feeds werden parallel abgerufen",
       "Premium-Feeds (Reuters DE, Handelsblatt, FAZ) liefern plain-text Beschreibungen — HTML-Descriptions werden übersprungen",
@@ -465,7 +466,7 @@ const AGENTS: AgentDoc[] = [
       "1–3 Aktien mit Symbol, Name, Empfehlung, Conviction, Begründung",
       "Nur Symbole die von der Finance API validiert wurden (.DE-Fallback für EU-Aktien)",
     ],
-    systemPrompt: `"Du bist Podcast-Scout, ein Investment-Podcast Analyst. Analysiere aktuelle Investment-Podcast-Episoden und extrahiere konkret genannte Aktien-Empfehlungen. Antworte ausschließlich als JSON-Array."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["podcast-scout"],
     workflow: [
       "Vier Podcast-Feeds werden parallel abgerufen (Motley Fool Money, Alles auf Aktien, Google News Podcast DE/EN)",
       "Bis zu 5 Episoden pro Feed werden extrahiert (Titel + Beschreibung)",
@@ -507,7 +508,7 @@ const AGENTS: AgentDoc[] = [
       "Begründung (2–3 Sätze)",
       "Quellen-Array",
     ],
-    systemPrompt: `"Du bist Opus, der leitende Investment-Stratege von NextHorizon. Deine Aufgabe ist die tägliche NH-Select-Empfehlung. Berücksichtige die aktuellen Kurse: Aktien die bereits stark gestiegen sind oder nahe Widerständen notieren sind kritisch zu bewerten."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["synthesizer"],
     workflow: [
       "Liest alle Scout-Ergebnisse und Radar-Signale der letzten 48h",
       "Ruft aktuelle Kurse aller Kandidaten parallel ab (vor dem Opus-Call)",
@@ -547,7 +548,7 @@ const AGENTS: AgentDoc[] = [
     outputs: [
       "3–5 Radar-Signale: Symbol, Signal-Typ, Beschreibung, Confidence 1–10",
     ],
-    systemPrompt: `"Du bist Radar, ein autonomer Markt-Scanner. Unterscheide klar zwischen substanziellem Trend (Earnings, Guidance, M&A) und reinem Hype (Clickbait, Social Media). Antworte ausschließlich als JSON-Array."`,
+    systemPrompt: AGENT_SYSTEM_PROMPTS["radar"],
     workflow: [
       "Top 10 Trending-Ticker werden von Yahoo Finance abgerufen",
       "Für jeden Ticker: bis zu 8 News-Items (title + url + source) aus Google News RSS",

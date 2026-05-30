@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { DE_SCOUT_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import { createServiceClient } from "@/lib/supabase/service";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -159,7 +160,7 @@ export async function GET(request: NextRequest) {
   const msg = await anthropic.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
-    system: `Du bist DE-Scout, ein DACH- und Europa-Markt Analyst. Analysiere aktuelle deutschsprachige Finanznachrichten und identifiziere 2-4 vielversprechende Aktien aus dem deutschen oder europäischen Markt. Bevorzuge Aktien mit bekanntem Ticker-Symbol (z.B. SAP, BMW, BAYN). Antworte ausschließlich als JSON-Array.`,
+    system: DE_SCOUT_SYSTEM_PROMPT,
     messages: [{
       role: "user",
       content: `Aktuelle deutschsprachige Finanznachrichten:\n\n${newsText}\n\nIdentifiziere 2-4 interessante DACH/Europa-Aktien. Nur Aktien mit erkennbarem Ticker. Format:\n[{"symbol":"SAP","name":"SAP SE","recommendation":"Kaufen","conviction":1-10,"rationale":"Kurze Begründung auf Deutsch","sources":["Quelle"]}]`,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { US_SCOUT_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import { createServiceClient } from "@/lib/supabase/service";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -147,7 +148,7 @@ export async function GET(request: NextRequest) {
   const msg = await anthropic.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
-    system: `Du bist US-Scout, ein US-Markt Analyst. Analysiere aktuelle US-Finanznachrichten und identifiziere 2-4 vielversprechende US-Aktien mit konkreten Ticker-Symbolen. Antworte ausschließlich als JSON-Array.`,
+    system: US_SCOUT_SYSTEM_PROMPT,
     messages: [{
       role: "user",
       content: `Aktuelle US-Finanznachrichten:\n\n${newsText}\n\nIdentifiziere 2-4 US-Aktien die heute besonders interessant sind. Nur Aktien mit klar erkennbarem Ticker. Format:\n[{"symbol":"AAPL","name":"Apple Inc.","recommendation":"Kaufen","conviction":1-10,"rationale":"Kurze Begründung auf Deutsch","sources":["Quelle"]}]`,
