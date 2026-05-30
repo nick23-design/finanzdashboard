@@ -88,20 +88,32 @@ export async function PATCH(
 
   await supabase.from("fact_check_findings").update({ review_status: newStatus } as any).eq("id", findingId);
 
-  // Übernahme-Wirkung: erstmalige Bestätigung eines high-Findings senkt Conviction
-  // und markiert die Analyse als "needs_revision".
+  // Übernahme-Wirkung: die erste Bestätigung eines high-Findings senkt die
+  // Conviction einmalig und markiert die Analyse als "needs_revision".
   const severity = (finding as { severity: string }).severity;
   const analysisId = (finding as { analysis_id: string | null }).analysis_id;
   if (action === "confirm" && prevStatus !== "confirmed" && severity === "high" && analysisId) {
-    const { data: analysis } = await supabase
-      .from("ai_analyses")
-      .select("conviction")
-      .eq("id", analysisId)
-      .single();
-    const conviction = (analysis as { conviction: number } | null)?.conviction;
-    const update: Record<string, unknown> = { fact_check_status: "needs_revision" };
-    if (typeof conviction === "number") update.conviction = Math.max(1, conviction - 1);
-    await supabase.from("ai_analyses").update(update as any).eq("id", analysisId);
+    // Einmalig pro Analyse: nur senken, wenn noch kein anderes high-Finding
+    // dieser Analyse bestätigt wurde.
+    const { count: alreadyConfirmedHigh } = await supabase
+      .from("fact_check_findings")
+      .select("id", { count: "exact", head: true })
+      .eq("analysis_id", analysisId)
+      .eq("severity", "high")
+      .eq("review_status", "confirmed")
+      .neq("id", findingId);
+
+    if (!alreadyConfirmedHigh) {
+      const { data: analysis } = await supabase
+        .from("ai_analyses")
+        .select("conviction")
+        .eq("id", analysisId)
+        .single();
+      const conviction = (analysis as { conviction: number } | null)?.conviction;
+      const update: Record<string, unknown> = { fact_check_status: "needs_revision" };
+      if (typeof conviction === "number") update.conviction = Math.max(1, conviction - 1);
+      await supabase.from("ai_analyses").update(update as any).eq("id", analysisId);
+    }
   }
 
   return NextResponse.json({ ok: true, review_status: newStatus });
