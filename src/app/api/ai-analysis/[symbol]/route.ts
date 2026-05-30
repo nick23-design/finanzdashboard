@@ -75,6 +75,7 @@ import type {
   InstitutionalData,
   AnalystData,
 } from "@/lib/finance-client";
+import { getEurUsd, type FxSource } from "@/lib/fx";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { rateLimit } from "@/lib/rate-limit";
@@ -169,7 +170,8 @@ const VERA_MAX_TURNS = 3;
 const DEFERRED_VERA_TIMEOUT_MS = 25_000;
 const VERA_FAST_NEWS_LIMIT = 5;
 const VERA_FULL_NEWS_LIMIT = 10;
-const EUR_USD_FALLBACK = 1.08;
+// Nur noch Error-Path-Default; der echte Kurs kommt aus getEurUsd (@/lib/fx).
+const EUR_USD_FALLBACK = 1.16;
 // Opus ist die qualitative Hauptsynthese. Keine SDK-Retries: Ein sauberer
 // Versuch, danach Haiku-Fallback statt versteckter 3x-Timeouts.
 const SYNTHESIS_OPUS_MODEL = "claude-opus-4-7";
@@ -369,7 +371,7 @@ export interface ValuationRange extends MoneyRange {
   usd?: MoneyRange | null;
   eur?: MoneyRange | null;
   fx_rate_eur_usd?: number | null;
-  fx_rate_source?: "finance_api" | "fallback" | null;
+  fx_rate_source?: FxSource | null;
   fx_rate_as_of?: string | null;
 }
 
@@ -1087,21 +1089,13 @@ function buildValuationRange(
 
 interface FxContext {
   eurUsd: number;
-  source: "finance_api" | "fallback";
+  source: FxSource;
   asOf: string;
 }
 
 async function fetchFxContext(): Promise<FxContext> {
-  try {
-    const fx = await fetchAssetData("EURUSD=X");
-    const price = typeof fx.price === "number" && Number.isFinite(fx.price) ? fx.price : null;
-    if (price && price > 0) {
-      return { eurUsd: price, source: "finance_api", asOf: fx.fetched_at ?? new Date().toISOString() };
-    }
-  } catch {
-    // Fallback below keeps the UI usable if the FX ticker is unavailable.
-  }
-  return { eurUsd: EUR_USD_FALLBACK, source: "fallback", asOf: new Date().toISOString() };
+  // Quellen-Kaskade (yfinance → EZB → Cache → Fallback) liegt zentral in @/lib/fx.
+  return getEurUsd();
 }
 
 function enrichRawValuationRange(raw: RawValuationRange | null, fx: FxContext): ValuationRange | null {

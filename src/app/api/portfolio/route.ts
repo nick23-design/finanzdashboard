@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isNextResponse } from "@/lib/api-auth";
 import { createClient } from "@/lib/supabase/server";
+import { getEurUsd, convertUsdEur } from "@/lib/fx";
 import { z } from "zod";
 
 const FINANCE_API_URL = process.env.FINANCE_API_URL || "http://localhost:8000";
@@ -106,30 +107,21 @@ export async function GET(_request: NextRequest) {
     })
   );
 
-  // Fetch FX rates for cross-currency positions (e.g. USD asset bought in EUR)
-  const fxRates: Record<string, number> = {}; // e.g. "EURUSD" -> 1.08 (1 EUR = 1.08 USD)
+  // FX-Kurs für Cross-Currency-Positionen (z. B. USD-Asset in EUR gekauft).
+  // Zentrale Kaskade: yfinance → EZB → Cache → Fallback (siehe @/lib/fx).
   const needsEurUsd = positions.some(p => {
     const pc = p.purchase_currency;
     const ac = priceMap[p.symbol]?.currency;
     return pc && ac && pc !== ac && ((pc === "EUR" && ac === "USD") || (pc === "USD" && ac === "EUR"));
   });
-  if (needsEurUsd) {
-    try {
-      const res = await fetch(`${FINANCE_API_URL}/assets/EURUSD=X`, { next: { revalidate: 300 } });
-      if (res.ok) {
-        const d = await res.json();
-        if (d.price) fxRates["EURUSD"] = d.price; // 1 EUR = X USD
-      }
-    } catch {}
-  }
+  const eurUsd = needsEurUsd ? (await getEurUsd()).eurUsd : null;
 
   function convertToTargetCurrency(price: number, from: string, to: string): number {
     if (from === to) return price;
-    const eurUsd = fxRates["EURUSD"];
-    if (!eurUsd) return price; // fallback: no conversion available
-    if (from === "USD" && to === "EUR") return price / eurUsd;
-    if (from === "EUR" && to === "USD") return price * eurUsd;
-    return price; // other pairs: no conversion
+    if (!eurUsd || (from !== "USD" && from !== "EUR") || (to !== "USD" && to !== "EUR")) {
+      return price; // anderes Paar oder kein Kurs: keine Umrechnung
+    }
+    return convertUsdEur(price, from, to, eurUsd);
   }
 
   // Group by symbol
