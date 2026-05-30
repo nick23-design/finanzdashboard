@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, ArrowRight } from "lucide-react";
+import { ChevronDown, ChevronUp, ArrowRight, Calculator, Bot, ShieldCheck, Eye } from "lucide-react";
 import { AgentAvatar, type AgentId } from "@/components/ui/AgentAvatar";
 
 /**
@@ -10,35 +10,52 @@ import { AgentAvatar, type AgentId } from "@/components/ui/AgentAvatar";
  * Bewusst kompakt — die vollständige technische Doku liegt unter /dashboard/agents.
  */
 
+// ── Stufe 1: deterministische Bewertungs-Engine (reine Finanzmathematik) ──────
+const QUANT_STEPS: { title: string; desc: string }[] = [
+  { title: "Unternehmenstyp-Erkennung", desc: "Jede Aktie wird einem Typ und Sektor-Template zugeordnet — das steuert, welche Bewertungsmethode passt." },
+  { title: "DCF-Bewertung in Szenarien", desc: "Discounted-Cashflow mit sektorspezifischen Annahmen (WACC, Terminal Growth, Margen) als Bear-/Base-/Bull-Fall." },
+  { title: "Reverse-DCF", desc: "Rechnet zurück, welches Wachstum der aktuelle Kurs bereits einpreist — ein Plausibilitätscheck." },
+  { title: "Alpha-Faktor-Modell", desc: "Bündelt Qualität, Burggraben (Moat), Kapitalallokation, relative Bewertung, Schätzungs-Revisionen, Momentum und Risiko zu einem Alpha-Score." },
+  { title: "Spezialmodelle je Branche", desc: "Eigene Modelle für REITs (AFFO/NAV), Banken, Halbleiter-Zyklus, Software (Rule of 40), Plattformen (SOTP), Rohstoff/Energie u. a." },
+  { title: "Divergenz-Analyse", desc: "Vergleicht das eigene Modell mit dem Analystenkonsens und macht die Differenz sichtbar." },
+];
+
+// ── Stufe 2: KI-Agenten-Pipeline ──────────────────────────────────────────────
 interface PipelineStep {
   agent: AgentId;
   role: string;
   what: string;
 }
 
-// Reihenfolge entspricht der echten Analyse-Pipeline (Schritt 0 → Nachgang).
 const PIPELINE: PipelineStep[] = [
-  { agent: "diana", role: "Datenqualität", what: "Prüft, wie vollständig die Rohdaten sind, und begrenzt die Überzeugung bei Lücken." },
+  { agent: "diana", role: "Datenqualität", what: "Prüft regelbasiert, wie vollständig die Rohdaten sind, und begrenzt die Überzeugung bei Lücken." },
   { agent: "felix", role: "Fundamental", what: "Bewertet Wachstum, Profitabilität und Bewertung — inklusive Vergleich mit Branchen-Peers." },
   { agent: "nina",  role: "Nachrichten", what: "Liest aktuelle Schlagzeilen und bestimmt Stimmung und Kernthemen." },
   { agent: "marco", role: "Markt-Signale", what: "Wertet Insider-Käufe, institutionelle Bewegungen und Suchtrends aus (v. a. US-Aktien)." },
-  { agent: "opus",  role: "Synthese", what: "Fasst alle Signale zu Empfehlung, Überzeugung und Kurszielen zusammen." },
-  { agent: "vera",  role: "Fakten-Check", what: "Prüft die fertige Analyse gegen Live-Marktdaten und korrigiert belegbare Fehler." },
+  { agent: "opus",  role: "Synthese", what: "Führt Engine-Ergebnisse, Agenten-Bausteine und News zu Empfehlung, Überzeugung und Kurszielen zusammen." },
+  { agent: "vera",  role: "Fakten-Check", what: "Prüft die fertige Analyse gegen Live-Marktdaten, korrigiert Fehler und speist Erkenntnisse als künftige Guardrails zurück." },
 ];
 
-// Was der Nutzer im Analyse-Ergebnis tatsächlich sieht.
+// ── Was der Nutzer im Ergebnis sieht ──────────────────────────────────────────
 const FEATURES: { title: string; desc: string }[] = [
   { title: "Empfehlung & Überzeugung", desc: "Kaufen bis Verkaufen, plus Überzeugungsgrad 1–10." },
-  { title: "Bewertungsspanne", desc: "Bear-/Base-/Bull-Szenario — umschaltbar zwischen USD und EUR." },
+  { title: "Bewertungsspanne", desc: "Bear-/Base-/Bull-Szenario aus der DCF-/Modell-Engine — umschaltbar USD/EUR." },
+  { title: "Analystenkonsens & Divergenz", desc: "Eigenes Modell gegen den Markt — mit prozentualer Abweichung." },
   { title: "Kursziele", desc: "Einstieg, Kursziel und Stop-Loss als Orientierungsmarken." },
   { title: "Bull- & Bear-Case", desc: "Die stärksten Argumente für und gegen die Aktie." },
-  { title: "Fundamental-Rating", desc: "Bewertung 1–10 mit konkreten Stärken und Risiken." },
+  { title: "Fundamental & Markt-Signale", desc: "Rating mit Stärken/Risiken, dazu Insider, Institutionen und Trends." },
   { title: "Nachrichtenstimmung", desc: "Positiv / neutral / negativ mit den wichtigsten Themen." },
-  { title: "Markt-Signale", desc: "Insider, Institutionen und Suchtrends auf einen Blick." },
-  { title: "Fakten-Check", desc: "Vera-Status zeigt, ob Aussagen gegen Live-Daten geprüft wurden." },
-  { title: "Score-Verlauf", desc: "Entwicklung von Empfehlung und Überzeugung über frühere Analysen." },
-  { title: "Vergleichbare Unternehmen", desc: "Peers zur schnellen Einordnung der Aktie." },
+  { title: "Fakten-Check & Score-Verlauf", desc: "Vera-Status und die Entwicklung früherer Analysen." },
 ];
+
+function SectionHeader({ Icon, color, label }: { Icon: typeof Calculator; color: string; label: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Icon size={12} style={{ color }} />
+      <p className="text-[9px] font-semibold uppercase tracking-wide" style={{ color }}>{label}</p>
+    </div>
+  );
+}
 
 export function AnalysisExplainer() {
   const [open, setOpen] = useState(false);
@@ -60,7 +77,7 @@ export function AnalysisExplainer() {
             </span>
           </div>
           <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-            Sechs spezialisierte KI-Agenten in einer Pipeline
+            Quantitative Bewertungs-Engine, KI-Agenten und automatische Guardrails
           </p>
         </div>
         {open
@@ -69,19 +86,33 @@ export function AnalysisExplainer() {
       </button>
 
       {open && (
-        <div className="border-t px-4 pb-4 pt-3 space-y-4" style={{ borderColor: "var(--card-border)" }}>
+        <div className="border-t px-4 pb-4 pt-3 space-y-5" style={{ borderColor: "var(--card-border)" }}>
 
           <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
-            Wenn du auf einer Aktie „KI-Analyse starten“ wählst, durchläuft sie nacheinander
-            mehrere Agenten. Jeder steuert einen Baustein bei, den Opus am Ende zu einer
-            Gesamtempfehlung zusammenführt und Vera anschließend faktencheckt.
+            Eine Analyse kombiniert drei Ebenen: zuerst eine <span className="text-white font-medium">quantitative
+            Bewertungs-Engine</span> aus echten Finanzmodellen, dann <span className="text-white font-medium">KI-Agenten</span>,
+            die qualitative Bausteine liefern und alles zusammenführen, und am Ende eine
+            <span className="text-white font-medium"> regelbasierte Qualitätssicherung</span>, die das Ergebnis prüft und korrigiert.
           </p>
 
-          {/* Pipeline */}
+          {/* Stufe 1 — Quantitative Engine */}
           <div className="space-y-2">
-            <p className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: "var(--muted)" }}>
-              Die Pipeline
-            </p>
+            <SectionHeader Icon={Calculator} color="#22c55e" label="1 · Quantitative Bewertung (ohne KI)" />
+            <div className="grid gap-1.5">
+              {QUANT_STEPS.map(s => (
+                <div key={s.title} className="flex gap-2">
+                  <span className="mt-1.5 h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ background: "#22c55e" }} />
+                  <p className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
+                    <span className="font-semibold text-white">{s.title}</span> — {s.desc}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Stufe 2 — KI-Agenten */}
+          <div className="space-y-2">
+            <SectionHeader Icon={Bot} color="#a78bfa" label="2 · KI-Agenten-Pipeline" />
             <div className="space-y-2">
               {PIPELINE.map((step, i) => (
                 <div key={step.agent} className="flex items-start gap-3">
@@ -105,15 +136,24 @@ export function AnalysisExplainer() {
             </div>
           </div>
 
-          {/* Was die Analyse zeigt */}
+          {/* Stufe 3 — Guardrails */}
           <div className="space-y-2">
-            <p className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: "var(--muted)" }}>
-              Was die Analyse dir zeigt
+            <SectionHeader Icon={ShieldCheck} color="#f59e0b" label="3 · Guardrails (Qualitätssicherung)" />
+            <p className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
+              Über 40 regelbasierte Guardrails prüfen das KI-Ergebnis in mehreren Phasen — vollständig
+              deterministisch, ohne weiteres Modell. Sie verhindern z. B. eine starke Kaufempfehlung ohne
+              Modell-Stütze, Scheinpräzision bei breiter Bewertungsspanne oder ein Branchen-fremdes
+              Bewertungsmodell, und deckeln die Überzeugung bei dünner Datenlage.
             </p>
+          </div>
+
+          {/* Was du siehst */}
+          <div className="space-y-2">
+            <SectionHeader Icon={Eye} color="#38bdf8" label="Was du im Ergebnis siehst" />
             <div className="grid gap-1.5">
               {FEATURES.map(f => (
                 <div key={f.title} className="flex gap-2">
-                  <span className="mt-1.5 h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ background: "var(--primary)" }} />
+                  <span className="mt-1.5 h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ background: "#38bdf8" }} />
                   <p className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
                     <span className="font-semibold text-white">{f.title}</span> — {f.desc}
                   </p>
@@ -131,7 +171,7 @@ export function AnalysisExplainer() {
           </Link>
 
           <p className="text-[10px] leading-relaxed" style={{ color: "var(--muted)" }}>
-            Hinweis: Die KI-Analyse ist eine research-Unterstützung, keine Anlageberatung.
+            Hinweis: Die KI-Analyse ist eine Research-Unterstützung, keine Anlageberatung.
             Ergebnisse werden 6 Stunden zwischengespeichert.
           </p>
         </div>
