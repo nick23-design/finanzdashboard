@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { createServiceClient } from "@/lib/supabase/service";
+import { VERA_CRON_SYSTEM_PROMPT } from "@/lib/ai-analysis/agent-prompts";
 import type { VeraFactCheckResult, VeraIssueType, FactCheckStatus } from "@/types/vera";
 import type { Json } from "@/types/database";
 
@@ -129,32 +130,7 @@ export async function runVeraFactCheck(
     claims.length ? `Claims (Anzahl): ${claims.length}` : null,
   ].filter(Boolean).join("\n");
 
-  const systemPrompt = `Du bist Vera, eine kritische Fact-Checkerin für Finanzanalysen.
-Prüfe die Analyse nach diesen 6 Kriterien (A-F):
-
-A) KONSENS-VS-MODELL-TRENNUNG: Werden Analystenkonsens und eigenes Bewertungsmodell klar getrennt?
-   Fehler: Konsens-Kursziele werden als eigenes Fair-Value ausgegeben.
-
-B) DIVERGENZPRÜFUNG: Ist die Divergenz zwischen Konsens und eigenem Modell erwähnt und korrekt beschrieben?
-   Fehler: Hohe Divergenz (>20%) ohne Kommentar oder falsche Interpretation.
-
-C) WERTTREIBERPRÜFUNG: Passen die genannten Werttreiber zum Unternehmenstyp?
-   Fehler: Hyperscaler ohne AI-Capex/Margenlogik, Semis ohne Zyklus/Inventar, Growth ohne Cashburn.
-
-D) ZAHLENKONSISTENZ: Sind Conviction, Datenbasis-Score, Valuation Confidence und Empfehlung konsistent?
-   Fehler: Hohe Conviction bei lückenhafter Datenbasis (< 50%) oder "Kaufen" bei niedrigem Score.
-
-E) KONFIDENZPRÜFUNG: Sind die Sicherheitsaussagen proportional zur Datenbasis?
-   Fehler: Pseudo-präzise Kursziele bei niedrigem Completeness Score ohne Vorbehalt.
-
-F) AKTUALITÄTSPRÜFUNG: Wirken die Daten plausibel für eine Analyse (kein offensichtlicher Zeitwiderspruch)?
-   Fehler: Evidenz für stark veraltete Daten ohne Hinweis.
-
-WICHTIG:
-- Korrigiere nur was eindeutig problematisch ist. Bei Unklarheit: kein Issue.
-- Bewerte Issues mit severity: "low", "medium" oder "high".
-- "high" nur bei klaren, belegbaren Fehlern (z.B. Konsens als eigenes Modell ausgegeben).
-- Antworte ausschließlich mit kompaktem gültigem JSON.`;
+  const systemPrompt = VERA_CRON_SYSTEM_PROMPT;
 
   const userContent = `Prüfe diese Analyse auf die 6 VERA-Kriterien (A-F):
 
