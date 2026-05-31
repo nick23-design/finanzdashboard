@@ -996,7 +996,7 @@ function buildHeuristicSynthesis(
   const bearCase = (risks.length ? risks : [
     s.pe_ratio != null && s.pe_ratio > 35 ? `Hohes KGV von ${s.pe_ratio.toFixed(1)} erhöht Bewertungsrisiko.` : null,
     s.price != null && s.moving_average_200 != null && s.price < s.moving_average_200 ? "Kurs liegt unter dem 200-Tage-Durchschnitt; langfristiger Trend ist noch nicht bestätigt." : null,
-    marketIntel?.trends_momentum === "declining" ? "Retail-Interesse laut Google Trends rückläufig; nur schwaches Zusatzsignal." : null,
+    marketIntel?.trends_momentum === "declining" ? "Öffentliches Interesse (Wikipedia-Aufrufe) rückläufig; nur schwaches Zusatzsignal." : null,
   ].filter((item): item is string => !!item)).slice(0, 4);
 
   while (bullCase.length < 2) bullCase.push("Fundamentaldaten liefern zumindest eine prüfbare Basis für weitere Research-Arbeit.");
@@ -2146,9 +2146,9 @@ async function runSynthesisAgent(
     ? `\nMARKT-INTELLIGENZ:
 Insider-Signal: ${marketIntel.insider_signal.toUpperCase()}
 Institutioneller Trend: ${marketIntel.institutional_trend.toUpperCase()}
-Google Trends: ${marketIntel.trends_momentum.toUpperCase()}
+Öffentliches Interesse (Wikipedia): ${marketIntel.trends_momentum.toUpperCase()}
 Beobachtungen: ${marketIntel.key_observations.join(" | ")}
-Hinweis: Google Trends ist nur ein schwaches Retail-Sentiment-Signal, kein Kernargument.`
+Hinweis: Öffentliches Interesse (Wikipedia-Aufrufe) ist nur ein schwaches Aufmerksamkeitssignal, kein Kernargument.`
     : "";
 
   const analystSection = formatAnalystData(analystData);
@@ -2657,7 +2657,7 @@ function formatMarketIntel(
     const avgOld = old.reduce((a, b) => a + b, 0) / old.length;
     const current = trends[0].value;
     const trendDir = avgRecent > avgOld * 1.1 ? "steigend" : avgRecent < avgOld * 0.9 ? "fallend" : "stabil";
-    lines.push(`GOOGLE TRENDS (0-100): Aktuell ${current} | Trend: ${trendDir} | Ø letzt. 4 Wochen: ${avgRecent.toFixed(0)} vs. Ø vor 1 Jahr: ${avgOld.toFixed(0)}`);
+    lines.push(`ÖFFENTLICHES INTERESSE (Wikipedia-Aufrufe, 0-100): Aktuell ${current} | Trend: ${trendDir} | Ø letzt. 4 Wochen: ${avgRecent.toFixed(0)} vs. Ø vor 1 Jahr: ${avgOld.toFixed(0)}`);
   }
 
   return lines.join("\n\n");

@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import requests
@@ -1159,30 +1159,215 @@ def get_insider_trades(symbol: str):
     return all_trades[:20]
 
 
+# ── Public-interest trends via Wikipedia pageviews ───────────────────────────
+# Replaces pytrends/Google Trends, which Google blocks from cloud-server IPs.
+# Pipeline per symbol: ISIN -> Wikidata entity -> exact Wikipedia article per
+# language -> merge the article + its redirects (survives page renames) ->
+# daily pageviews -> weekly buckets normalised to 0-100 (the TrendPoint shape).
+# It measures reader interest, not search volume (label accordingly in the UI).
+_WIKI_UA = "Finanzdashboard/1.0 (https://nexthorizon-ai.com; contact@nexthorizon-ai.com)"
+_WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
+# Wikidata "instance of" (P31) QIDs that mark an item as a company/organisation,
+# used to avoid mis-resolving an ambiguous name (e.g. Palantír the Tolkien object).
+_ORG_QIDS = {
+    "Q4830453",  # business
+    "Q891723",   # public company
+    "Q6881511",  # enterprise
+    "Q783794",   # company
+    "Q43229",    # organization
+    "Q167037",   # corporation
+}
+_TRENDS_REDIRECT_CAP = 12   # bound the pageview fan-out per symbol
+_wiki_target_cache: dict[str, tuple[list[str], str]] = {}  # "SYM|lang" -> (titles, edition)
+
+
+def _trends_edition_for(symbol: str) -> str:
+    """en.wikipedia for US listings, de.wikipedia for European (suffixed) ones."""
+    return "de" if ("." in symbol and not symbol.upper().endswith(".US")) else "en"
+
+
+def _wikidata_sitelinks_by_isin(isin: str) -> dict[str, str]:
+    """ISIN -> {edition: article_title} via Wikidata property P946 (exact match)."""
+    query = (
+        "SELECT ?en ?de WHERE {"
+        f'?item wdt:P946 "{isin}".'
+        "OPTIONAL{?en schema:about ?item;schema:isPartOf <https://en.wikipedia.org/>.}"
+        "OPTIONAL{?de schema:about ?item;schema:isPartOf <https://de.wikipedia.org/>.}"
+        "} LIMIT 1"
+    )
+    try:
+        resp = requests.get(
+            _WIKIDATA_SPARQL, params={"query": query, "format": "json"},
+            headers={"User-Agent": _WIKI_UA}, timeout=12,
+        )
+        bindings = resp.json().get("results", {}).get("bindings", [])
+    except Exception:
+        return {}
+    if not bindings:
+        return {}
+    row = bindings[0]
+    out: dict[str, str] = {}
+    for edition in ("en", "de"):
+        url = (row.get(edition) or {}).get("value")
+        if url:
+            out[edition] = urllib.parse.unquote(url.rsplit("/wiki/", 1)[-1])
+    return out
+
+
+def _wikidata_sitelinks_by_name(name: str) -> dict[str, str]:
+    """Fallback when no ISIN: resolve a company name to its Wikidata entity,
+    verify it is an organisation, and return its Wikipedia titles per edition."""
+    try:
+        resp = requests.get(
+            "https://www.wikidata.org/w/api.php",
+            params={"action": "wbsearchentities", "search": name, "language": "en",
+                    "type": "item", "limit": 5, "format": "json"},
+            headers={"User-Agent": _WIKI_UA}, timeout=10,
+        )
+        hits = resp.json().get("search", [])
+    except Exception:
+        return {}
+    for hit in hits:
+        qid = hit.get("id")
+        if not qid:
+            continue
+        links = _wikidata_org_sitelinks(qid)
+        if links:  # only returns links for items that are organisations
+            return links
+    return {}
+
+
+def _wikidata_org_sitelinks(qid: str) -> dict[str, str]:
+    try:
+        resp = requests.get(
+            f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json",
+            headers={"User-Agent": _WIKI_UA}, timeout=10,
+        )
+        entity = resp.json().get("entities", {}).get(qid, {})
+    except Exception:
+        return {}
+    is_org = any(
+        ((claim.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id") in _ORG_QIDS)
+        for claim in entity.get("claims", {}).get("P31", [])
+    )
+    if not is_org:
+        return {}
+    sitelinks = entity.get("sitelinks", {})
+    out: dict[str, str] = {}
+    if "enwiki" in sitelinks:
+        out["en"] = sitelinks["enwiki"]["title"]
+    if "dewiki" in sitelinks:
+        out["de"] = sitelinks["dewiki"]["title"]
+    return out
+
+
+def _canonical_with_redirects(title: str, edition: str) -> list[str]:
+    """Canonical article title plus titles that redirect to it. Merging their
+    pageviews keeps history continuous when an article was renamed in-window."""
+    try:
+        resp = requests.get(
+            f"https://{edition}.wikipedia.org/w/api.php",
+            params={"action": "query", "titles": title, "redirects": 1,
+                    "prop": "redirects", "rdlimit": "max", "format": "json"},
+            headers={"User-Agent": _WIKI_UA}, timeout=10,
+        )
+        pages = resp.json().get("query", {}).get("pages", {})
+        page = next(iter(pages.values()))
+        if "missing" in page:
+            return []
+        canonical = page.get("title", title)
+        redirects = [rd["title"] for rd in page.get("redirects", [])]
+        return [canonical, *redirects][:_TRENDS_REDIRECT_CAP]
+    except Exception:
+        return [title]
+
+
+def _resolve_wiki_target(symbol: str, preferred_edition: str) -> tuple[list[str], str]:
+    """Return (article_titles, edition) for a symbol, cached per process.
+    Falls back across ISIN -> name and across editions; ([], "") if unresolved."""
+    cache_key = f"{symbol}|{preferred_edition}"
+    cached = _wiki_target_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    sitelinks = {}
+    isin = _fetch_isin_eodhd(symbol)
+    if isin:
+        sitelinks = _wikidata_sitelinks_by_isin(isin)
+    if not sitelinks:
+        name = _company_name(symbol)
+        if name:
+            sitelinks = _wikidata_sitelinks_by_name(name)
+
+    # Prefer the requested edition; fall back to whatever edition we do have.
+    edition = (preferred_edition if preferred_edition in sitelinks
+               else "en" if "en" in sitelinks
+               else "de" if "de" in sitelinks else "")
+    result: tuple[list[str], str]
+    if not edition:
+        result = ([], "")
+    else:
+        result = (_canonical_with_redirects(sitelinks[edition], edition), edition)
+    _wiki_target_cache[cache_key] = result
+    return result
+
+
+def _company_name(symbol: str) -> Optional[str]:
+    qt = _fetch_yahoo_quote_summary(symbol, ["quoteType"]).get("quoteType") or {}
+    name = qt.get("longName") or qt.get("shortName")
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+def _wiki_pageviews(title: str, edition: str) -> dict[str, int]:
+    """Daily pageviews for one article over the trailing 365 days: {YYYYMMDD: views}."""
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=365)
+    article = urllib.parse.quote(title.replace(" ", "_"), safe="")
+    url = (
+        "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/"
+        f"{edition}.wikipedia/all-access/all-agents/{article}/daily/"
+        f"{start:%Y%m%d}/{end:%Y%m%d}"
+    )
+    try:
+        resp = requests.get(url, headers={"User-Agent": _WIKI_UA}, timeout=8)
+        if resp.status_code != 200:
+            return {}
+        return {item["timestamp"][:8]: int(item["views"]) for item in resp.json().get("items", [])}
+    except Exception:
+        return {}
+
+
 @app.get("/assets/{symbol}/trends", response_model=list[TrendPoint])
 def get_trends(symbol: str):
     symbol = symbol.upper().strip()
     if not TICKER_RE.match(symbol):
         raise HTTPException(status_code=400, detail="Ungültiges Ticker-Symbol")
 
-    # pytrends is often blocked by Google from cloud server IPs.
-    # Return empty list (not an error) so the analysis still runs without trend data.
-    try:
-        from pytrends.request import TrendReq
-        pt = TrendReq(hl="en-US", tz=0, timeout=(10, 15))
-        pt.build_payload([symbol], timeframe="today 12-m", geo="US")
-        df = pt.interest_over_time()
+    # Empty list (not an error) keeps the analysis running when interest data is
+    # unavailable — Marco treats trends as an optional signal.
+    titles, edition = _resolve_wiki_target(symbol, _trends_edition_for(symbol))
+    if not titles:
+        return []
 
-        if df is None or df.empty or symbol not in df.columns:
-            return []
+    merged: dict[str, int] = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for daymap in pool.map(lambda t: _wiki_pageviews(t, edition), titles):
+            for day, views in daymap.items():
+                merged[day] = merged.get(day, 0) + views
 
-        return [
-            TrendPoint(date=str(ts.date()), value=int(v))
-            for ts, v in zip(df.index, df[symbol])
-            if not math.isnan(float(v))
-        ]
-    except Exception:
-        return []  # Graceful fallback – Google often blocks server IPs
+    if len(merged) < 30:  # too sparse to be a meaningful signal
+        return []
+
+    days = sorted(merged)
+    daily = [merged[d] for d in days]
+    # Weekly buckets (mirrors Google Trends granularity), normalised to 0-100.
+    weeks = [(days[i], sum(daily[i:i + 7])) for i in range(0, len(daily) - len(daily) % 7, 7)]
+    peak = max((total for _, total in weeks), default=0) or 1
+    # Newest week first: consumers read index 0 as the current value.
+    return [
+        TrendPoint(date=f"{d[:4]}-{d[4:6]}-{d[6:8]}", value=round(total / peak * 100))
+        for d, total in reversed(weeks)
+    ]
 
 
 @app.get("/assets/{symbol}/institutional", response_model=InstitutionalData)

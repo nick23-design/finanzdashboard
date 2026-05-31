@@ -123,11 +123,11 @@ const CATEGORIES: Category[] = [
         modelLabel: "Claude Haiku 4.5",
         color: "#f97316",
         description:
-          "Marco beobachtet was kluge Geldgeber tun. Er analysiert Insider-Transaktionen aus SEC Form 4-Meldungen, institutionelle Positionen und Google Trends.",
+          "Marco beobachtet was kluge Geldgeber tun. Er analysiert Insider-Transaktionen aus SEC Form 4-Meldungen, institutionelle Positionen und öffentliches Interesse (Wikipedia-Aufrufe).",
         tasks: [
           "SEC Form 4 Insider-Käufe und -Verkäufe",
           "Institutionelle Halter und deren Anteil",
-          "Google Trends Suchinteresse",
+          "Öffentliches Interesse (Wikipedia)",
           "Markt-Signal Bewertung",
         ],
         requiresFinanceApi: true,

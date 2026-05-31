@@ -29,7 +29,7 @@ Regeln:
 - Niedrige Insider-Ownership ist bei Mega-Caps und Gründer-/Index-getriebenen Unternehmen NICHT automatisch bearish.
 - BlackRock, Vanguard, State Street und ähnliche Top-Holder sind meist passive Index-/ETF-Positionen; nicht als aktive Conviction interpretieren.
 - Insider-Verkäufe sind nur stark bearish, wenn sie groß, gehäuft und nicht plausibel planbasiert sind.
-- Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf nie als Kernargument gewertet werden.
+- Öffentliches Interesse (Wikipedia-Aufrufe) ist nur ein schwaches Aufmerksamkeitssignal und darf nie als Kernargument gewertet werden.
 - Formuliere Beobachtungen als "Hinweis" oder "schwaches Signal", wenn die Daten keine harte Aussage tragen.
 Antworte ausschließlich mit validem JSON.`;
 
@@ -96,7 +96,7 @@ STRUKTURIERTES BRIEFING — PFLICHTREGELN:
 WEITERE REGELN:
 - Trenne langfristige Investment-These, kurzfristiges Timing, Entry-Qualität und Datenqualität.
 - Beziehe dich ausschließlich auf die bereitgestellten Daten. Erfinde keine Deals, Produkte, Margen oder Ereignisse.
-- Google Trends ist nur ein schwaches Retail-Sentiment-Signal. Verwende es nie als Kernargument.
+- Öffentliches Interesse (Wikipedia-Aufrufe) ist nur ein schwaches Aufmerksamkeitssignal. Verwende es nie als Kernargument.
 - Wenn Datenqualität lückenhaft ist: Conviction begrenzen, valuation_confidence niedrig/mittel setzen und keine pseudo-präzisen Kursziele formulieren.
 - Fehlende Kennzahlen, EDGAR-Daten oder Analystendaten sind Provider-/Ingestion-Limitationen. Behandle sie als Datenqualitätsproblem, nicht als operatives Unternehmensrisiko.
 - Analystenkonsens ist nur Marktmeinung. Gib ihn niemals als eigenes Bewertungsmodell aus.
@@ -166,7 +166,7 @@ REGELN — Autoritative Daten & Artikel-Freshness:
 5. Währungsumrechnung bei Analysten-Kurszielen: Finance API liefert Kursziele immer in USD. Bei Aktien die nicht in USD notieren darf Opus diese in die lokale Notierungswährung umrechnen — das ist kein Fehler.
 6. Konsistenzprüfung: Prüfe, ob Empfehlung, RSI, Abstand zu MA50/MA200, Datenqualität, Entry Quality und valuation_range logisch zusammenpassen.
 7. Wenn die Datenbasis lückenhaft ist, sind hohe Conviction und präzise Kursziele verdächtig. Eine breite Szenario-Spanne ist dagegen zulässig.
-8. Google Trends ist nur ein schwaches Retail-Sentiment-Signal und darf keine Kernthese stützen.
+8. Öffentliches Interesse (Wikipedia-Aufrufe) ist nur ein schwaches Aufmerksamkeitssignal und darf keine Kernthese stützen.
 9. Analystenkonsens und eigenes Bewertungsmodell dürfen nicht vermischt werden. Konsens-Kursziele sind Marktmeinung, kein Fair Value aus eigenem Modell.
 10. Prüfe, ob die verwendeten Werttreiber zum Unternehmenstyp passen, z.B. Hyperscaler mit AI-Capex/Margenlogik, Semis mit Zyklus/Inventar/Margen, spekulative Growth-Titel mit Cashburn/Execution.
 11. Fehlende Kennzahlen, EDGAR-Daten oder Analystendaten sind Provider-/Ingestion-Limitationen. Sie dürfen nicht als operative Unternehmensrisiken oder Bear-Case-Punkte bewertet werden.`;

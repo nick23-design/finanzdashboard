@@ -31,7 +31,7 @@ const PIPELINE: PipelineStep[] = [
   { agent: "diana", role: "Datenqualität", what: "Prüft regelbasiert, wie vollständig die Rohdaten sind, und begrenzt die Überzeugung bei Lücken." },
   { agent: "felix", role: "Fundamental", what: "Bewertet Wachstum, Profitabilität und Bewertung — inklusive Vergleich mit Branchen-Peers." },
   { agent: "nina",  role: "Nachrichten", what: "Liest aktuelle Schlagzeilen und bestimmt Stimmung und Kernthemen." },
-  { agent: "marco", role: "Markt-Signale", what: "Wertet Insider-Käufe, institutionelle Bewegungen und Suchtrends aus (v. a. US-Aktien)." },
+  { agent: "marco", role: "Markt-Signale", what: "Wertet Insider-Käufe, institutionelle Bewegungen und öffentliches Interesse (Wikipedia-Aufrufe) aus." },
   { agent: "opus",  role: "Synthese", what: "Führt Engine-Ergebnisse, Agenten-Bausteine und News zu Empfehlung, Überzeugung und Kurszielen zusammen." },
   { agent: "vera",  role: "Fakten-Check", what: "Prüft die fertige Analyse gegen Live-Marktdaten, korrigiert Fehler und speist Erkenntnisse als künftige Guardrails zurück." },
 ];

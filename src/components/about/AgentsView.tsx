@@ -197,7 +197,7 @@ const AGENTS: AgentDoc[] = [
     inputs: [
       "Insider-Transaktionen: Name, Titel, Kauf/Verkauf, Anzahl, Kurs, Datum (letzte 5)",
       "Institutionelle Daten: Insider-Anteil %, Institutionen-Anteil %, Top-5 Holder",
-      "Google Trends: wöchentliche Suchwerte (0–100) der letzten 12 Monate",
+      "Öffentliches Interesse: wöchentliche Wikipedia-Aufrufe (0–100) der letzten 12 Monate",
     ],
     outputs: [
       "Insider-Signal: bullish / neutral / bearish",
@@ -207,21 +207,21 @@ const AGENTS: AgentDoc[] = [
     ],
     systemPrompt: AGENT_SYSTEM_PROMPTS["marco"],
     workflow: [
-      "Insider-Trades, institutionelle Daten und Google Trends werden parallel abgerufen",
+      "Insider-Trades, institutionelle Daten und öffentliches Interesse (Wikipedia-Aufrufe) werden parallel abgerufen",
       "Marco bewertet ob Insider kaufen oder verkaufen und ob Institutionen akkumulieren",
       "Trends-Momentum gibt Hinweis auf wachsendes oder sinkendes öffentliches Interesse",
       "Ergebnis fließt in den Synthese-Agenten",
     ],
     strengths: [
       "Insider-Transaktionen sind eines der stärksten verfügbaren Frühsignale",
-      "Google Trends gibt frühzeitig Hinweise auf Momentum-Shifts",
+      "Öffentliches Interesse (Wikipedia) gibt frühzeitig Hinweise auf Momentum-Shifts",
       "Institutionelle Positionierung zeigt Smart-Money-Flüsse",
     ],
     weaknesses: [
       "Insider-Daten und institutionelle Daten nur für US-Aktien via SEC verfügbar — für DE/EU-Aktien ist dieser Schritt leer",
       "Insider-Verkäufe können viele Gründe haben (Steuern, Diversifikation, Optionsverfallstermine) — nicht immer Pessimismus",
       "Institutionelle Quartalsberichte (13F) erscheinen mit bis zu 45 Tagen Verzögerung",
-      "Google Trends misst öffentliches Suchinteresse, nicht gezielt das von Investoren",
+      "Wikipedia-Aufrufe messen Leser-/Publikumsinteresse, nicht gezielt das von Investoren",
       "Haiku bewertet Insider-Muster ohne den persönlichen Kontext der Transaktionsperson",
     ],
     reliability: 3,
