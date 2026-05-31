@@ -14,6 +14,7 @@ export type SectorTemplateKey =
   | "reit"
   | "speculative_growth"
   | "marketplace_platform"
+  | "advertising_platform"
   | "payments_fintech"
   | "automotive"
   | "general_quality_growth";
@@ -89,31 +90,31 @@ interface ValuationConfig {
 
 const DRIVER_LIBRARY: Record<SectorTemplateKey, DriverTemplate> = {
   mega_cap_cloud_software: {
-    business_model_type: "Mega-cap software / cloud infrastructure",
+    business_model_type: "Mega-Cap-Software / Cloud-Infrastruktur",
     revenue_drivers: [
-      { driver: "Cloud growth", why_it_matters: "Cloud consumption is the main incremental growth engine.", metrics: ["cloud revenue growth", "commercial bookings", "remaining performance obligations"] },
-      { driver: "AI product monetization", why_it_matters: "AI features must convert infrastructure spend into durable revenue.", metrics: ["AI-related revenue contribution", "Copilot adoption", "enterprise AI workloads"] },
-      { driver: "Enterprise IT spending", why_it_matters: "Large customers drive renewals, seat expansion and cloud migrations.", metrics: ["enterprise bookings", "subscription growth", "customer retention"] },
+      { driver: "Cloud-Wachstum", why_it_matters: "Cloud-Verbrauch ist der wichtigste inkrementelle Wachstumstreiber.", metrics: ["Cloud-Umsatzwachstum", "Commercial Bookings", "Remaining Performance Obligations"] },
+      { driver: "KI-Produkt-Monetarisierung", why_it_matters: "KI-Funktionen müssen Infrastruktur-Investitionen in dauerhaften Umsatz verwandeln.", metrics: ["KI-bezogener Umsatzanteil", "Copilot-Adoption", "Enterprise-KI-Workloads"] },
+      { driver: "Enterprise-IT-Ausgaben", why_it_matters: "Großkunden treiben Verlängerungen, Seat-Expansion und Cloud-Migrationen.", metrics: ["Enterprise-Bookings", "Abo-Wachstum", "Kundenbindung"] },
     ],
     margin_drivers: [
-      { driver: "AI infrastructure gross-margin pressure", why_it_matters: "Data centers, GPUs and depreciation can dilute margins before revenue scales.", metrics: ["gross margin", "depreciation", "AI infrastructure cost"] },
-      { driver: "Operating leverage", why_it_matters: "Premium valuations require revenue growth to translate into operating income.", metrics: ["operating margin", "R&D as % of revenue", "sales efficiency"] },
+      { driver: "Bruttomargendruck durch KI-Infrastruktur", why_it_matters: "Rechenzentren, GPUs und Abschreibungen können Margen verwässern, bevor der Umsatz skaliert.", metrics: ["Bruttomarge", "Abschreibungen", "KI-Infrastrukturkosten"] },
+      { driver: "Operative Skaleneffekte", why_it_matters: "Premium-Bewertungen verlangen, dass Umsatzwachstum in operatives Ergebnis durchschlägt.", metrics: ["operative Marge", "F&E in % vom Umsatz", "Vertriebseffizienz"] },
     ],
     cash_flow_drivers: [
-      { driver: "Capex intensity", why_it_matters: "Elevated AI capex can pressure near-term free cash flow.", metrics: ["capital expenditures", "capex as % of revenue", "data-center spend"] },
-      { driver: "FCF conversion", why_it_matters: "High-quality software names should convert earnings into cash over time.", metrics: ["free cash flow", "FCF margin", "net income to FCF conversion"] },
+      { driver: "Capex-Intensität", why_it_matters: "Erhöhte KI-Investitionen können den kurzfristigen Free Cashflow belasten.", metrics: ["Investitionsausgaben", "Capex in % vom Umsatz", "Rechenzentrums-Ausgaben"] },
+      { driver: "FCF-Konversion", why_it_matters: "Hochwertige Software-Titel sollten Gewinne über die Zeit in Cash umwandeln.", metrics: ["Free Cashflow", "FCF-Marge", "Nettogewinn-zu-FCF-Konversion"] },
     ],
-    sector_specific_kpis: ["cloud revenue growth", "commercial bookings", "operating margin", "gross margin", "capex", "free cash flow"],
-    valuation_implications: ["Separate analyst optimism from own FCF/multiple model.", "Treat AI capex efficiency as a core bear/base/bull variable.", "Use EV/FCF and P/E as sanity checks rather than a single target price."],
-    bull_case_assumptions: ["AI workloads accelerate cloud growth.", "Copilot or AI features become measurable revenue contributors.", "Margins recover as infrastructure utilization rises."],
-    base_case_assumptions: ["Cloud growth remains healthy but AI capex tempers FCF growth.", "Subscription base supports resilient earnings.", "Valuation multiple stays premium but not euphoric."],
-    bear_case_assumptions: ["Capex grows faster than AI revenue.", "Gross margin pressure proves structural.", "Enterprise demand slows while expectations stay high."],
-    red_flags: ["Capex grows faster than cloud revenue for multiple quarters", "FCF margin declines despite operating income growth", "AI monetization remains qualitative rather than measurable"],
+    sector_specific_kpis: ["Cloud-Umsatzwachstum", "Commercial Bookings", "operative Marge", "Bruttomarge", "Capex", "Free Cashflow"],
+    valuation_implications: ["Analystenoptimismus vom eigenen FCF-/Multiple-Modell trennen.", "KI-Capex-Effizienz als zentrale Bear-/Base-/Bull-Variable behandeln.", "EV/FCF und KGV als Plausibilitätschecks statt eines einzelnen Kursziels nutzen."],
+    bull_case_assumptions: ["KI-Workloads beschleunigen das Cloud-Wachstum.", "Copilot- bzw. KI-Funktionen werden messbare Umsatzbeiträge.", "Margen erholen sich mit steigender Infrastruktur-Auslastung."],
+    base_case_assumptions: ["Cloud-Wachstum bleibt gesund, aber KI-Capex bremst das FCF-Wachstum.", "Abo-Basis stützt widerstandsfähige Erträge.", "Bewertungsmultiple bleibt premium, aber nicht euphorisch."],
+    bear_case_assumptions: ["Capex wächst schneller als der KI-Umsatz.", "Bruttomargendruck erweist sich als strukturell.", "Enterprise-Nachfrage verlangsamt sich bei weiter hohen Erwartungen."],
+    red_flags: ["Capex wächst über mehrere Quartale schneller als der Cloud-Umsatz", "FCF-Marge sinkt trotz steigendem operativem Ergebnis", "KI-Monetarisierung bleibt qualitativ statt messbar"],
     model_instructions: {
-      revenue_model: "Use segment-based revenue model where possible, with cloud and subscription growth separated.",
-      margin_model: "Model gross-margin pressure from AI infrastructure explicitly.",
-      capex_model: "Separate normalized maintenance capex from elevated AI growth capex.",
-      valuation_methods: ["EV/FCF", "P/E sanity check", "DCF-light"],
+      revenue_model: "Wenn möglich segmentbasiertes Umsatzmodell mit getrenntem Cloud- und Abo-Wachstum verwenden.",
+      margin_model: "Bruttomargendruck aus KI-Infrastruktur explizit modellieren.",
+      capex_model: "Normalisierten Erhaltungs-Capex vom erhöhten KI-Wachstums-Capex trennen.",
+      valuation_methods: ["EV/FCF", "KGV-Plausibilitätscheck", "DCF-light"],
     },
   },
   semiconductor: {
@@ -395,6 +396,34 @@ const DRIVER_LIBRARY: Record<SectorTemplateKey, DriverTemplate> = {
       valuation_methods: ["Sum-of-parts", "EV/FCF", "P/E sanity check"],
     },
   },
+  advertising_platform: {
+    business_model_type: "Werbe-/Social-Plattform",
+    revenue_drivers: [
+      { driver: "Werbeumsatz & Engagement", why_it_matters: "Nutzer-Engagement und Impressions treiben den Werbeumsatz.", metrics: ["Werbeumsatzwachstum", "DAU/MAU", "Engagement"] },
+      { driver: "Monetarisierung (ARPU)", why_it_matters: "Preis pro Anzeige und Auslastung bestimmen, wie gut Reichweite monetarisiert wird.", metrics: ["ARPU", "Ad Impressions", "Preis pro Anzeige"] },
+      { driver: "KI-gestützte Empfehlungen & neue Formate", why_it_matters: "Empfehlungs-KI (z.B. Reels/Feed) und neue Formate steigern Verweildauer und Ad-Inventar.", metrics: ["Reels-/Video-Engagement", "KI-Empfehlungsqualität", "neue Ad-Formate"] },
+    ],
+    margin_drivers: [
+      { driver: "Operative Disziplin vs. Zukunftswetten", why_it_matters: "Kerngeschäft ist hochmargig; defizitäre Wetten (z.B. Reality Labs) belasten die Gesamtmarge.", metrics: ["operative Marge Kernsegment", "Segmentverluste", "Kostenwachstum"] },
+      { driver: "KI-Infrastrukturkosten", why_it_matters: "KI-Capex und Abschreibungen drücken die Marge, bevor sich der Umsatznutzen zeigt.", metrics: ["Abschreibungen", "KI-Infrastrukturkosten", "Bruttomarge"] },
+    ],
+    cash_flow_drivers: [
+      { driver: "KI-/Infrastruktur-Capex-Intensität", why_it_matters: "Hohe KI-/Rechenzentrums-Investitionen können den Free Cashflow kurzfristig belasten.", metrics: ["Investitionsausgaben", "Capex in % vom Umsatz", "Rechenzentrums-Ausgaben"] },
+      { driver: "FCF-Konversion & Buybacks", why_it_matters: "Starke Cash-Generierung finanziert Rückkäufe und je-Aktie-Wachstum.", metrics: ["Free Cashflow", "FCF-Marge", "Aktienrückkäufe"] },
+    ],
+    sector_specific_kpis: ["Werbeumsatzwachstum", "DAU/MAU", "ARPU", "operative Marge", "Capex", "Free Cashflow", "regulatorisches Risiko"],
+    valuation_implications: ["KGV und EV/FCF nutzen; Werbe-Zyklus und Regulierung in die Szenarien einbauen.", "Defizitäre Zukunftssegmente getrennt bewerten, nicht mit dem Kern vermischen.", "KI-Capex-Effizienz als zentrale Bear-/Base-/Bull-Variable behandeln."],
+    bull_case_assumptions: ["Engagement und ARPU steigen durch KI-Empfehlungen.", "Werbemarkt bleibt robust.", "Buybacks stützen das je-Aktie-Wachstum."],
+    base_case_assumptions: ["Werbeumsatz wächst solide, KI-Capex bremst das FCF-Wachstum.", "Kernmarge bleibt hoch, Zukunftswetten bleiben Belastung.", "Bewertungsmultiple bleibt moderat premium."],
+    bear_case_assumptions: ["Werbemarkt-Dynamik schwächt sich ab.", "KI-Capex wächst schneller als der Nutzen.", "Regulierung/Datenschutz belastet Targeting und Wachstum."],
+    red_flags: ["Capex wächst über mehrere Quartale schneller als der Werbeumsatz", "FCF-Marge sinkt trotz steigendem operativem Ergebnis", "Engagement/DAU stagniert bei steigenden Kosten"],
+    model_instructions: {
+      revenue_model: "Werbeumsatz über Engagement (DAU/MAU) und ARPU modellieren; Zukunftssegmente separat.",
+      margin_model: "Kernmarge von defizitären Segmenten (z.B. Reality Labs) trennen.",
+      capex_model: "KI-/Infrastruktur-Wachstums-Capex vom Erhaltungs-Capex trennen.",
+      valuation_methods: ["KGV", "EV/FCF", "FCF-Yield"],
+    },
+  },
   payments_fintech: {
     business_model_type: "Payments / fintech network",
     revenue_drivers: [
@@ -477,7 +506,7 @@ const TICKER_OVERRIDES: Record<string, { primary: SectorTemplateKey; secondary?:
   AMZN: { primary: "marketplace_platform", secondary: ["mega_cap_cloud_software", "cloud_infrastructure", "retail_platform"], confidence: "high", reasoning: ["AWS and marketplace economics require separate drivers.", "Fulfillment and infrastructure capex affect FCF."] },
   GOOGL: { primary: "mega_cap_cloud_software", secondary: ["advertising_platform", "ai_infrastructure_beneficiary"], confidence: "high", reasoning: ["Search advertising and cloud/AI infrastructure both drive valuation."] },
   GOOG: { primary: "mega_cap_cloud_software", secondary: ["advertising_platform", "ai_infrastructure_beneficiary"], confidence: "high", reasoning: ["Search advertising and cloud/AI infrastructure both drive valuation."] },
-  META: { primary: "mega_cap_cloud_software", secondary: ["advertising_platform", "ai_infrastructure_beneficiary"], confidence: "high", reasoning: ["Advertising cash flows fund AI infrastructure and product bets."] },
+  META: { primary: "advertising_platform", secondary: ["social_platform", "ai_infrastructure_beneficiary"], confidence: "high", reasoning: ["Werbeumsatz (Family of Apps) ist der Kern; KI-Capex und Reality Labs sind separate Treiber/Wetten."] },
   ORCL: { primary: "mega_cap_cloud_software", secondary: ["enterprise_software", "cloud_infrastructure"], confidence: "high" },
   NVDA: { primary: "semiconductor", secondary: ["ai_infrastructure_supplier", "high_growth_cyclical"], confidence: "high" },
   AMD: { primary: "semiconductor", secondary: ["ai_infrastructure_supplier", "cyclical_chipmaker"], confidence: "high" },
@@ -553,6 +582,7 @@ const VALUATION_CONFIG: Record<SectorTemplateKey, ValuationConfig> = {
   reit: { peMultiples: { bear: 12, base: 15, bull: 18 }, fcfYields: { bear: 0.085, base: 0.067, bull: 0.052 }, fcfWeight: 0.65 },
   speculative_growth: { peMultiples: { bear: 12, base: 22, bull: 38 }, fcfWeight: 0 },
   marketplace_platform: { peMultiples: { bear: 20, base: 28, bull: 36 }, fcfYields: { bear: 0.05, base: 0.038, bull: 0.029 }, fcfWeight: 0.45 },
+  advertising_platform: { peMultiples: { bear: 18, base: 24, bull: 30 }, fcfYields: { bear: 0.05, base: 0.04, bull: 0.03 }, fcfWeight: 0.5 },
   payments_fintech: { peMultiples: { bear: 18, base: 24, bull: 30 }, fcfYields: { bear: 0.052, base: 0.04, bull: 0.032 }, fcfWeight: 0.45 },
   automotive: { peMultiples: { bear: 8, base: 13, bull: 20 }, fcfYields: { bear: 0.09, base: 0.07, bull: 0.052 }, fcfWeight: 0.3 },
   general_quality_growth: { peMultiples: { bear: 16, base: 21, bull: 27 }, fcfYields: { bear: 0.065, base: 0.05, bull: 0.039 }, fcfWeight: 0.45 },

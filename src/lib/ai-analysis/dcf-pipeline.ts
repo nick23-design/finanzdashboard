@@ -35,6 +35,7 @@ export const SECTOR_DCF_DEFAULTS: Record<SectorTemplateKey, SectorDcfDefaults> =
   reit:                    { wacc: 0.07, terminalGrowth: 0.02,  opMargin: 0.35, taxRate: 0.21, reinvestment: 0.40 },
   speculative_growth:      { wacc: 0.13, terminalGrowth: 0.03,  opMargin: 0.05, taxRate: 0.21, reinvestment: 0.60 },
   marketplace_platform:    { wacc: 0.10, terminalGrowth: 0.025, opMargin: 0.15, taxRate: 0.21, reinvestment: 0.25 },
+  advertising_platform:    { wacc: 0.09, terminalGrowth: 0.025, opMargin: 0.30, taxRate: 0.18, reinvestment: 0.25 },
   payments_fintech:        { wacc: 0.09, terminalGrowth: 0.025, opMargin: 0.22, taxRate: 0.20, reinvestment: 0.25 },
   automotive:              { wacc: 0.10, terminalGrowth: 0.02,  opMargin: 0.08, taxRate: 0.22, reinvestment: 0.40 },
   general_quality_growth:  { wacc: 0.09, terminalGrowth: 0.025, opMargin: 0.15, taxRate: 0.21, reinvestment: 0.30 },
