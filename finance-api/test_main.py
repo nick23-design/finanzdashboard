@@ -87,6 +87,8 @@ class TestTickerRegex:
             assert TICKER_RE.match(t), f"Should match: {t}"
 
     def test_invalid_tickers(self):
-        invalid = ["", "TOOLONGSTRING", "AA PL", "AAPL!", "aa pl"]
+        # 31 chars exceeds the {1,30} limit. The cap is intentionally generous to
+        # leave room for suffixes like SAP.DE / BRK-B / NESN.SW.
+        invalid = ["", "A" * 31, "AA PL", "AAPL!", "aa pl"]
         for t in invalid:
             assert not TICKER_RE.match(t), f"Should not match: {t}"

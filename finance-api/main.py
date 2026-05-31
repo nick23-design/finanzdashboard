@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import threading
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -14,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import requests
 import yfinance as yf
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -98,19 +100,78 @@ def _raw_int(value) -> Optional[int]:
     return _safe_int(_raw_value(value))
 
 
+# Yahoo's quoteSummary v10 endpoint requires a crumb + matching session cookie
+# (since ~2023). Without them it returns HTTP 401 "Invalid Crumb", which silently
+# broke every quoteSummary fallback below. We mirror yfinance's own auth flow:
+# fetch a cookie, exchange it for a crumb, then cache both for the process lifetime
+# and refresh on the next 401/403.
+_YAHOO_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+_yahoo_session: Optional[requests.Session] = None
+_yahoo_crumb: Optional[str] = None
+_yahoo_auth_lock = threading.Lock()
+
+
+def _yahoo_authed_session() -> tuple[Optional["requests.Session"], Optional[str]]:
+    """Return a cached (session, crumb) pair authenticated against Yahoo, building
+    one on first use. Returns (None, None) if Yahoo refuses to hand out a crumb
+    (e.g. cloud IP blocked) so callers degrade gracefully instead of erroring."""
+    global _yahoo_session, _yahoo_crumb
+    with _yahoo_auth_lock:
+        if _yahoo_session is not None and _yahoo_crumb:
+            return _yahoo_session, _yahoo_crumb
+        session = requests.Session()
+        session.headers.update({"User-Agent": _YAHOO_UA})
+        try:
+            # Seed the consent/identity cookie; fc.yahoo.com 404s but still sets it.
+            session.get("https://fc.yahoo.com", timeout=8)
+            crumb = session.get(
+                "https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8
+            ).text.strip()
+        except Exception:
+            return None, None
+        # A valid crumb is a short token; HTML/empty means the handshake failed.
+        if not crumb or len(crumb) > 32 or "<" in crumb:
+            return None, None
+        _yahoo_session, _yahoo_crumb = session, crumb
+        return session, crumb
+
+
+def _reset_yahoo_session() -> None:
+    global _yahoo_session, _yahoo_crumb
+    with _yahoo_auth_lock:
+        _yahoo_session = None
+        _yahoo_crumb = None
+
+
 def _fetch_yahoo_quote_summary(symbol: str, modules: list[str]) -> dict[str, Any]:
     """Direct Yahoo quoteSummary fallback for fields yfinance sometimes omits."""
     if not modules:
         return {}
-    url = (
-        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
-        f"{urllib.parse.quote(symbol)}?modules={urllib.parse.quote(','.join(modules))}"
-    )
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        data = json.loads(resp.read())
-    result = (data.get("quoteSummary") or {}).get("result") or []
-    return result[0] if result else {}
+    for _ in range(2):  # one retry to recover from a stale crumb
+        session, crumb = _yahoo_authed_session()
+        if session is None or not crumb:
+            return {}
+        url = (
+            "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
+            f"{urllib.parse.quote(symbol)}?modules={urllib.parse.quote(','.join(modules))}"
+            f"&crumb={urllib.parse.quote(crumb)}"
+        )
+        try:
+            resp = session.get(url, timeout=8)
+            if resp.status_code in (401, 403):
+                _reset_yahoo_session()  # crumb expired – rebuild and retry once
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            _reset_yahoo_session()
+            return {}
+        result = (data.get("quoteSummary") or {}).get("result") or []
+        return result[0] if result else {}
+    return {}
 
 
 def _statement_row_latest(frame, labels: list[str]) -> Optional[float]:
@@ -256,19 +317,8 @@ def _fetch_isin_eodhd(symbol: str) -> Optional[str]:
 
 def _fetch_isin_via_quote_type(ticker_sym: str) -> Optional[str]:
     """Fallback: Yahoo Finance quoteSummary quoteType module (European listings only)."""
-    try:
-        url = (
-            f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
-            f"{urllib.parse.quote(ticker_sym)}?modules=quoteType"
-        )
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            data = json.loads(r.read())
-        result = (data.get("quoteSummary") or {}).get("result") or []
-        qt = result[0].get("quoteType", {}) if result else {}
-        return _extract_isin(qt.get("isin"))
-    except Exception:
-        return None
+    qs = _fetch_yahoo_quote_summary(ticker_sym, ["quoteType"])
+    return _extract_isin((qs.get("quoteType") or {}).get("isin"))
 
 
 def _compute_rsi(prices: list[float], period: int = 14) -> Optional[float]:
